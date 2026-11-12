@@ -1,0 +1,3 @@
+import {openSQLiteStore} from '../../src/services/storage/sqlite.js';import {createSQLiteBotDatabase} from '../../src/services/storage/sqliteBotDatabase.js';import {setSQLiteBirthday} from '../../src/services/storage/sqliteBirthdays.js';
+const [path,guild,group]=process.argv.slice(2),sqlite=await openSQLiteStore({path,busyTimeout:5000}),adapter=createSQLiteBotDatabase(sqlite),client={homeGuildId:guild,db:{getStatus:()=>({isDegraded:false}),isAvailable:()=>true,db:adapter}};
+for(let i=0;i<25;i++)setSQLiteBirthday(client,guild,String(300000000000000000n+BigInt(group)*100n+BigInt(i)),2,29);sqlite.close();

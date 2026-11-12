@@ -8,6 +8,7 @@ import { getServerCounters, updateCounter } from '../services/serverstatsService
 import { getGuildBirthdays, deleteBirthday } from '../utils/database.js';
 import { deleteUserLevelData } from '../services/leveling/leveling.js';
 import { logger } from '../utils/logger.js';
+import {isSQLiteBirthdayBackend,moveSQLiteBirthdayOnLeave} from '../services/storage/sqliteBirthdays.js';
 
 export default {
   name: Events.GuildMemberRemove,
@@ -57,14 +58,20 @@ export default {
         }
 
         try {
-            const birthdays = await getGuildBirthdays(member.client, guild.id);
-            if (birthdays[user.id]) {
-                const backupKey = `guild:${guild.id}:birthdays:left`;
-                const backup = (await member.client.db.get(backupKey)) || {};
-                backup[user.id] = birthdays[user.id];
-                await member.client.db.set(backupKey, backup);
-                await deleteBirthday(member.client, guild.id, user.id);
-                logger.debug(`Birthday backed up and removed for user ${user.id} in guild ${guild.id}`);
+            if (isSQLiteBirthdayBackend(member.client)) {
+                if (moveSQLiteBirthdayOnLeave(member.client, guild.id, user.id)) {
+                    logger.debug(`Birthday backed up and removed for user ${user.id} in guild ${guild.id}`);
+                }
+            } else {
+                const birthdays = await getGuildBirthdays(member.client, guild.id);
+                if (birthdays[user.id]) {
+                    const backupKey = `guild:${guild.id}:birthdays:left`;
+                    const backup = (await member.client.db.get(backupKey)) || {};
+                    backup[user.id] = birthdays[user.id];
+                    await member.client.db.set(backupKey, backup);
+                    await deleteBirthday(member.client, guild.id, user.id);
+                    logger.debug(`Birthday backed up and removed for user ${user.id} in guild ${guild.id}`);
+                }
             }
         } catch (error) {
             logger.debug('Error handling birthday on member leave:', error);

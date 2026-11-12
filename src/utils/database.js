@@ -3,6 +3,7 @@
 import { pgDb } from './postgresDatabase.js';
 import { logger } from './logger.js';
 import { BotConfig, getDefaultApplicationQuestions } from '../config/bot.js';
+import {isSQLiteBirthdayBackend,readSQLiteBirthdays,setSQLiteBirthday,deleteSQLiteBirthday} from '../services/storage/sqliteBirthdays.js';
 
 export {
     db,
@@ -158,10 +159,12 @@ export async function getGuildBirthdays(client, guildId) {
             return {};
         }
 
+        if(isSQLiteBirthdayBackend(client))return readSQLiteBirthdays(client,guildId);
         const rawData = await client.db.get(key, {});
         return unwrapReplitData(rawData) || {};
     } catch (error) {
         logger.error(`Error retrieving birthdays for guild ${guildId}:`, error);
+        if(isSQLiteBirthdayBackend(client))throw error;
         return {};
     }
 }
@@ -173,6 +176,7 @@ export async function setBirthday(client, guildId, userId, month, day) {
             return false;
         }
 
+        if(isSQLiteBirthdayBackend(client))return setSQLiteBirthday(client,guildId,userId,month,day);
         const key = getGuildBirthdaysKey(guildId);
         const birthdays = await getGuildBirthdays(client, guildId);
         birthdays[userId] = { month, day };
@@ -191,6 +195,7 @@ export async function deleteBirthday(client, guildId, userId) {
             return false;
         }
 
+        if(isSQLiteBirthdayBackend(client))return deleteSQLiteBirthday(client,guildId,userId);
         const key = getGuildBirthdaysKey(guildId);
         const birthdays = await getGuildBirthdays(client, guildId);
         if (birthdays[userId]) {
