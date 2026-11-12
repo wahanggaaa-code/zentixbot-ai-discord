@@ -1,0 +1,15 @@
+import {accessSync,constants} from 'node:fs';
+// Build discrete libpq environment variables. The URL and password are never
+// passed in argv; this does not protect against a privileged/same-user process.
+export function backupEnvironment(source,baseEnv=process.env){
+ let parsed;try{parsed=new URL(source)}catch{throw new Error('Invalid PostgreSQL backup URL')}
+ if(!['postgres:','postgresql:'].includes(parsed.protocol)||!parsed.pathname||parsed.pathname==='/')throw new Error('PostgreSQL backup URL must specify a database');
+ const allowed=new Set(['host','port','sslmode','sslrootcert']);for(const key of parsed.searchParams.keys())if(!allowed.has(key)||parsed.searchParams.getAll(key).length!==1)throw new Error('Unsupported or duplicate PostgreSQL backup URL parameter');
+ const setting=(baseEnv.POSTGRES_SSL||'').trim().toLowerCase();if(setting&&!['true','false','1','0'].includes(setting))throw new Error('POSTGRES_SSL must be true or false');
+ const explicit=setting?['true','1'].includes(setting):null,mode=parsed.searchParams.get('sslmode');if(mode!==null&&!['disable','require','verify-ca','verify-full'].includes(mode))throw new Error('Unsupported PostgreSQL backup sslmode');const urlTls=mode===null?null:mode!=='disable';if(explicit!==null&&urlTls!==null&&explicit!==urlTls)throw new Error('Conflicting PostgreSQL backup TLS settings');
+ const urlCa=parsed.searchParams.get('sslrootcert'),envCa=(baseEnv.POSTGRES_SSL_CA_FILE||'').trim();if(urlCa!==null&&!urlCa)throw new Error('Empty PostgreSQL backup CA path');if(urlCa&&envCa&&urlCa!==envCa)throw new Error('Conflicting PostgreSQL backup CA paths');const ca=urlCa||envCa||null;
+ const tls=explicit??urlTls??Boolean(baseEnv.NODE_ENV==='production'||baseEnv.RAILWAY_ENVIRONMENT||baseEnv.RAILWAY_PROJECT_ID||ca);if(tls&&!ca)throw new Error('Verified backup TLS requires POSTGRES_SSL_CA_FILE or sslrootcert');if(!tls&&ca)throw new Error('PostgreSQL backup CA requires TLS');if(ca){try{accessSync(ca,constants.R_OK)}catch{throw new Error('Cannot read PostgreSQL backup CA file')}}
+ let host,user,password,database;try{host=parsed.searchParams.get('host')||decodeURIComponent(parsed.hostname);user=decodeURIComponent(parsed.username);password=decodeURIComponent(parsed.password);database=decodeURIComponent(parsed.pathname.slice(1))}catch{throw new Error('Invalid PostgreSQL backup URL encoding')}
+ const port=parsed.searchParams.get('port')||parsed.port||'5432';if(host.startsWith('[')&&host.endsWith(']'))host=host.slice(1,-1);if(!host||host.includes(',')||!user||!/^[A-Za-z0-9_.-]{1,63}$/.test(database)||!/^[0-9]+$/.test(port)||Number(port)<1||Number(port)>65535||[host,user,password,database].some(v=>v.includes('\0')))throw new Error('Incomplete or unsupported PostgreSQL backup URL');
+ const env={};for(const key of ['PATH','HOME','LANG','LC_ALL','TMPDIR','SYSTEMROOT','SystemRoot','WINDIR'])if(baseEnv[key]!==undefined)env[key]=baseEnv[key];Object.assign(env,{PGHOST:host,PGPORT:port,PGUSER:user,PGPASSWORD:password,PGDATABASE:database,PGSSLMODE:tls?'verify-full':'disable',PGCONNECT_TIMEOUT:'10',PGAPPNAME:'zentixbot-backup'});if(ca)env.PGSSLROOTCERT=ca;return env;
+}
