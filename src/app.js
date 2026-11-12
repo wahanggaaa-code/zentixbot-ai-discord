@@ -70,22 +70,12 @@ class TitanBot extends Client {
       const dbInstance = await initializeDatabase();
       this.db = dbInstance.db;
 
-      // Check database status and report
       const dbStatus = this.db.getStatus();
-      if (dbStatus.isDegraded) {
-        logger.warn('');
-        logger.warn('╔═══════════════════════════════════════════════════════╗');
-        logger.warn('║ ⚠️  DATABASE RUNNING IN DEGRADED MODE                 ║');
-        logger.warn('║                                                       ║');
-        logger.warn('║ Connection: In-Memory Storage (PostgreSQL unavailable)║');
-        logger.warn('║ Data Persistence: DISABLED - data lost on restart    ║');
-        logger.warn('║ Action Required: Fix PostgreSQL and restart bot      ║');
-        logger.warn('╚═══════════════════════════════════════════════════════╝');
-        logger.warn('');
-      } else {
-        startupLog(`✅ Database Status: ${dbStatus.connectionType} (fully operational)`);
+      if (!dbStatus.isAvailable || dbStatus.isDegraded) {
+        throw Object.assign(new Error('Persistent database is unavailable; startup aborted.'), {code:'POSTGRES_UNAVAILABLE'});
       }
-      
+      startupLog(`Database Status: ${dbStatus.connectionType} (persistent)`);
+
       startupLog('Starting web server...');
       this.startWebServer();
       
@@ -107,9 +97,7 @@ class TitanBot extends Client {
       await this.registerCommands();
       startupLog('Slash commands registration complete');
       
-      const databaseMode = dbStatus.isDegraded
-        ? 'Optional in-memory mode (data resets after restart)'
-        : 'Connected (persistent data enabled)';
+      const databaseMode = 'Connected (persistent data enabled)';
       const handlerSummary = `${this.buttons.size} buttons, ${this.selectMenus.size} menus, ${this.modals.size} modals`;
       startupLog(
         `ONLINE ✅ | ${this.commands.size} commands loaded | ${handlerSummary} | Database: ${databaseMode}`

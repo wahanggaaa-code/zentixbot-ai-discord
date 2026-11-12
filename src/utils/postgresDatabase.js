@@ -57,8 +57,16 @@ class PostgreSQLDatabase {
             return this.connectionPromise;
         }
 
-        this.connectionPromise = this._establishConnection();
-        return this.connectionPromise;
+        if (this.isAvailable()) {
+            return true;
+        }
+        const pending = this._establishConnection();
+        this.connectionPromise = pending;
+        try {
+            return await pending;
+        } finally {
+            if (this.connectionPromise === pending) this.connectionPromise = null;
+        }
     }
 
     async _establishConnection() {
@@ -78,14 +86,16 @@ class PostgreSQLDatabase {
                 });
 
                 const client = await this.pool.connect();
-                await client.query('SELECT NOW()');
+                try {
+                    await client.query('SELECT NOW()');
+                } catch (error) {
+                    client.release(error);
+                    throw error;
+                }
                 client.release();
 
                 this.lastFailureReason = null;
                 this.lastFailureMessage = null;
-
-                this.isConnected = true;
-                logger.info('PostgreSQL Database initialized successfully');
 
                 if (pgConfig.features.autoCreateTables) {
                     await this.createTables();
@@ -125,6 +135,8 @@ class PostgreSQLDatabase {
                                 `No schema version found. Bootstrapped schema ledger to version ${pgConfig.migration.expectedVersion} (${pgConfig.migration.expectedLabel}).`
                             );
                             await this.runStartupKeyMigration();
+                            this.isConnected = true;
+                            logger.info('PostgreSQL Database initialized successfully');
                             return true;
                         }
 
@@ -137,8 +149,11 @@ class PostgreSQLDatabase {
                 }
 
                 await this.runStartupKeyMigration();
+                this.isConnected = true;
+                logger.info('PostgreSQL Database initialized successfully');
                 return true;
             } catch (error) {
+                this.isConnected = false;
                 this.lastFailureReason = error.code || 'POSTGRES_CONNECTION_FAILED';
                 this.lastFailureMessage = error.message || 'Unknown PostgreSQL error';
 
@@ -279,6 +294,7 @@ class PostgreSQLDatabase {
                 await this.pool.query(table);
             } catch (error) {
                 logger.error('Error creating table:', error);
+                throw error;
             }
         }
         
@@ -1021,6 +1037,7 @@ class PostgreSQLDatabase {
     }
 
     async disconnect() {
+        this.isConnected = false;
         try {
             if (this.pool) {
                 await this.pool.end();
@@ -1028,6 +1045,8 @@ class PostgreSQLDatabase {
             }
         } catch (error) {
             logger.error('Error closing PostgreSQL connection:', error);
+        } finally {
+            this.pool = null;
         }
     }
 

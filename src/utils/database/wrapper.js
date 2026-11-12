@@ -1,5 +1,4 @@
 import { pgDb } from '../postgresDatabase.js';
-import { MemoryStorage } from '../memoryStorage.js';
 import { logger } from '../logger.js';
 import { validateGuildConfigOrThrow } from '../schemas.js';
 
@@ -27,42 +26,28 @@ class DatabaseWrapper {
             throw error;
         }
 
+        let connected = false;
+        let connectionError = null;
         try {
             logger.info('Attempting to connect to PostgreSQL...');
-            const pgConnected = await pgDb.connect();
-            if (pgConnected) {
-                this.db = pgDb;
-                this.connectionType = 'postgresql';
-                this.degradedReason = null;
-                logger.info('✅ PostgreSQL Database initialized - using persistent database');
-                this.initialized = true;
-                return;
-            }
-
-            const pgFailure = pgDb.getLastFailure?.();
-            if (pgFailure?.reason === 'SCHEMA_VERSION_MISMATCH') {
-                const schemaError = new Error(
-                    `Schema version mismatch detected (${pgFailure.message}). Run migrations before startup.`,
-                );
-                schemaError.code = 'SCHEMA_VERSION_MISMATCH';
-                throw schemaError;
-            }
+            connected = await pgDb.connect();
         } catch (error) {
-            logger.warn('PostgreSQL connection failed:', error.message);
-
-            if (error.code === 'SCHEMA_VERSION_MISMATCH') {
-                throw error;
-            }
+            connectionError = error;
+            logger.warn('PostgreSQL connection failed.');
         }
-
-        this.db = new MemoryStorage();
-        this.useFallback = true;
-        this.connectionType = 'memory';
-        this.degradedReason = 'POSTGRES_UNAVAILABLE';
-        logger.warn('⚠️ DATABASE DEGRADED MODE ENABLED - Using in-memory storage (data will be lost on restart)');
-        logger.warn('⚠️ Please check PostgreSQL connection and restart the bot when fixed');
+        if (!connected || !pgDb.isAvailable()) {
+            const failureCode = connectionError ? connectionError.code : pgDb.getLastFailure?.()?.reason;
+            if (failureCode === 'SCHEMA_VERSION_MISMATCH') {
+                throw Object.assign(new Error('PostgreSQL schema version mismatch. Run the appropriate migration before startup.'), {code: 'SCHEMA_VERSION_MISMATCH'});
+            }
+            throw Object.assign(new Error('PostgreSQL unavailable. Startup aborted; no in-memory fallback is used.'), {code: 'POSTGRES_UNAVAILABLE'});
+        }
+        this.db = pgDb;
+        this.useFallback = false;
+        this.connectionType = 'postgresql';
+        this.degradedReason = null;
         this.initialized = true;
-        this.degradedModeWarningShown = true;
+        logger.info('PostgreSQL Database initialized - using persistent database');
     }
 
     async set(key, value, ttl = null) {
@@ -135,7 +120,7 @@ class DatabaseWrapper {
     }
 
     isAvailable() {
-        return this.db && !this.useFallback;
+        return Boolean(this.db && !this.useFallback && (typeof this.db.isAvailable !== 'function' || this.db.isAvailable()));
     }
 
     getStatus() {
@@ -157,18 +142,13 @@ export const db = new DatabaseWrapper();
 
 export async function initializeDatabase() {
     try {
-        logger.info('Initializing Database (PostgreSQL > Memory fallback)...');
+        logger.info('Initializing persistent database (PostgreSQL)...');
         await db.initialize();
-        logger.info('✅ Database initialized');
+        logger.info('Database initialized');
         return { db };
     } catch (error) {
-        logger.error('❌ Database Initialization Error:', error);
-
-        if (error.code === 'SCHEMA_VERSION_MISMATCH' || error.code === 'SQLITE_INCOMPLETE') {
-            throw error;
-        }
-
-        return { db };
+        logger.error('Database initialization failed:', error.message);
+        throw error;
     }
 }
 
