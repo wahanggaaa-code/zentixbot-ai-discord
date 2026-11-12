@@ -1,6 +1,7 @@
 import { createRequire } from 'module';
 import { GatewayDispatchEvents } from 'discord.js';
 import { logger } from '../../utils/logger.js';
+import { isHomeGuild } from '../../utils/singleGuild.js';
 import lavalinkConfig from '../../config/music/lavalink.js';
 import { setupPlayerHandler } from './playerHandler.js';
 
@@ -16,7 +17,7 @@ export function initializeMusic(client) {
     client.riffy = new Riffy(client, lavalinkConfig.nodes, {
         send: (payload) => {
             const guildId = payload.d?.guild_id;
-            if (!guildId) {
+            if (!isHomeGuild(client, guildId)) {
                 return;
             }
 
@@ -48,6 +49,7 @@ export function initializeMusic(client) {
         ) {
             return;
         }
+        if (!isHomeGuild(client, packet.d?.guild_id)) return;
         client.riffy.updateVoiceState(packet);
     });
 

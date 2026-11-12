@@ -1,6 +1,7 @@
 import { Events } from 'discord.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { logger } from '../utils/logger.js';
+import { isHomeGuild } from '../utils/singleGuild.js';
 
 export default {
   name: Events.UserUpdate,
@@ -45,7 +46,7 @@ export default {
 
       const guilds = [...newUser.client.guilds.cache.values()];
       for (const guild of guilds) {
-        if (!guild.members.cache.has(newUser.id)) continue;
+        if (!isHomeGuild(newUser.client, guild.id) || !guild.members.cache.has(newUser.id)) continue;
 
         await logEvent({
           client: newUser.client,

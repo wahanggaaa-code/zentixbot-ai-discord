@@ -1,7 +1,9 @@
-﻿import 'dotenv/config';
+import 'dotenv/config';
 import { Client, Collection, GatewayIntentBits } from 'discord.js';
 import { REST } from '@discordjs/rest';
 import express from 'express';
+import { createDashboardRouter } from './dashboard/router.js';
+import { requireHomeGuildId, isHomeGuild } from './utils/singleGuild.js';
 import cron from 'node-cron';
 
 import config from './config/application.js';
@@ -38,6 +40,7 @@ class TitanBot extends Client {
     });
 
     this.config = config;
+    this.homeGuildId = requireHomeGuildId(process.env.GUILD_ID);
     this.commands = new Collection();
     this.events = new Collection();
     this.buttons = new Collection();
@@ -90,7 +93,7 @@ class TitanBot extends Client {
       await this.login(this.config.bot.token);
       startupLog('Discord login successful');
       
-      startupLog('Registering slash commands globally...');
+      startupLog('Registering slash commands for the configured server...');
       await this.registerCommands();
       startupLog('Slash commands registration complete');
       
@@ -117,6 +120,7 @@ class TitanBot extends Client {
     const corsOrigin = this.config.api?.cors?.origin || '*';
     
     app.use((req, res, next) => {
+      if (req.path === '/dashboard' || req.path.startsWith('/dashboard/')) return next();
       const allowedOrigins = Array.isArray(corsOrigin) ? corsOrigin : [corsOrigin];
       const origin = req.headers.origin;
       
@@ -155,6 +159,9 @@ class TitanBot extends Client {
       requestCounts.set(ip, times);
       next();
     });
+
+    app.get('/dashboard', (req, res) => res.redirect('/dashboard/'));
+    app.use('/dashboard', createDashboardRouter(this));
 
     app.get('/health', (req, res) => {
       const dbStatus = this.db?.getStatus?.() || { isDegraded: 'unknown' };
@@ -260,6 +267,7 @@ class TitanBot extends Client {
     }
     
     for (const [guildId, guild] of this.guilds.cache) {
+      if (!isHomeGuild(this, guildId)) continue;
       try {
         const counters = await getServerCounters(this, guildId);
         const validCounters = [];
@@ -324,7 +332,7 @@ class TitanBot extends Client {
 
   async registerCommands() {
     try {
-      await registerSlashCommands(this, { clientId: this.config.bot.clientId });
+      await registerSlashCommands(this, { clientId: this.config.bot.clientId, guildId: this.homeGuildId });
     } catch (error) {
       logger.error('Error registering commands:', error);
     }

@@ -15,14 +15,18 @@ export default {
       client.user.setPresence(config.bot.presence);
 
       startupLog(`Ready! Logged in as ${client.user.tag}`);
-      startupLog(`Serving ${client.guilds.cache.size} guild(s)`);
+      startupLog(`Configured home guild: ${client.homeGuildId}; connected guilds: ${client.guilds.cache.size} (others ignored)`);
       startupLog(`Loaded ${client.commands.size} commands`);
 
       if (client.config?.features?.music) {
         initRiffyAfterReady(client);
       }
 
-      const reconciliationSummary = await reconcileReactionRoleMessages(client);
+      if (!client.guilds.cache.has(client.homeGuildId)) {
+        logger.warn('Configured home guild is not available; startup reconciliation skipped.');
+        return;
+      }
+      const reconciliationSummary = await reconcileReactionRoleMessages(client, client.homeGuildId);
       startupLog(
         `Reaction role reconciliation: scanned ${reconciliationSummary.scannedMessages}, removed ${reconciliationSummary.removedMessages}, errors ${reconciliationSummary.errors}`
       );
@@ -42,7 +46,7 @@ export default {
         `Reaction role panel health: scanned ${reactionRolePanelSummary.scannedPanels} panels, healthy ${reactionRolePanelSummary.healthyPanels}, deleted ${reactionRolePanelSummary.deletedPanels}, missing channel ${reactionRolePanelSummary.missingChannels}, recovered ${reactionRolePanelSummary.recoveredIds}, errors ${reactionRolePanelSummary.errors}`
       );
 
-      const levelRoleSummary = await reconcileLevelRoles(client);
+      const levelRoleSummary = await reconcileLevelRoles(client, client.homeGuildId);
       startupLog(
         `Level role sync: scanned ${levelRoleSummary.scannedGuilds} guilds, pruned ${levelRoleSummary.prunedRewardEntries} stale rewards, re-awarded ${levelRoleSummary.rolesReAwarded} roles, errors ${levelRoleSummary.errors}`
       );

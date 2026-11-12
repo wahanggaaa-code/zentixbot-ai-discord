@@ -1,19 +1,5 @@
-# ZentixBot — Preview Dashboard Tahap 4
+# ZentixBot — Dashboard preview tahap 5
 
-Preview UI editorial: latar #A9A9A9, teks hitam, aksen lime, menu mengambang desktop dan hamburger glassmorphism mobile.
+Preview UI editorial mencakup overview, fitur bot dan AI Studio. Seluruh formulir, data dan aksi masih **simulasi**, termasuk role preview dan angka resource; jangan memasukkan data sensitif. Integrasi bot/Wispbyte/AI menyusul.
 
-- Tahap 1: fondasi desain dan navigasi.
-- Tahap 2: overview dan simulasi resource hosting.
-- Tahap 3: halaman fitur bot utama.
-- Tahap 4: halaman AI Studio (Welcome/Goodbye, Activities, Agent & Chat, Pengetahuan, AI Tools, Image Studio, Server Builder, Provider & Fallback).
-
-**Semua data, izin, form, tindakan dan angka adalah simulasi.** Tidak ada komunikasi dengan bot, Discord, provider AI, database, Lavalink, atau Wispbyte. Form hanya mempertahankan draft sementara di memori browser selama halaman terbuka; tidak tersimpan permanen. Simulasi fallback tidak memanggil provider. Tidak ada login maupun kontrol akses nyata. Jangan masukkan token, API key, informasi pribadi, atau dokumen sensitif ke preview.
-
-Jalankan preview lokal:
-
-```bash
-cd dashboard-preview
-python3 -m http.server 4174
-```
-
-Buka http://localhost:4174. Jangan gunakan preview ini sebagai dashboard produksi.
+Saat dijalankan dari proses bot pada `/dashboard/`, login Discord dan akses owner/administrator server sudah tersedia. Detail konfigurasi, batasan dan pengujian di `../DOKUMENTASI-TAHAP-5.md`. Preview statis `python3 -m http.server 4174` di folder ini tidak memiliki autentikasi dan hanya untuk pengembangan; jangan gunakan sebagai dashboard produksi.

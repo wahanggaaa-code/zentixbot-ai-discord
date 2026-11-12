@@ -1,0 +1,18 @@
+# Tahap 5 — Login Discord dan satu server
+
+## Lingkup
+Dashboard yang disajikan oleh proses bot pada `/dashboard/` memakai OAuth Discord **identify**, lalu memverifikasi keanggotaan dan izin Administrator atau kepemilikan server lewat bot untuk setiap akses API dan halaman utama. Tidak ada pemilih server. Kontrol fitur, role preview, statistik hosting dan seluruh formulir dashboard masih simulasi: belum membaca/menulis konfigurasi bot atau mengakses Wispbyte/AI. Preview statis terpisah tetap tidak memiliki login dan tidak boleh digunakan untuk data sensitif.
+
+Bot mewajibkan `GUILD_ID` valid pada startup. Event guild non-target diabaikan (interaction lama dijawab dengan pesan penolakan), event tanpa konteks guild termasuk DM diabaikan pada tahap ini; fitur DM AI nanti membutuhkan kebijakan akses tersendiri. Cron ulang tahun, giveaway dan counter serta rekonsiliasi startup dibatasi ke server target. Trafik voice Riffy dibatasi ke server target. Bot **tidak otomatis keluar** dari server lain atau menghapus datanya. Slash commands baru didaftarkan khusus server target; command global dari instalasi lama tidak otomatis dihapus dan mungkin masih terlihat di server lain, tetapi event diblokir. Bersihkan command global lama secara terencana melalui Discord API setelah membackup daftar command; jangan menghapus tanpa memahami dampaknya. Mengganti GUILD_ID membutuhkan restart dan dapat meninggalkan command guild lama yang terlihat tapi tidak dilayani; hapus secara terencana bila diperlukan.
+
+## Menjalankan
+1. Gunakan Node versi yang kompatibel, jalankan `npm ci`, siapkan bot, database dan `DISCORD_TOKEN` sebagaimana panduan bot.
+2. Isi `CLIENT_ID`, `GUILD_ID` (ID server Discord, 17–20 digit), `DISCORD_CLIENT_SECRET` dan `DASHBOARD_URL` di environment server; jangan commit `.env`, token atau secret. `DASHBOARD_URL` adalah origin publik saja tanpa path, misalnya `https://bot.example.com`. HTTP hanya diizinkan untuk localhost/127.0.0.1 saat pengembangan.
+3. Di Discord Developer Portal > OAuth2 > Redirects, daftarkan **persis** `https://bot.example.com/dashboard/callback` dengan origin yang sesuai. Bot harus berada di server target dan dapat memverifikasi member. Gunakan HTTPS/proxy tepercaya; jangan mengekspos origin internal secara publik.
+4. Jalankan `npm start`, buka `https://bot.example.com/dashboard/`, login Discord sebagai owner/administrator server. Tombol profil untuk logout. Untuk pengujian lokal, gunakan misalnya `DASHBOARD_URL=http://localhost:3000` dengan redirect yang sama persis.
+5. Verifikasi izin akun dengan perubahan izin langsung di Discord; sesi diverifikasi ulang pada setiap permintaan yang dilindungi. `OWNER_IDS` bukan jalan pintas akses dashboard: pemilik bot juga harus owner/admin server.
+
+## Batasan operasional dan keamanan
+Sesi disimpan di memori proses (maksimum 8 jam atau masa token yang lebih pendek), hilang saat restart, dan tidak dibagi antar worker. Gunakan satu proses/instans; sebelum multi-worker diperlukan session store bersama, pembatasan laju per IP di proxy, logging keamanan, dan peninjauan keamanan produksi. Cookie HttpOnly, SameSite=Lax dan Secure pada HTTPS; logout memeriksa Origin dan token CSRF. OAuth state berlaku 10 menit dan hanya sekali pakai. Tidak ada Discord token atau client secret yang dikirim ke browser. API tidak menyediakan endpoint pengaturan fitur pada tahap ini.
+
+Lolos `node --test tests/tahap5.test.js` dan `node --check` semua JS `src` dan `dashboard-preview`. Pengujian memakai Discord dan guild tiruan; belum diuji dengan kredensial Discord nyata, gateway Discord, database PostgreSQL, reverse proxy publik, Wispbyte, Lavalink, atau peramban nyata. Ini bukan jaminan audit keamanan penuh.

@@ -1,3 +1,4 @@
+import { isHomeGuild } from '../utils/singleGuild.js';
 import { logger } from '../utils/logger.js';
 import { getReactionRoleKey } from '../utils/database/keys.js';
 import { getGuildConfig, setGuildConfig, patchGuildConfig } from './config/guildConfig.js';
@@ -35,6 +36,7 @@ export async function reconcileTicketPanels(client) {
     };
 
     for (const guild of client.guilds.cache.values()) {
+        if (!isHomeGuild(client, guild.id)) continue;
         summary.scannedGuilds += 1;
 
         try {
@@ -80,6 +82,7 @@ export async function reconcileVerificationPanels(client) {
     };
 
     for (const guild of client.guilds.cache.values()) {
+        if (!isHomeGuild(client, guild.id)) continue;
         summary.scannedGuilds += 1;
 
         try {
@@ -126,6 +129,7 @@ export async function reconcileReactionRolePanelHealth(client) {
     };
 
     for (const guild of client.guilds.cache.values()) {
+        if (!isHomeGuild(client, guild.id)) continue;
         summary.scannedGuilds += 1;
 
         try {

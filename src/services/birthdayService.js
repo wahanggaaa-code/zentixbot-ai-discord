@@ -1,3 +1,4 @@
+import { isHomeGuild } from '../utils/singleGuild.js';
 // birthdayService.js
 
 import { getGuildConfig } from './config/guildConfig.js';
@@ -281,6 +282,7 @@ export async function checkBirthdays(client) {
   }
 
   for (const [guildId, guild] of client.guilds.cache) {
+    if (!isHomeGuild(client, guildId)) continue;
     try {
       const config = await getGuildConfig(client, guildId);
       const { birthdayChannelId, birthdayRoleId } = config;

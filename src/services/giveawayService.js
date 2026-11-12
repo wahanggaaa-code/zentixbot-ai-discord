@@ -1,3 +1,4 @@
+import { isHomeGuild } from '../utils/singleGuild.js';
 // giveawayService.js
 
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } from 'discord.js';
@@ -342,6 +343,7 @@ export async function checkGiveaways(client) {
     for (const giveawayRecord of endedGiveaways) {
       try {
         const { id: giveawayId, guild_id: guildId, message_id: messageId, data: giveawayData } = giveawayRecord;
+        if (!isHomeGuild(client, guildId)) continue;
         const giveaway = typeof giveawayData === 'string' ? JSON.parse(giveawayData) : giveawayData;
 
         const guild = client.guilds.cache.get(guildId);
