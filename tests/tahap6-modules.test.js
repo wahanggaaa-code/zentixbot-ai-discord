@@ -59,3 +59,27 @@ test('music and member management UI renders and attaches handlers',async()=>{
  files.forEach(x=>w.eval(fs.readFileSync('dashboard-preview/'+x,'utf8')));await new Promise(r=>setTimeout(r,25));assert.ok(w.document.querySelector('#searchMusic'));assert.ok(w.document.querySelector('[name=voiceChannelId]'));
  w.location.hash='#features/economy';await new Promise(r=>setTimeout(r,25));w.document.querySelector('[data-tab="economy"]').click();await new Promise(r=>setTimeout(r,25));const f=w.document.querySelector('#memberSearch');assert.ok(f);f.elements.id.value=roleId;f.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,25));assert.ok(w.document.querySelector('[data-edit="wallet"]'));assert.ok(w.document.querySelector('[data-edit="bank"]'));assert.ok(w.document.querySelector('[data-edit="level"]'));w.close();
 });
+
+test('advanced leveling settings are validated and persist without erasing other data',async t=>{
+ const fx=setupFixture(),req=await start(t,fx);
+ const base={enabled:true,min:15,max:25,cooldown:20,channelId:null,announce:true,publicLeaderboard:false};
+ const advanced={...base,levelUpMessage:'Congrats {user} level {level}',ignoredChannels:[channelId],ignoredRoles:[roleId],roleRewards:{'10':roleId}};
+ assert.equal((await req('/settings/leveling','PATCH',advanced)).status,200);
+ assert.deepEqual(fx.getCfg().leveling.roleRewards,{'10':roleId});
+ assert.deepEqual(fx.getCfg().leveling.ignoredChannels,[channelId]);
+ assert.equal(fx.getCfg().leveling.levelUpMessage,advanced.levelUpMessage);
+ for(const patch of [{ignoredChannels:['999999999999999999']},{ignoredRoles:['999999999999999999']},{roleRewards:{'501':roleId}},{roleRewards:{'10':'999999999999999999'}},{levelUpMessage:''},{ignoredRoles:[roleId,roleId]}]){
+   assert.equal((await req('/settings/leveling','PATCH',{...advanced,...patch})).status,400);
+ }
+ assert.equal((await req('/settings/leveling','PATCH',base)).status,200);
+ assert.deepEqual(fx.getCfg().leveling.roleRewards,{'10':roleId});
+ assert.equal((await req('/settings/leveling','PATCH',advanced,{'x-csrf':'no'})).status,403);
+});
+
+test('leveling browser submits advanced controls to real settings endpoint',async t=>{
+ const html=fs.readFileSync('dashboard-preview/index.html','utf8').replace(/<script src=".*?"><\/script>/g,'');
+ const d=new JSDOM(html,{url:'http://localhost/dashboard/#features/economy',runScripts:'outside-only'}),w=d.window; t.after(()=>w.close()); w.scrollTo=()=>{};let submitted;
+ w.fetch=async (url,opts={})=>{if(opts.method==='PATCH')submitted=JSON.parse(opts.body);return {ok:true,json:async()=>String(url).endsWith('/me')?{user:{username:'Tester'},guild:{name:'Server'},csrf:'x'}:{settings:{enabled:true,levelUpMessage:'Test {level}',ignoredChannels:[channelId],ignoredRoles:[roleId],roleRewards:{'10':roleId}},channels:[{id:channelId,name:'chat'}],roles:[{id:roleId,name:'Role'}],categories:[],events:[],groups:[]}}};
+ for(const x of ['session.js','live.js','modules-live.js','operations-live.js','features.js','ai-studio.js','app.js'])w.eval(fs.readFileSync('dashboard-preview/'+x,'utf8'));
+ await new Promise(r=>setTimeout(r,40));const form=w.document.querySelector('#moduleForm');assert.ok(form);assert.match(form.elements.roleRewards.value,/10:/);form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));assert.equal(submitted.levelUpMessage,'Test {level}');assert.deepEqual(Array.from(submitted.ignoredChannels),[channelId]);assert.equal(submitted.roleRewards['10'],roleId);w.close();
+});

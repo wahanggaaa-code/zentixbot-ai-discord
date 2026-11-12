@@ -20,7 +20,7 @@ const feedbackHandler = {
         
         const [guildId, channelId, ratingStr] = args;
 
-        if (!guildId || !channelId || !ratingStr) {
+        if (!guildId || !channelId || !/^[1-5]$/.test(ratingStr || '')) {
             await InteractionHelper.safeReply(interaction, {
                 embeds: [
                     new EmbedBuilder()
@@ -91,12 +91,15 @@ const feedbackHandler = {
 
         try {
             ticketData.feedback = {
+                ...ticketData.feedback,
                 rating,
                 submittedAt: new Date().toISOString(),
             };
             await saveTicketData(guildId, channelId, ticketData);
         } catch (err) {
             logger.error('ticketFeedback: failed to save feedback', { guildId, channelId, rating, error: err.message });
+            await InteractionHelper.safeEditReply(interaction, { content: 'Feedback could not be saved. Please try again.' });
+            return;
         }
 
         try {
@@ -152,6 +155,12 @@ const commentHandler = {
             return;
         }
 
+        const ticketData = await getTicketData(guildId, channelId);
+        if (!ticketData || ticketData.userId !== interaction.user.id) {
+            await InteractionHelper.safeReply(interaction, { content: 'Only the ticket creator can submit feedback for this ticket.' });
+            return;
+        }
+
         const modal = new ModalBuilder()
             .setCustomId(`ticket_feedback_comment_modal:${guildId}:${channelId}`)
             .setTitle('Add Ticket Feedback');
@@ -173,7 +182,13 @@ const commentHandler = {
 const declineHandler = {
     name: 'ticket_feedback_decline',
 
-    async execute(interaction) {
+    async execute(interaction, client, args) {
+        const [guildId, channelId] = args;
+        const ticketData = await getTicketData(guildId, channelId);
+        if (!ticketData || ticketData.userId !== interaction.user.id) {
+            await InteractionHelper.safeReply(interaction, { content: 'Only the ticket creator can dismiss this survey.' });
+            return;
+        }
         await interaction.update({
             embeds: [
                 new EmbedBuilder()

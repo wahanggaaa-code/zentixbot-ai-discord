@@ -65,8 +65,15 @@ export function createModulesApi(client,{auth,csrf}) {
    if(!b.enabledEvents||typeof b.enabledEvents!=='object'||Array.isArray(b.enabledEvents)||Object.entries(b.enabledEvents).some(([k,v])=>!([...events,...groups.map(x=>x+'.*')].includes(k))||typeof v!=='boolean'))throw bad('Event logging tidak valid.');
    updated=await transaction(client,g.id,async cfg=>{cfg.logging={...(cfg.logging||{}),enabled:b.enabled,channels:{...cfg.logging?.channels,...b.channels},enabledEvents:{...cfg.logging?.enabledEvents,...b.enabledEvents}};return cfg.logging});
   } else if(kind==='leveling'){
-   exact(b,['enabled','min','max','cooldown','channelId','announce','publicLeaderboard']);bool(b.enabled);bool(b.announce);bool(b.publicLeaderboard);number(b.min,1,10000);number(b.max,1,10000);number(b.cooldown,1,3600);channelId(g,b.channelId);if(b.min>b.max)throw bad('XP minimum melebihi maksimum.');
-   updated=await transaction(client,g.id,async cfg=>{cfg.publicLeaderboard=b.publicLeaderboard;cfg.leveling={...LEVEL_DEFAULTS,...(cfg.leveling||{}),enabled:b.enabled,xpPerMessage:{min:b.min,max:b.max},xpRange:{min:b.min,max:b.max},xpCooldown:b.cooldown,levelUpChannel:b.channelId,announceLevelUp:b.announce};return cfg.leveling});
+   const required=['enabled','min','max','cooldown','channelId','announce','publicLeaderboard'];
+   const optional=['levelUpMessage','ignoredChannels','ignoredRoles','roleRewards'];
+   if (!b || typeof b!=='object' || Array.isArray(b) || required.some(k=>!(k in b)) || Object.keys(b).some(k=>!required.includes(k)&&!optional.includes(k))) throw bad('Data tidak valid.');
+   if ('levelUpMessage' in b) str(b.levelUpMessage,1,2000);
+   if ('ignoredChannels' in b) { if(!Array.isArray(b.ignoredChannels)||b.ignoredChannels.length>100||new Set(b.ignoredChannels).size!==b.ignoredChannels.length)throw bad('Daftar channel tidak valid.'); b.ignoredChannels.forEach(id=>{if(id===null)throw bad('Channel tidak valid.');channelId(g,id)}); }
+   if ('ignoredRoles' in b) { if(!Array.isArray(b.ignoredRoles)||b.ignoredRoles.length>100||new Set(b.ignoredRoles).size!==b.ignoredRoles.length||b.ignoredRoles.some(id=>typeof id!=='string'||!g.roles.cache.has(id)||id===g.id))throw bad('Daftar role tidak valid.'); }
+   if ('roleRewards' in b) { if(!b.roleRewards||typeof b.roleRewards!=='object'||Array.isArray(b.roleRewards)||Object.keys(b.roleRewards).length>100)throw bad('Role reward tidak valid.'); for(const [level,id] of Object.entries(b.roleRewards)){if(!/^[1-9]\d{0,2}$/.test(level)||Number(level)>500||id===null)throw bad('Level reward harus 1–500.');roleId(g,id);} }
+   bool(b.enabled);bool(b.announce);bool(b.publicLeaderboard);number(b.min,1,10000);number(b.max,1,10000);number(b.cooldown,1,3600);channelId(g,b.channelId);if(b.min>b.max)throw bad('XP minimum melebihi maksimum.');
+   updated=await transaction(client,g.id,async cfg=>{cfg.publicLeaderboard=b.publicLeaderboard;cfg.leveling={...LEVEL_DEFAULTS,...(cfg.leveling||{}),...Object.fromEntries(optional.filter(k=>k in b).map(k=>[k,b[k]])),enabled:b.enabled,xpPerMessage:{min:b.min,max:b.max},xpRange:{min:b.min,max:b.max},xpCooldown:b.cooldown,levelUpChannel:b.channelId,announceLevelUp:b.announce};return cfg.leveling});
   } else if(kind==='economy'){
    exact(b,['premiumRoleId']);if(b.premiumRoleId!==null && !listStaffRoles(g).some(r=>r.id===b.premiumRoleId))throw bad('Role premium tidak tersedia.');
    updated=await transaction(client,g.id,async cfg=>{cfg.premiumRoleId=b.premiumRoleId;return {premiumRoleId:cfg.premiumRoleId}});

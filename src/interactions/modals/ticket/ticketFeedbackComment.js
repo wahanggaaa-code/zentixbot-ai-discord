@@ -87,6 +87,8 @@ export default {
             await saveTicketData(guildId, channelId, ticketData);
         } catch (err) {
             logger.error('ticketFeedbackComment: failed to save feedback', { guildId, channelId, error: err.message });
+            await InteractionHelper.safeEditReply(interaction, { content: 'Feedback could not be saved. Please try again.' });
+            return;
         }
 
         try {

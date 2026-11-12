@@ -78,17 +78,21 @@ export default {
             return;
         }
 
-        const rating = parseInt(interaction.values[0], 10);
+        if (!/^[1-5]$/.test(interaction.values[0] || '')) { await interaction.update({content:'Invalid rating.',components:[]}); return; }
+        const rating = Number(interaction.values[0]);
         const ratingLabel = STAR_LABELS[String(rating)] ?? `${rating} stars`;
 
         try {
             ticketData.feedback = {
+                ...ticketData.feedback,
                 rating,
                 submittedAt: new Date().toISOString(),
             };
             await saveTicketData(guildId, channelId, ticketData);
         } catch (err) {
             logger.error('ticketFeedback: failed to save feedback', { guildId, channelId, rating, error: err.message });
+            await interaction.update({ content: 'Feedback could not be saved. Please try again.' });
+            return;
         }
 
         try {

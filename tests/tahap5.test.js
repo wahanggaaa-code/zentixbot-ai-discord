@@ -102,3 +102,15 @@ test('slash commands register only to configured guild',async()=>{
  assert.ok(calls.length); assert.ok(calls.every(call=>call.path===`/applications/${other}/guilds/${home}/commands`));
  await assert.rejects(registerCommands(client,{clientId:other,guildId:''}));
 });
+
+test('single-guild policy permits only well-formed feedback DM interactions for home guild',()=>{
+ const bot='456789012345678901', channel='567890123456789012';
+ const client={homeGuildId:home,user:{id:bot}};
+ const button=id=>({customId:id,message:{author:{id:bot}},isButton:()=>true});
+ assert.equal(mayDispatchEvent(client,'interactionCreate',[button(`ticket_feedback:${home}:${channel}:5`)]),true);
+ assert.equal(mayDispatchEvent(client,'interactionCreate',[button(`ticket_feedback_comment:${home}:${channel}`)]),true);
+ assert.equal(mayDispatchEvent(client,'interactionCreate',[button(`ticket_feedback_decline:${home}:${channel}`)]),true);
+ assert.equal(mayDispatchEvent(client,'interactionCreate',[{customId:`ticket_feedback_comment_modal:${home}:${channel}`,isModalSubmit:()=>true}]),true);
+ assert.equal(mayDispatchEvent(client,'interactionCreate',[{customId:`ticket_feedback:${home}:${channel}`,message:{author:{id:bot}},isStringSelectMenu:()=>true}]),true);
+ for(const i of [button(`ticket_feedback:${other}:${channel}:5`),button(`ticket_feedback:${home}:${channel}:6`),button(`ticket_feedback:${home}:invalid:1`),button(`other:${home}:${channel}`),{...button(`ticket_feedback:${home}:${channel}:1`),message:{author:{id:user}}},{customId:`ticket_feedback_comment_modal:${other}:${channel}`,isModalSubmit:()=>true}]) assert.equal(mayDispatchEvent(client,'interactionCreate',[i]),false);
+});
