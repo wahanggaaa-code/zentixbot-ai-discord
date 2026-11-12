@@ -57,15 +57,16 @@ export function quizPayload(quiz,roundId,{ended=null}={}){
 }
 export async function startActivity({client,guild,actorId,store=createActivityStore(client),foundation=client.aiFoundation}){
  if(guild.id!==client.homeGuildId)throw error('Server tidak valid.',403);const cfg=validateActivity(await store.read(guild.id),guild);if(!cfg.enabled)throw error('AI Activities belum diaktifkan.',403);
- const roundId=crypto.randomBytes(10).toString('hex');await store.reserve(guild.id,roundId,Date.now());let sent=false;
+ const roundId=crypto.randomBytes(10).toString('hex');await store.reserve(guild.id,roundId,Date.now());let sendAttempted=false;
  try{
   let question=null,source='ai';try{const prompt=`Generate one easy ${cfg.kind==='emoji'?'emoji guessing puzzle, where the question contains emoji representing a familiar object or phrase':'factual general-knowledge multiple choice question'} in ${cfg.language==='id'?'Indonesian':'English'}. Respond with only JSON object with keys question (string), options (array of exactly 4 short strings), answer (correct index 0 to 3). No URLs or mentions.`;const r=await foundation.generate({guildId:guild.id,userId:actorId,consent:true,prompt});question=validateQuiz(JSON.parse(r.text));}catch{}
   if(!question){question=cfg.kind==='emoji'?(cfg.language==='en'?{question:'Guess the word: ☀️🌻',options:['Sunflower','Moon','Ocean','Cloud'],answer:0}:{question:'Tebak kata: ☀️🌻',options:['Bunga matahari','Bulan','Laut','Awan'],answer:0}):cfg.language==='en'?{question:'Which planet is known as the Red Planet?',options:['Venus','Mars','Jupiter','Mercury'],answer:1}:FALLBACK;source='fallback';}
-  await store.open(guild.id,roundId,question,cfg.duration,Date.now(),cfg.rewardPoints);const channel=guild.channels.cache.get(cfg.channelId);const message=await channel.send(quizPayload(question,roundId));sent=true;
+  await store.open(guild.id,roundId,question,cfg.duration,Date.now(),cfg.rewardPoints);const channel=guild.channels.cache.get(cfg.channelId);sendAttempted=true;let message;
+  try{message=await channel.send(quizPayload(question,roundId));}catch{throw error('Hasil pengiriman ronde tidak pasti; periksa channel sebelum mencoba lagi.',409)}
   try{await store.attach(guild.id,roundId,message.id);}catch{throw error('Ronde terkirim tetapi status gagal disimpan; periksa channel sebelum mencoba lagi.',409)}
   const timer=setTimeout(async()=>{try{const expired=await store.expire(guild.id,roundId,Date.now());if(expired)await message.edit(quizPayload(expired,roundId,{ended:'Waktu habis.'}));}catch{}},cfg.duration*1000+100);timer.unref?.();
   return {messageId:message.id,source};
- }catch(e){if(!sent)await store.cancel(guild.id,roundId).catch(()=>{});throw e;}
+ }catch(e){if(!sendAttempted)await store.cancel(guild.id,roundId).catch(()=>{});throw e;}
 }
 
 const ZONES={WIB:'Asia/Jakarta',WITA:'Asia/Makassar',WIT:'Asia/Jayapura'};
