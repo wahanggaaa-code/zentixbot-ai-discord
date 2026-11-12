@@ -22,6 +22,10 @@ export function createBuilder({client,foundation=client.aiFoundation,now=Date.no
    purge();if(plans.size>=50)throw err('Terlalu banyak rancangan menunggu.',429);
    const id=crypto.randomBytes(20).toString('hex');plans.set(id,{guildId,userId,plan,expires:now()+300000});return {id,plan,expiresInSeconds:300};
   },
+  async edit({guildId,userId,id,plan}){
+   purge();const entry=plans.get(id);if(!entry||entry.userId!==userId||entry.guildId!==guildId||guildId!==client.homeGuildId)throw err('Rancangan tidak ditemukan atau kedaluwarsa.',404);
+   const updated=validatePlan(plan);entry.plan=updated;return {plan:updated,expiresInSeconds:Math.max(0,Math.ceil((entry.expires-now())/1000))};
+  },
   async apply({guild,userId,id,confirmed}){
    purge();const entry=plans.get(id);if(!entry||entry.userId!==userId||entry.guildId!==guild.id||guild.id!==client.homeGuildId)throw err('Rancangan tidak ditemukan atau kedaluwarsa.',404);if(confirmed!==true)throw err('Konfirmasi penerapan diperlukan.');
    if(activeGuilds.has(guild.id))throw err('Penerapan lain masih berjalan.',409);
