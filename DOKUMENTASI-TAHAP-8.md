@@ -65,3 +65,8 @@ Integrasi inti tersedia dengan batasan di atas, bukan semua opsi desain awal: po
 | Provider/fallback | Fondasi dan konfigurasi terhubung | Periksa status tiap fitur; label koneksi dashboard bukan bukti provider sehat. |
 
 Pengujian tahap 8 tambahan `tests/tahap8-activities-postgres.test.js` memakai PostgreSQL disposable lokal hanya jika `ZENTIX_TEST_PG_SOCKET=/tmp/zentix-local-pg` ditetapkan. Tanpa flag, tes tersebut dilewati. Tes ini tidak menguji wallet ekonomi atau API Discord/provider.
+
+
+### Integritas penyimpanan pengetahuan
+
+Daftar dokumen yang sudah ada kini divalidasi sebelum dibaca atau diubah; record PostgreSQL yang berbentuk tidak valid, berisi ID ganda, melebihi batas, atau bernilai JSON null ditolak tanpa menimpa data. Pemeriksaan tidak membuktikan isi dokumen benar atau aman. Tes pada PostgreSQL lokal menjalankan 15 unggahan bersamaan: 10 tersimpan dan 5 ditolak oleh batas; penghapusan dan penolakan data rusak juga diuji. SQLite tetap eksperimental dan representasi null-versus-key-tidak-ada belum dibuktikan secara menyeluruh. Uji provider/Discord/Wispbyte masih diperlukan.
