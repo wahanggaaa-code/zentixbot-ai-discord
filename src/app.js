@@ -3,6 +3,7 @@ import { Client, Collection, GatewayIntentBits } from 'discord.js';
 import { REST } from '@discordjs/rest';
 import express from 'express';
 import { createDashboardRouter } from './dashboard/router.js';
+import { createAIFoundation } from './services/ai/foundation.js';
 import { requireHomeGuildId, isHomeGuild } from './utils/singleGuild.js';
 import cron from 'node-cron';
 
@@ -41,6 +42,7 @@ class TitanBot extends Client {
 
     this.config = config;
     this.homeGuildId = requireHomeGuildId(process.env.GUILD_ID);
+    this.aiFoundation = createAIFoundation({client:this});
     this.commands = new Collection();
     this.events = new Collection();
     this.buttons = new Collection();

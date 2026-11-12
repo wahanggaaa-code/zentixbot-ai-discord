@@ -1,7 +1,7 @@
 /* Connected bot overview and welcome. All other modules remain simulation. */
 (() => {
   const enabled=location.pathname.startsWith('/dashboard/');
-  if (enabled) document.querySelector('.demo-strip').textContent = 'TAHAP 07 / FONDASI AI · PERIKSA LABEL TIAP MODUL';
+  if (enabled) document.querySelector('.demo-strip').textContent = 'TAHAP 08 / INTEGRASI AI · PERIKSA LABEL TIAP MODUL';
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const notify=text=>{const t=document.getElementById('toast');t.textContent=text;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),4000)};
   async function request(path,opts={}) {

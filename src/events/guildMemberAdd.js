@@ -1,7 +1,7 @@
-import { Events, PermissionFlagsBits } from 'discord.js';
+import { Events } from 'discord.js';
 import { getGuildConfig } from '../services/config/guildConfig.js';
 import { getWelcomeConfig } from '../utils/database.js';
-import { buildWelcomePayload } from '../services/welcomePayload.js';
+import { deliverJoinWelcome } from '../services/ai/welcome.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { getServerCounters, updateCounter } from '../services/serverstatsService.js';
 import { setBirthday as dbSetBirthday } from '../utils/database.js';
@@ -19,23 +19,13 @@ export default {
         
         const welcomeConfig = await getWelcomeConfig(member.client, guild.id);
         
-        const welcomeChannelId = welcomeConfig?.channelId;
+        // Welcome runs independently so slow or failed AI/Discord delivery cannot block onboarding.
+        const welcomeTask = deliverJoinWelcome(member, welcomeConfig).then(result => {
+            if (result.failed || result.source === 'unavailable' || result.source === 'legacy-unavailable') logger.warn('Welcome could not be delivered to one or more configured destinations.');
+        }).catch(() => {
+            logger.warn('Welcome delivery failed; other join actions continue.');
+        });
 
-        if (welcomeConfig?.enabled && welcomeChannelId) {
-            const channel = guild.channels.cache.get(welcomeChannelId);
-            const me = guild.members.me;
-            const permissions = channel?.isTextBased?.() && me ? channel.permissionsFor(me) : null;
-            // Skip only the welcome message if permissions are missing; the rest of the
-            // join pipeline (auto-role, verification, logging, counters) must still run.
-            if (permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
-                await channel.send(buildWelcomePayload({
-                    member,
-                    config: welcomeConfig,
-                    canEmbed: permissions.has(PermissionFlagsBits.EmbedLinks)
-                }));
-            }
-        }
-        
         if (welcomeConfig?.roleIds && welcomeConfig.roleIds.length > 0) {
             const delay = welcomeConfig.autoRoleDelay || 0;
             const singleRoleId = welcomeConfig.roleIds[0];
@@ -108,7 +98,7 @@ export default {
         } catch (error) {
             logger.debug('Error restoring birthday on member join:', error);
         }
-        
+        await welcomeTask;
     } catch (error) {
         logger.error('Error in guildMemberAdd event:', error);
     }
