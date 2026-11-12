@@ -60,7 +60,7 @@ export async function saveTicketData(guildId, channelId, data) {
     }
 
     const key = getTicketKey(guildId, channelId);
-    await db.set(key, data);
+    if (!await db.set(key, data)) throw new Error('Ticket data could not be saved');
 }
 
 export async function deleteTicketData(guildId, channelId) {

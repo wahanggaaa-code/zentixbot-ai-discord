@@ -38,7 +38,9 @@ class WarningService {
     };
 
     warnings.push(warning);
-    await setInDb(key, warnings);
+    if (!await setInDb(key, warnings)) {
+      throw createError('Warning write failed', ErrorTypes.DATABASE, 'Warning could not be saved.', {guildId, userId});
+    }
 
     logger.info(`Warning added: ${userId} in ${guildId} by ${moderatorId}`);
 

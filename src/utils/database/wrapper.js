@@ -175,8 +175,7 @@ export async function getFromDb(key, defaultValue = null) {
 
 export async function setInDb(key, value, ttl = null) {
     try {
-        await db.set(key, value, ttl);
-        return true;
+        return await db.set(key, value, ttl) === true;
     } catch (error) {
         logger.error(`Error setting value for key ${key}:`, error);
         return false;

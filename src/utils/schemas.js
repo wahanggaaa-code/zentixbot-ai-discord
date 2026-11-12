@@ -50,7 +50,7 @@ const VerificationConfigSchema = z
     enabled: z.boolean().default(false),
     channelId: z.string().nullable().optional(),
     messageId: z.string().nullable().optional(),
-    roleId: z.string().optional(),
+    roleId: z.string().nullable().optional(),
     message: z.string().optional(),
     buttonText: z.string().default('Verify'),
     autoVerify: AutoVerifyConfigSchema

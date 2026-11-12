@@ -66,7 +66,7 @@ test('browser live overview hides sample hosting data and renders bot data',asyn
  const files=['session.js','live.js','features.js','ai-studio.js','app.js'].map(x=>fs.readFileSync('dashboard-preview/'+x,'utf8'));
  const html=fs.readFileSync('dashboard-preview/index.html','utf8').replace(/<script src=".*?"><\/script>/g,'');
  const dom=new JSDOM(html,{url:'http://localhost/dashboard/',runScripts:'outside-only'});const w=dom.window;w.scrollTo=()=>{};
- w.fetch=async url=>({ok:true,json:async()=>String(url).endsWith('/me')?{user:{id:uid,username:'Test'},guild:{id,name:'Server'},csrf:'csrf'}: {guild:{memberCount:42},online:true,ping:35,uptime:120000,database:'connected'}});
+ w.fetch=async url=>({ok:!String(url).endsWith('/hosting'),json:async()=>String(url).endsWith('/hosting')?{error:'Belum tersedia'}:String(url).endsWith('/me')?{user:{id:uid,username:'Test'},guild:{id,name:'Server'},csrf:'csrf'}: {guild:{memberCount:42},online:true,ping:35,uptime:120000,database:'connected'}});
  for(const code of files)w.eval(code);await new Promise(r=>setTimeout(r,20));
  assert.match(w.document.querySelector('.metrics').textContent,/42/);assert.match(w.document.querySelector('.resource-section').textContent,/belum tersedia/i);assert.doesNotMatch(w.document.querySelector('.resource-section').textContent,/384|142|24%/);
  w.close();
@@ -84,4 +84,12 @@ test('welcome UI loads stored values safely and submits real validated fields',a
  form.elements.welcomeMessage.value='New message';form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,15));
  assert.equal(saved.body.welcomeMessage,'New message');assert.equal(saved.body.channelId,channelId);assert.equal(saved.csrf,'csrf');
  w.close();
+});
+
+test('new endpoints retain Discord admin checks and CSRF',async t=>{
+ const fx=fixture(), {get,write,req,session}=await setup(t,fx);
+ for(const p of ['settings/verification','tickets','cases','music','leaderboard','hosting']) assert.equal((await req('/dashboard/api/bot/'+p)).status,401,p);
+ assert.equal((await write('POST','music',{action:'pause',confirmed:true},{'x-csrf-token':'wrong'})).status,403);
+ fx.member.permissions.has=()=>false;
+ for(const p of ['welcome','settings/verification','tickets','cases','music','leaderboard','hosting']) assert.equal((await get(p)).status,403,p);
 });

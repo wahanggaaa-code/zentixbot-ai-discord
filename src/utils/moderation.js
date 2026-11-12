@@ -118,7 +118,7 @@ export async function storeModerationCase({ guildId, caseId, caseData }) {
       caseId
     };
     
-    await setInDb(caseKey, caseDataWithTimestamp);
+    if (!await setInDb(caseKey, caseDataWithTimestamp)) throw new Error('Failed to store moderation case');
     
     const caseListKey = `moderation_cases_list_${guildId}`;
     const caseList = await getFromDb(caseListKey, []);
@@ -128,7 +128,7 @@ export async function storeModerationCase({ guildId, caseId, caseData }) {
       caseList.splice(0, caseList.length - 1000);
     }
     
-    await setInDb(caseListKey, caseList);
+    if (!await setInDb(caseListKey, caseList)) throw new Error('Failed to update moderation case list');
     return true;
   } catch (error) {
     logger.error("Error storing moderation case:", error);
@@ -171,7 +171,7 @@ export async function getModerationCases(guildId, filters = {}) {
 export async function logModerationAction({ client, guild, event }) {
   const caseId = await generateCaseId(client, guild.id);
   
-  await storeModerationCase({
+  const stored = await storeModerationCase({
     guildId: guild.id,
     caseId,
     caseData: {
@@ -186,6 +186,8 @@ export async function logModerationAction({ client, guild, event }) {
     }
   });
   
+  if (!stored) throw new Error('Moderation action may have succeeded, but its case could not be saved.');
+
   await logEvent({
     client,
     guild,
