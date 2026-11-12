@@ -18,7 +18,8 @@ import { wrapDashboardHandler } from '../../../utils/dashboardSession.js';
 import { successEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { TitanBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
-import { getGuildConfig, setGuildConfig } from '../../../services/config/guildConfig.js';
+import { getGuildConfig } from '../../../services/config/guildConfig.js';
+import { saveVerificationDashboardChange } from '../../../services/config/verificationDashboardUpdate.js';
 import { getWelcomeConfigForEditing } from '../../../utils/database.js';
 import { validateAutoVerifyCriteria } from '../../../services/verificationService.js';
 import { botHasPermission } from '../../../utils/permissionGuard.js';
@@ -256,15 +257,17 @@ export default {
                     if (btnInteraction.customId === `autoverify_cfg_criteria_${guildId}`) {
                         await handleCriteria(btnInteraction, interaction, guildConfig, guildId, client);
                     } else if (btnInteraction.customId === `autoverify_cfg_toggle_${guildId}`) {
+                        const expected = structuredClone(guildConfig.verification);
                         await btnInteraction.deferUpdate().catch(() => null);
-                        guildConfig.verification.autoVerify.enabled = !guildConfig.verification.autoVerify.enabled;
-                        await setGuildConfig(client, guildId, guildConfig);
+                        const saved = await saveVerificationDashboardChange(client, guildId, guildConfig.verification, expected, {
+                            autoVerify: { ...expected.autoVerify, enabled: !expected.autoVerify.enabled },
+                        });
                         
                         await btnInteraction.followUp({
                             embeds: [
                                 successEmbed(
                                     '✅ Status Updated',
-                                    `Auto-verification is now **${guildConfig.verification.autoVerify.enabled ? 'enabled' : 'disabled'}**.`,
+                                    `Auto-verification is now **${saved.autoVerify.enabled ? 'enabled' : 'disabled'}**.`,
                                 ),
                             ],
                             flags: MessageFlags.Ephemeral,
@@ -315,7 +318,7 @@ export default {
 };
 
 async function handleCriteria(selectInteraction, rootInteraction, guildConfig, guildId, client) {
-    
+    const expected = structuredClone(guildConfig.verification);
     if (!selectInteraction.deferred) {
         await selectInteraction.deferUpdate().catch(() => null);
     }
@@ -357,20 +360,18 @@ async function handleCriteria(selectInteraction, rootInteraction, guildConfig, g
         await criteriaInteraction.deferUpdate();
         const newCriteria = criteriaInteraction.values[0];
 
-        guildConfig.verification.autoVerify.criteria = newCriteria;
-
+        const autoVerify = { ...expected.autoVerify, criteria: newCriteria };
         if (newCriteria !== 'account_age') {
-            guildConfig.verification.autoVerify.accountAgeDays = null;
-        } else if (!guildConfig.verification.autoVerify.accountAgeDays) {
-            guildConfig.verification.autoVerify.accountAgeDays = defaultAccountAgeDays;
+            autoVerify.accountAgeDays = null;
+        } else if (!autoVerify.accountAgeDays) {
+            autoVerify.accountAgeDays = defaultAccountAgeDays;
         }
-
-        await setGuildConfig(client, guildId, guildConfig);
+        const saved = await saveVerificationDashboardChange(client, guildId, guildConfig.verification, expected, { autoVerify });
 
         let criteriaDisplay = '';
         switch (newCriteria) {
             case 'account_age':
-                criteriaDisplay = `Account Age (${guildConfig.verification.autoVerify.accountAgeDays} days)`;
+                criteriaDisplay = `Account Age (${saved.autoVerify.accountAgeDays} days)`;
                 break;
             case 'none':
                 criteriaDisplay = 'No Criteria';
@@ -396,6 +397,7 @@ async function handleCriteria(selectInteraction, rootInteraction, guildConfig, g
 }
 
 async function handleRole(selectInteraction, rootInteraction, guildConfig, guildId, client) {
+    const expected = structuredClone(guildConfig.verification);
     await selectInteraction.deferUpdate();
 
     const roleSelect = new RoleSelectMenuBuilder()
@@ -443,8 +445,9 @@ async function handleRole(selectInteraction, rootInteraction, guildConfig, guild
             return;
         }
 
-        guildConfig.verification.autoVerify.roleId = role.id;
-        await setGuildConfig(client, guildId, guildConfig);
+        await saveVerificationDashboardChange(client, guildId, guildConfig.verification, expected, {
+            autoVerify: { ...expected.autoVerify, roleId: role.id },
+        });
 
         await roleInteraction.followUp({
             embeds: [successEmbed('Role Updated', `Auto-verification role set to ${role}.`)],
@@ -465,6 +468,7 @@ async function handleRole(selectInteraction, rootInteraction, guildConfig, guild
 }
 
 async function handleAccountAge(selectInteraction, rootInteraction, guildConfig, guildId, client) {
+    const expected = structuredClone(guildConfig.verification);
     const modal = new ModalBuilder()
         .setCustomId('autoverify_account_age_modal')
         .setTitle('Set Account Age Requirement')
@@ -500,13 +504,20 @@ async function handleAccountAge(selectInteraction, rootInteraction, guildConfig,
         return;
     }
 
-    guildConfig.verification.autoVerify.accountAgeDays = days;
-    await setGuildConfig(client, guildId, guildConfig);
-
-    await submitted.reply({
-        embeds: [successEmbed('Account Age Updated', `Minimum account age requirement set to **${days} days**.`)],
-        flags: MessageFlags.Ephemeral,
-    });
-
-    await refreshDashboard(rootInteraction, guildConfig, guildId, client);
+    try {
+        await saveVerificationDashboardChange(client, guildId, guildConfig.verification, expected, {
+            autoVerify: { ...expected.autoVerify, accountAgeDays: days },
+        });
+        await submitted.reply({
+            embeds: [successEmbed('Account Age Updated', `Minimum account age requirement set to **${days} days**.`)],
+            flags: MessageFlags.Ephemeral,
+        });
+        await refreshDashboard(rootInteraction, guildConfig, guildId, client);
+    } catch (error) {
+        logger.warn('Could not save auto-verification account age:', error.message);
+        await replyUserError(submitted, {
+            type: ErrorTypes.CONFIGURATION,
+            message: error instanceof TitanBotError ? error.userMessage : 'Failed to update configuration. Please reload the dashboard.',
+        }).catch(() => {});
+    }
 }
