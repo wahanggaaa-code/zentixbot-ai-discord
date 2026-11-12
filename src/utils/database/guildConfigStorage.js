@@ -17,41 +17,29 @@ export function unwrapReplitData(data) {
 }
 
 /**
- * Low-level guild config read. Returns normalized config with defaults;
- * never throws — callers use the guild config service for typed errors.
+ * Low-level guild config read. A missing row has defaults, but a failed read
+ * must propagate: otherwise a subsequent write could erase stored settings.
  */
 export async function readGuildConfig(client, guildId, context = {}) {
     try {
-        if (!client?.db || typeof client.db.get !== 'function') {
-            logger.warn(`Database unavailable for readGuildConfig in guild ${guildId}`);
-            return normalizeGuildConfig({}, GUILD_CONFIG_DEFAULTS);
+        if (!client?.db || typeof client.db.get !== 'function' ||
+            (typeof client.db.isAvailable === 'function' && !client.db.isAvailable())) {
+            throw new Error('Database unavailable for guild config read');
         }
-
-        if (typeof client.db.isAvailable === 'function' && !client.db.isAvailable()) {
-            logger.warn(`PostgreSQL unavailable for readGuildConfig in guild ${guildId}`, {
-                traceId: context.traceId,
-                guildId,
-            });
-            return normalizeGuildConfig({}, GUILD_CONFIG_DEFAULTS);
-        }
-
         const rawConfig = await client.db.get(getGuildConfigKey(guildId), null);
-
-        if (rawConfig === null) {
-            return normalizeGuildConfig({}, GUILD_CONFIG_DEFAULTS);
-        }
-
+        if (rawConfig === null) return normalizeGuildConfig({}, GUILD_CONFIG_DEFAULTS);
         const cleanedConfig = unwrapReplitData(rawConfig);
+        if (!cleanedConfig || typeof cleanedConfig !== 'object' || Array.isArray(cleanedConfig)) {
+            throw new Error('Stored guild configuration is not an object');
+        }
         return normalizeGuildConfig(cleanedConfig, GUILD_CONFIG_DEFAULTS);
     } catch (error) {
         logger.error(`Error fetching config for guild ${guildId}`, {
-            error,
-            traceId: context.traceId,
-            guildId,
-            userId: context.userId,
-            command: context.command,
+            error, traceId: context.traceId, guildId, userId: context.userId, command: context.command,
         });
-        return normalizeGuildConfig({}, GUILD_CONFIG_DEFAULTS);
+        throw createError('Failed to read guild configuration', ErrorTypes.DATABASE,
+            'Failed to load server configuration. The database is unavailable or the data needs review.',
+            {guildId, ...context});
     }
 }
 

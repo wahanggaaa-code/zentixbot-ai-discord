@@ -381,6 +381,22 @@ class PostgreSQLDatabase {
     }
 
     async get(key, defaultValue = null) {
+        // Guild config feeds read-modify-write paths. Never turn a failed query
+        // into a missing row, even if the database reconnects before the write.
+        const configKey = typeof key === 'string' ? parseKey(canonicalizeKey(key)) : null;
+        if (configKey?.type === 'guild_config') {
+            if (!this.isAvailable()) throw Object.assign(new Error('PostgreSQL guild configuration unavailable'), {code: 'CONFIG_DB_UNAVAILABLE'});
+            const result = await this.pool.query(
+                `SELECT config FROM ${pgConfig.tables.guilds} WHERE id = $1`,
+                [configKey.guildId],
+            );
+            if (!result.rows.length) return defaultValue;
+            const raw = result.rows[0].config;
+            if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+                throw Object.assign(new Error('Stored guild configuration is not an object'), {code: 'CONFIG_DATA_INVALID'});
+            }
+            return raw;
+        }
         try {
             if (!this.isAvailable()) {
                 logger.warn('PostgreSQL not available, returning default value');
