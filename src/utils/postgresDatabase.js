@@ -440,7 +440,7 @@ class PostgreSQLDatabase {
     async set(key, value, ttl = null) {
         // Replacements require the configuration service's snapshot transaction.
         // Deleting a guild row can also cascade into unrelated guild data.
-        if (typeof key === 'string' && parseKey(canonicalizeKey(key)).type === 'guild_config') return false;
+        if (typeof key === 'string' && ['guild_config','welcome_config'].includes(parseKey(canonicalizeKey(key)).type)) return false;
         const warningKey=canonicalizeKey(key);
         if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
@@ -482,7 +482,7 @@ class PostgreSQLDatabase {
     }
 
     async delete(key) {
-        if (typeof key === 'string' && parseKey(canonicalizeKey(key)).type === 'guild_config') return false;
+        if (typeof key === 'string' && ['guild_config','welcome_config'].includes(parseKey(canonicalizeKey(key)).type)) return false;
         const warningKey=canonicalizeKey(key);
         if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
@@ -616,8 +616,8 @@ class PostgreSQLDatabase {
     }
 
     async increment(key, amount = 1) {
-        if (typeof key === 'string' && parseKey(canonicalizeKey(key)).type === 'guild_config') {
-            throw Object.assign(new Error('Generic guild configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
+        if (typeof key === 'string' && ['guild_config','welcome_config'].includes(parseKey(canonicalizeKey(key)).type)) {
+            throw Object.assign(new Error('Generic configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
         }
         try {
             if (!this.isAvailable()) {
@@ -635,8 +635,8 @@ class PostgreSQLDatabase {
     }
 
     async decrement(key, amount = 1) {
-        if (typeof key === 'string' && parseKey(canonicalizeKey(key)).type === 'guild_config') {
-            throw Object.assign(new Error('Generic guild configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
+        if (typeof key === 'string' && ['guild_config','welcome_config'].includes(parseKey(canonicalizeKey(key)).type)) {
+            throw Object.assign(new Error('Generic configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
         }
         try {
             if (!this.isAvailable()) {
@@ -823,21 +823,8 @@ class PostgreSQLDatabase {
                     return true;
                 
                 case 'welcome_config':
-                    await this.pool.query(
-                        `INSERT INTO ${pgConfig.tables.guilds} (id, created_at) 
-                         VALUES ($1, CURRENT_TIMESTAMP) 
-                         ON CONFLICT (id) DO NOTHING`,
-                        [parsedKey.guildId]
-                    );
-                    
-                    await this.pool.query(
-                        `INSERT INTO ${pgConfig.tables.welcome_configs} (guild_id, config, updated_at) 
-                         VALUES ($1, $2, CURRENT_TIMESTAMP) 
-                         ON CONFLICT (guild_id) DO UPDATE SET config = $2, updated_at = CURRENT_TIMESTAMP`,
-                        [parsedKey.guildId, value]
-                    );
-                    return true;
-                
+                    return false; // Use the transactional welcome configuration service.
+
                 case 'leveling_config':
                     await this.pool.query(
                         `INSERT INTO ${pgConfig.tables.guilds} (id, created_at) 
@@ -1017,9 +1004,8 @@ class PostgreSQLDatabase {
                     return true;
                 
                 case 'welcome_config':
-                    await this.pool.query(`DELETE FROM ${pgConfig.tables.welcome_configs} WHERE guild_id = $1`, [parsedKey.guildId]);
-                    return true;
-                
+                    return false; // Generic deletion bypasses configuration safeguards.
+
                 case 'leveling_config':
                     await this.pool.query(`DELETE FROM ${pgConfig.tables.leveling_configs} WHERE guild_id = $1`, [parsedKey.guildId]);
                     return true;

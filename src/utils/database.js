@@ -3,7 +3,7 @@
 import { pgDb } from './postgresDatabase.js';
 import { logger } from './logger.js';
 import { pgConfig } from '../config/database/postgres.js';
-import { createError, ErrorTypes } from './errorHandler.js';
+import { createError, ErrorTypes, TitanBotError } from './errorHandler.js';
 import { BotConfig, getDefaultApplicationQuestions } from '../config/bot.js';
 import {isSQLiteBirthdayBackend,readSQLiteBirthdays,setSQLiteBirthday,deleteSQLiteBirthday} from '../services/storage/sqliteBirthdays.js';
 
@@ -417,27 +417,44 @@ export async function getWelcomeConfig(client, guildId) {
     }
 }
 
-// Writes must never treat a failed database read as an empty configuration.
-// This read is intentionally separate from the legacy best-effort event read.
+// Welcome edits use a distinct, fail-closed read. Event delivery retains its
+// legacy best-effort fallback and must not be used as a write snapshot.
+const welcomePostgresSnapshots = new WeakMap();
+function welcomePool(wrapper) {
+    const status = wrapper?.getStatus?.();
+    if (status?.connectionType !== 'postgresql') return null;
+    if (status.isDegraded || !wrapper.isAvailable?.() || !wrapper.db?.isAvailable?.() ||
+        !wrapper.db.pool?.query || !wrapper.db.pool?.connect) throw new Error('PostgreSQL unavailable');
+    return wrapper.db.pool;
+}
+function checkedWelcome(raw) {
+    const value = unwrapReplitData(raw);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Stored welcome configuration is invalid');
+    }
+    return value;
+}
+function welcomeSnapshot(pool, guildId, value, raw, exists = true) {
+    welcomePostgresSnapshots.set(value, {pool, guildId, raw, exists});
+    return value;
+}
 async function readWelcomeForWrite(client, guildId) {
     const wrapper = client?.db;
     if (!wrapper || typeof wrapper.get !== 'function' || (wrapper.isAvailable && !wrapper.isAvailable())) {
         throw new Error('Welcome configuration database unavailable');
     }
-    let raw;
-    if (wrapper.getStatus?.()?.connectionType === 'postgresql') {
-        if (wrapper.getStatus().isDegraded || !wrapper.db?.isAvailable?.() || !wrapper.db.pool?.query) throw new Error('PostgreSQL unavailable');
-        const result = await wrapper.db.pool.query(`SELECT config FROM ${pgConfig.tables.welcome_configs} WHERE guild_id=$1`, [guildId]);
-        raw = result.rows.length ? result.rows[0].config : {};
-    } else {
-        raw = await wrapper.get(getWelcomeConfigKey(guildId), null);
-        if (raw === null) raw = {};
+    const pool = welcomePool(wrapper);
+    if (pool) {
+        const result = await pool.query(`SELECT config FROM ${pgConfig.tables.welcome_configs} WHERE guild_id=$1`, [guildId]);
+        const exists = result.rows.length > 0;
+        const raw = exists ? result.rows[0].config : {};
+        const original = JSON.stringify(raw);
+        const value = normalizeWelcomeConfig(checkedWelcome(raw));
+        return welcomeSnapshot(pool, guildId, value, original, exists);
     }
-    const value = unwrapReplitData(raw);
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !value || typeof value !== 'object' || Array.isArray(value)) {
-        throw new Error('Stored welcome configuration is invalid');
-    }
-    return normalizeWelcomeConfig(value);
+    let raw = await wrapper.get(getWelcomeConfigKey(guildId), null);
+    if (raw === null) raw = {};
+    return normalizeWelcomeConfig(checkedWelcome(raw));
 }
 export async function getWelcomeConfigForEditing(client, guildId) {
     try { return await readWelcomeForWrite(client, guildId); }
@@ -447,9 +464,56 @@ export async function getWelcomeConfigForEditing(client, guildId) {
             'Failed to load welcome settings. The database is unavailable or needs review.', {guildId});
     }
 }
-async function writeWelcomeChanges(client, guildId, changes) {
+async function writePostgresWelcome(pool, guildId, changes, replace) {
+    const entry = replace && welcomePostgresSnapshots.get(changes);
+    if (replace && (!entry || entry.pool !== pool || entry.guildId !== guildId)) {
+        throw createError('Welcome snapshot required', ErrorTypes.CONFIGURATION, 'Reload welcome settings before saving.');
+    }
+    // Clone before asynchronous I/O so a caller cannot alter the pending write.
+    const requestedJSON = JSON.stringify(changes);
+    const requested = JSON.parse(requestedJSON);
+    const conn = await pool.connect();
+    try {
+        await conn.query('BEGIN');
+        // Same lock order as the web welcome dashboard: guild, then welcome.
+        await conn.query(`INSERT INTO ${pgConfig.tables.guilds}(id) VALUES($1) ON CONFLICT(id) DO NOTHING`, [guildId]);
+        await conn.query(`SELECT id FROM ${pgConfig.tables.guilds} WHERE id=$1 FOR UPDATE`, [guildId]);
+        const created = await conn.query(`INSERT INTO ${pgConfig.tables.welcome_configs}(guild_id,config) VALUES($1,'{}'::jsonb) ON CONFLICT(guild_id) DO NOTHING RETURNING guild_id`, [guildId]);
+        const result = await conn.query(`SELECT config, config = $2::jsonb AS matches FROM ${pgConfig.tables.welcome_configs} WHERE guild_id=$1 FOR UPDATE`, [guildId, entry?.raw ?? '{}']);
+        const raw = result.rows[0]?.config;
+        const current = checkedWelcome(raw);
+        if (raw.ok !== undefined && raw.value !== undefined) {
+            throw createError('Legacy welcome config', ErrorTypes.CONFIGURATION, 'Legacy welcome settings need review before editing.');
+        }
+        if (replace) {
+            const unchanged = entry.exists ? created.rowCount === 0 && result.rows[0]?.matches === true : created.rowCount === 1;
+            if (!unchanged) throw createError('Stale welcome configuration', ErrorTypes.CONFIGURATION, 'Welcome settings changed. Reload before saving.');
+        }
+        const merged = {...normalizeWelcomeConfig(current), ...requested};
+        const serialized = JSON.stringify(merged);
+        await conn.query(`UPDATE ${pgConfig.tables.welcome_configs} SET config=$2::jsonb, updated_at=CURRENT_TIMESTAMP WHERE guild_id=$1`, [guildId, serialized]);
+        await conn.query('COMMIT');
+        const saved = JSON.parse(serialized);
+        if (replace) {
+            // A second collector may have mutated the same object while this
+            // transaction was in flight. Force a fresh read instead of marking
+            // those unsaved changes as a new authoritative snapshot.
+            let unchangedObject = false;
+            try { unchangedObject = JSON.stringify(changes) === requestedJSON; } catch {}
+            if (unchangedObject) welcomeSnapshot(pool, guildId, changes, serialized);
+            else welcomePostgresSnapshots.delete(changes);
+        }
+        return welcomeSnapshot(pool, guildId, saved, serialized);
+    } catch (error) {
+        await conn.query('ROLLBACK').catch(() => {});
+        throw error;
+    } finally { conn.release(); }
+}
+async function writeWelcomeChanges(client, guildId, changes, replace = false) {
     try {
         if (!changes || typeof changes !== 'object' || Array.isArray(changes) || typeof client?.db?.set !== 'function') throw new Error('Invalid welcome write');
+        const pool = welcomePool(client.db);
+        if (pool) return await writePostgresWelcome(pool, guildId, changes, replace);
         const existing = await readWelcomeForWrite(client, guildId);
         const merged = { ...existing, ...changes };
         const success = await client.db.set(getWelcomeConfigKey(guildId), merged);
@@ -457,12 +521,13 @@ async function writeWelcomeChanges(client, guildId, changes) {
         return merged;
     } catch (error) {
         logger.error(`Error saving welcome config for guild ${guildId}:`, error);
+        if (error instanceof TitanBotError) throw error;
         throw createError('Failed to save welcome configuration', ErrorTypes.DATABASE,
             'Failed to save welcome settings. The database is unavailable or needs review.', {guildId});
     }
 }
 export async function saveWelcomeConfig(client, guildId, config) {
-    await writeWelcomeChanges(client, guildId, config);
+    await writeWelcomeChanges(client, guildId, config, true);
     return true;
 }
 export async function updateWelcomeConfig(client, guildId, updates) {
