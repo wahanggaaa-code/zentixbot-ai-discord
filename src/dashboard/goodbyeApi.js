@@ -75,12 +75,14 @@ export function createGoodbyeApi(client,{auth,csrf}){
    const row=result.rows[0],raw=checked(row?.config),currentVersion=created.rowCount?'missing':version(row.serialized);
    if(currentVersion!==body.revision)throw error(409,'Pengaturan berubah. Muat ulang sebelum menyimpan.');
    assertOnboardingShape(guild.rows[0]?.config,raw);
-   const embed={...normalizeWelcomeConfig(raw).leaveEmbed,title:body.title,footer:body.footer,color:body.color};
-   if(body.image===null)delete embed.image;else embed.image={url:body.image};
-   const merged={...raw,goodbyeEnabled:body.enabled,goodbyeChannelId:body.channelId,leaveMessage:body.message,goodbyePing:body.ping,leaveEmbed:embed};
-   assertOnboardingCompatible(guild.rows[0]?.config,merged);
-   const saved=await conn.query(`UPDATE ${tables.welcome_configs} SET config=$2::jsonb,updated_at=CURRENT_TIMESTAMP WHERE guild_id=$1 RETURNING config::text AS serialized`,[req.guild.id,JSON.stringify(merged)]);
-   await conn.query('COMMIT');res.json({ok:true,revision:version(saved.rows[0].serialized),goodbye:view(merged)});
+   assertOnboardingCompatible(guild.rows[0]?.config,raw);
+   const fields={goodbyeEnabled:body.enabled,goodbyeChannelId:body.channelId,leaveMessage:body.message,goodbyePing:body.ping};
+   const embedPatch={title:body.title,footer:body.footer,color:body.color,...(body.image===null?{}:{image:{url:body.image}})};
+   const defaultEmbed=normalizeWelcomeConfig({}).leaveEmbed;
+   // Patch JSONB in PostgreSQL so unrelated numeric and unknown fields never
+   // pass through JavaScript's potentially lossy JSON number representation.
+   const saved=await conn.query(`UPDATE ${tables.welcome_configs} SET config=jsonb_set(config || $2::jsonb,'{leaveEmbed}',((CASE WHEN config ? 'leaveEmbed' THEN config->'leaveEmbed' ELSE $3::jsonb END) - 'image') || $4::jsonb,true),updated_at=CURRENT_TIMESTAMP WHERE guild_id=$1 RETURNING config,config::text AS serialized`,[req.guild.id,JSON.stringify(fields),JSON.stringify(defaultEmbed),JSON.stringify(embedPatch)]);
+   await conn.query('COMMIT');res.json({ok:true,revision:version(saved.rows[0].serialized),goodbye:view(saved.rows[0].config)});
   }catch(e){if(conn)await conn.query('ROLLBACK').catch(()=>{});fail(res,e)}finally{conn?.release()}
  });
  return router;

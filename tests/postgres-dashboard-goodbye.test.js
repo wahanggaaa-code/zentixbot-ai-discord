@@ -98,3 +98,9 @@ test('saved web settings are read by the member-leave handler with mocked Discor
  assert.equal(messages.length,1);assert.equal(messages[0].content,`<@${userId}>`);assert.deepEqual(messages[0].allowedMentions,{users:[userId]});
  assert.equal(messages[0].embeds[0].data.description,'Bye Tester from Home');assert.equal(messages[0].embeds[0].data.title,'Goodbye');
 });
+
+
+test('goodbye patch preserves unrelated large JSONB numeric values exactly', {skip:!enabled},async t=>{
+ const {pool,req,payload}=await setup(t);await pool.query(`INSERT INTO guilds(id) VALUES($1)`,[guildId]);await pool.query(`INSERT INTO welcome_configs(guild_id,config) VALUES($1,'{"large":900719925474099312345,"leaveEmbed":{"extra":900719925474099312345}}')`,[guildId]);
+ const initial=await (await req('/goodbye')).json();assert.equal((await req('/goodbye','PATCH',payload(initial.revision))).status,200);const row=(await pool.query(`SELECT config->>'large' AS n,config->'leaveEmbed'->>'extra' AS e FROM welcome_configs WHERE guild_id=$1`,[guildId])).rows[0];assert.equal(row.n,'900719925474099312345');assert.equal(row.e,'900719925474099312345');
+});
