@@ -24,7 +24,7 @@ import { runSafeTask, handleTaskError, ErrorCodes } from './utils/errorHandler.j
 import { initializeMusic } from './services/music/riffySetup.js';
 import { shutdownMusic } from './services/music/playerHandler.js';
 import pkg from '../package.json' with { type: 'json' };
-import { EXPECTED_SCHEMA_VERSION, EXPECTED_SCHEMA_LABEL } from './config/database/schemaVersion.js';
+import { createReadinessHandler } from './services/storage/databaseReadiness.js';
 
 class TitanBot extends Client {
   constructor() {
@@ -168,7 +168,8 @@ class TitanBot extends Client {
         timestamp: new Date().toISOString(),
         uptime: process.uptime(),
         database: {
-          connected: dbStatus.connectionType !== 'none',
+          connected: Boolean(dbStatus.isAvailable),
+          liveCheck: false,
           degraded: dbStatus.isDegraded,
           type: dbStatus.connectionType
         }
@@ -176,36 +177,7 @@ class TitanBot extends Client {
       res.status(200).json(status);
     });
 
-    app.get('/ready', (req, res) => {
-      const dbStatus = this.db?.getStatus?.() || { isDegraded: true, connectionType: 'none' };
-      const isReady = this.isReady() && !dbStatus.isDegraded;
-
-      const metrics = {
-        guildCount: this.guilds?.cache?.size ?? 0,
-        commandCount: this.commands?.size ?? 0,
-        database: {
-          mode: dbStatus.connectionType,
-          degraded: dbStatus.isDegraded,
-          degradedReason: dbStatus.degradedReason ?? null,
-        },
-        schemaVersion: EXPECTED_SCHEMA_VERSION,
-        schemaLabel: EXPECTED_SCHEMA_LABEL,
-      };
-
-      if (isReady) {
-        return res.status(200).json({
-          ready: true,
-          message: 'Bot is ready',
-          metrics,
-        });
-      }
-
-      res.status(503).json({
-        ready: false,
-        reason: !this.isReady() ? 'Bot not Ready' : 'Database degraded',
-        metrics,
-      });
-    });
+    app.get('/ready', createReadinessHandler(this));
 
     app.get('/', (req, res) => {
       res.status(200).json({ 
