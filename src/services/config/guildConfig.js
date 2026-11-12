@@ -6,6 +6,7 @@ import { sqliteBackend } from '../storage/sqlite.js';
 import { getGuildConfigKey, getWelcomeConfigKey } from '../../utils/database/keys.js';
 import { normalizeGuildConfig, validateGuildConfigOrThrow } from '../../utils/schemas.js';
 import { createError, ErrorTypes, wrapServiceBoundary } from '../../utils/errorHandler.js';
+import { pgConfig } from '../../config/database/postgres.js';
 
 export { GUILD_CONFIG_DEFAULTS };
 
@@ -27,6 +28,46 @@ function checkConflict(config,welcome){
 }
 function persistConfig(tx,guildId,config,context){const key=getGuildConfigKey(guildId),raw=tx.botGet(key);checkLegacy(raw);const validated=validateGuildConfigOrThrow(config,{guildId,...context});const welcome=unwrapReplitData(tx.botGet(getWelcomeConfigKey(guildId))||{});checkConflict(validated,welcome);tx.botSet(key,validated);return validated;}
 function mutateSQLiteConfig(sqlite,guildId,context,mutate){return sqlite.transaction(tx=>{const raw=tx.botGet(getGuildConfigKey(guildId));checkLegacy(raw);const current=normalizeGuildConfig(raw||{},GUILD_CONFIG_DEFAULTS);const result=persistConfig(tx,guildId,mutate(current),context);return snapshot(sqlite,guildId,result,result)});}
+
+// PostgreSQL partial writes serialize on the same guild row locked by the
+// dashboard. Full replacement writes and other storage paths are separate.
+function postgresForConfig(client) {
+    const db = client?.db;
+    const status = db?.getStatus?.();
+    if (status?.connectionType !== 'postgresql') return null;
+    if (status.isDegraded || !db.isAvailable?.() || !db.db?.isAvailable?.() || !db.db.pool?.connect) {
+        throw createError('PostgreSQL unavailable for guild config', ErrorTypes.DATABASE, 'Server configuration database is unavailable.');
+    }
+    return db.db.pool;
+}
+async function mutatePostgresConfig(pool, guildId, context, mutate) {
+    const conn = await pool.connect();
+    try {
+        await conn.query('BEGIN');
+        // Inserts serialize creation as well as existing rows. Roll back the
+        // placeholder if validation or any later statement fails.
+        await conn.query(`INSERT INTO ${pgConfig.tables.guilds}(id) VALUES($1) ON CONFLICT(id) DO NOTHING`, [guildId]);
+        const rows = await conn.query(`SELECT config FROM ${pgConfig.tables.guilds} WHERE id=$1 FOR UPDATE`, [guildId]);
+        const raw = rows.rows[0]?.config;
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            throw createError('Invalid stored guild configuration', ErrorTypes.DATABASE, 'Server configuration needs review.');
+        }
+        const cleaned = unwrapReplitData(raw);
+        if (!cleaned || typeof cleaned !== 'object' || Array.isArray(cleaned)) {
+            throw createError('Invalid stored guild configuration', ErrorTypes.DATABASE, 'Server configuration needs review.');
+        }
+        const current = normalizeGuildConfig(cleaned, GUILD_CONFIG_DEFAULTS);
+        const normalized = normalizeGuildConfig(mutate(current), GUILD_CONFIG_DEFAULTS);
+        const validated = validateGuildConfigOrThrow(normalized, {guildId, ...context});
+        await conn.query(`UPDATE ${pgConfig.tables.guilds} SET config=$2::jsonb, updated_at=CURRENT_TIMESTAMP WHERE id=$1`, [guildId, JSON.stringify(validated)]);
+        await conn.query('COMMIT');
+        return validated;
+    } catch (error) {
+        await conn.query('ROLLBACK').catch(() => {});
+        throw error;
+    } finally { conn.release(); }
+}
+
 
 
 export const getGuildConfig = wrapServiceBoundary(async function getGuildConfig(client, guildId, context = {}) {
@@ -56,6 +97,7 @@ export const setGuildConfig = wrapServiceBoundary(async function setGuildConfig(
 
 export const updateGuildConfig = wrapServiceBoundary(async function updateGuildConfig(client, guildId, updates, context = {}) {
     const sqlite=sqliteForConfig(client,guildId);if(sqlite)return mutateSQLiteConfig(sqlite,guildId,context,current=>({...current,...updates}));
+    const postgres=postgresForConfig(client);if(postgres)return mutatePostgresConfig(postgres,guildId,context,current=>({...current,...updates}));
     const currentConfig = await readGuildConfig(client, guildId, context);
     const merged = { ...currentConfig, ...updates };
     const normalized = normalizeGuildConfig(merged, GUILD_CONFIG_DEFAULTS);
@@ -100,6 +142,7 @@ export const patchGuildConfig = wrapServiceBoundary(async function patchGuildCon
     }
 
     const sqlite=sqliteForConfig(client,guildId);if(sqlite)return mutateSQLiteConfig(sqlite,guildId,context,current=>deepMergeGuildConfig(current,patch));
+    const postgres=postgresForConfig(client);if(postgres)return mutatePostgresConfig(postgres,guildId,context,current=>deepMergeGuildConfig(current,patch));
     const currentConfig = await readGuildConfig(client, guildId, context);
     const merged = deepMergeGuildConfig(currentConfig, patch);
     const normalized = normalizeGuildConfig(merged, GUILD_CONFIG_DEFAULTS);
