@@ -6,7 +6,7 @@ import { withErrorHandling, createError, ErrorTypes, replyUserError } from '../.
 import { removeVerification, verifyUser } from '../../services/verificationService.js';
 import { logger } from '../../utils/logger.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
-import { getWelcomeConfig } from '../../utils/database.js';
+import { getWelcomeConfigForEditing } from '../../utils/database.js';
 import verificationDashboard from './modules/verification_dashboard.js';
 
 export default {
@@ -160,7 +160,7 @@ async function handleSetup(interaction, guild, client) {
     }
 
     const guildConfig = await getGuildConfig(client, guild.id);
-    const welcomeConfig = await getWelcomeConfig(client, guild.id);
+    const welcomeConfig = await getWelcomeConfigForEditing(client, guild.id);
     const hasAutoVerifyEnabled = Boolean(guildConfig.verification?.autoVerify?.enabled);
     const hasAutoRoleConfigured = Boolean(guildConfig.autoRole) || (Array.isArray(welcomeConfig.roleIds) && welcomeConfig.roleIds.length > 0);
 

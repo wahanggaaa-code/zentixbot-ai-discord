@@ -6,7 +6,7 @@ import { withErrorHandling, createError, ErrorTypes } from '../../../utils/error
 import { validateAutoVerifyCriteria } from '../../../services/verificationService.js';
 import { logger } from '../../../utils/logger.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
-import { getWelcomeConfig } from '../../../utils/database.js';
+import { getWelcomeConfigForEditing } from '../../../utils/database.js';
 import autoVerifyDashboard from './autoVerifyDashboard.js';
 
 const autoVerifyDefaults = botConfig.verification?.autoVerify || {};
@@ -87,7 +87,7 @@ async function handleSetup(interaction, guild, client) {
 
     try {
         const guildConfig = await getGuildConfig(client, guild.id);
-        const welcomeConfig = await getWelcomeConfig(client, guild.id);
+        const welcomeConfig = await getWelcomeConfigForEditing(client, guild.id);
         const verificationEnabled = Boolean(guildConfig.verification?.enabled);
         const hasAutoRoleConfigured = Boolean(guildConfig.autoRole) || (Array.isArray(welcomeConfig.roleIds) && welcomeConfig.roleIds.length > 0);
 

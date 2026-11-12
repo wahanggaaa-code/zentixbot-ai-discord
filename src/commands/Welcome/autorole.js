@@ -1,6 +1,6 @@
 import { getColor } from '../../config/bot.js';
 import { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder, MessageFlags } from 'discord.js';
-import { getWelcomeConfig, updateWelcomeConfig } from '../../utils/database.js';
+import { getWelcomeConfigForEditing, updateWelcomeConfig } from '../../utils/database.js';
 import { logger } from '../../utils/logger.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { getGuildConfig } from '../../services/config/guildConfig.js';
@@ -74,7 +74,7 @@ export default {
             }
 
             try {
-                const config = await getWelcomeConfig(client, guild.id);
+                const config = await getWelcomeConfigForEditing(client, guild.id);
                 const existingRoles = config.roleIds || [];
                 const currentRoleId = existingRoles[0] || null;
 
@@ -106,7 +106,7 @@ export default {
             const role = options.getRole('role');
 
             try {
-                const config = await getWelcomeConfig(client, guild.id);
+                const config = await getWelcomeConfigForEditing(client, guild.id);
                 const existingRoles = config.roleIds || [];
                 
                 if (!existingRoles.includes(role.id)) {
@@ -141,7 +141,7 @@ export default {
                     autoVerifyEnabled ? 'AutoVerify is enabled' : null
                 ].filter(Boolean).join('\n');
 
-                const config = await getWelcomeConfig(client, guild.id);
+                const config = await getWelcomeConfigForEditing(client, guild.id);
                 const autoRoles = Array.isArray(config.roleIds) ? config.roleIds : [];
 
                 const singleRoleIds = autoRoles.length > 1 ? [autoRoles[0]] : autoRoles;

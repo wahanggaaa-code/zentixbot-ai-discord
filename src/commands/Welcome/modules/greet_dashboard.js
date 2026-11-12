@@ -18,10 +18,11 @@ import {
     TextDisplayBuilder,
 } from 'discord.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
+import { wrapDashboardHandler } from '../../../utils/dashboardSession.js';
 import { successEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { TitanBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
-import { getWelcomeConfig, saveWelcomeConfig } from '../../../utils/database.js';
+import { getWelcomeConfigForEditing, saveWelcomeConfig } from '../../../utils/database.js';
 import { botHasPermission } from '../../../utils/permissionGuard.js';
 
 async function deferComponent(interaction) {
@@ -174,7 +175,7 @@ export default {
     async execute(interaction, config, client) {
         try {
             const guildId = interaction.guild.id;
-            const cfg = await getWelcomeConfig(client, guildId);
+            const cfg = await getWelcomeConfigForEditing(client, guildId);
 
             if (!cfg.channelId && !cfg.goodbyeChannelId) {
                 throw new TitanBotError(
@@ -320,6 +321,10 @@ export default {
                     await refreshDashboard(interaction, cfg, guildId);
                 } catch (error) {
                     logger.error('Error handling greet dashboard button:', error);
+                    await replyUserError(btnInteraction, {
+                        type: ErrorTypes.DATABASE,
+                        message: error instanceof TitanBotError ? error.userMessage : 'Failed to save welcome settings. Please reload the dashboard.',
+                    }).catch(() => {});
                 }
             });
 
@@ -384,7 +389,7 @@ async function handleWelcomeChannel(selectInteraction, rootInteraction, cfg, gui
         max: 1,
     });
 
-    chanCollector.on('collect', async chanInteraction => {
+    chanCollector.on('collect', wrapDashboardHandler(async chanInteraction => {
         if (!await deferComponent(chanInteraction)) {
             return;
         }
@@ -406,7 +411,7 @@ async function handleWelcomeChannel(selectInteraction, rootInteraction, cfg, gui
         });
 
         await refreshDashboard(rootInteraction, cfg, guildId);
-    });
+    }, 'nested greet dashboard selection'));
 
     chanCollector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {
@@ -587,7 +592,7 @@ async function handleGoodbyeChannel(selectInteraction, rootInteraction, cfg, gui
         max: 1,
     });
 
-    chanCollector.on('collect', async chanInteraction => {
+    chanCollector.on('collect', wrapDashboardHandler(async chanInteraction => {
         if (!await deferComponent(chanInteraction)) {
             return;
         }
@@ -609,7 +614,7 @@ async function handleGoodbyeChannel(selectInteraction, rootInteraction, cfg, gui
         });
 
         await refreshDashboard(rootInteraction, cfg, guildId);
-    });
+    }, 'nested greet dashboard selection'));
 
     chanCollector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {

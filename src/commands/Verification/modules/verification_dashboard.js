@@ -20,7 +20,7 @@ import { successEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { TitanBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
 import { getGuildConfig, setGuildConfig } from '../../../services/config/guildConfig.js';
-import { getWelcomeConfig } from '../../../utils/database.js';
+import { getWelcomeConfigForEditing } from '../../../utils/database.js';
 import { botHasPermission } from '../../../utils/permissionGuard.js';
 import {
     getVerificationPanelStatus,
@@ -196,7 +196,7 @@ async function refreshDashboard(rootInteraction, cfg, guildId, client) {
             }
             
             const guildConfig = await getGuildConfig(client, guildId);
-            const welcomeConfig = await getWelcomeConfig(client, guildId);
+            const welcomeConfig = await getWelcomeConfigForEditing(client, guildId);
             const autoVerifyEnabled = Boolean(guildConfig.verification?.autoVerify?.enabled);
             const autoRoleConfigured = Boolean(guildConfig.autoRole) || (Array.isArray(welcomeConfig.roleIds) && welcomeConfig.roleIds.length > 0);
             
@@ -262,7 +262,7 @@ export default {
                     verifiedUserCount = verifiedRole.members.size;
                 }
                 
-                const welcomeConfig = await getWelcomeConfig(client, guildId);
+                const welcomeConfig = await getWelcomeConfigForEditing(client, guildId);
                 const autoVerifyEnabled = Boolean(guildConfig.verification?.autoVerify?.enabled);
                 const autoRoleConfigured = Boolean(guildConfig.autoRole) || (Array.isArray(welcomeConfig.roleIds) && welcomeConfig.roleIds.length > 0);
                 

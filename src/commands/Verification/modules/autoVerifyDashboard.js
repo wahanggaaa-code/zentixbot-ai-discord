@@ -19,7 +19,7 @@ import { successEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { TitanBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
 import { getGuildConfig, setGuildConfig } from '../../../services/config/guildConfig.js';
-import { getWelcomeConfig } from '../../../utils/database.js';
+import { getWelcomeConfigForEditing } from '../../../utils/database.js';
 import { validateAutoVerifyCriteria } from '../../../services/verificationService.js';
 import { botHasPermission } from '../../../utils/permissionGuard.js';
 
@@ -108,7 +108,7 @@ async function refreshDashboard(rootInteraction, cfg, guildId, client) {
 
         let conflictSummary = '';
         try {
-            const welcomeConfig = await getWelcomeConfig(client, guildId);
+            const welcomeConfig = await getWelcomeConfigForEditing(client, guildId);
             const verificationEnabled = Boolean(cfg.verification?.enabled);
             const autoRoleConfigured = Boolean(cfg.autoRole) || (Array.isArray(welcomeConfig.roleIds) && welcomeConfig.roleIds.length > 0);
             
@@ -146,7 +146,7 @@ export default {
 
             if (!guildConfig.verification?.autoVerify?.enabled) {
                 
-                const welcomeConfig = await getWelcomeConfig(client, guildId);
+                const welcomeConfig = await getWelcomeConfigForEditing(client, guildId);
                 const verificationEnabled = Boolean(guildConfig.verification?.enabled);
                 const autoRoleConfigured = Boolean(guildConfig.autoRole) || (Array.isArray(welcomeConfig.roleIds) && welcomeConfig.roleIds.length > 0);
                 
@@ -177,7 +177,7 @@ export default {
 
             let conflictSummary = '';
             try {
-                const welcomeConfig = await getWelcomeConfig(client, guildId);
+                const welcomeConfig = await getWelcomeConfigForEditing(client, guildId);
                 const verificationEnabled = Boolean(guildConfig.verification?.enabled);
                 const autoRoleConfigured = Boolean(guildConfig.autoRole) || (Array.isArray(welcomeConfig.roleIds) && welcomeConfig.roleIds.length > 0);
                 

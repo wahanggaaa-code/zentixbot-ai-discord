@@ -2,6 +2,8 @@
 
 import { pgDb } from './postgresDatabase.js';
 import { logger } from './logger.js';
+import { pgConfig } from '../config/database/postgres.js';
+import { createError, ErrorTypes } from './errorHandler.js';
 import { BotConfig, getDefaultApplicationQuestions } from '../config/bot.js';
 import {isSQLiteBirthdayBackend,readSQLiteBirthdays,setSQLiteBirthday,deleteSQLiteBirthday} from '../services/storage/sqliteBirthdays.js';
 
@@ -415,36 +417,56 @@ export async function getWelcomeConfig(client, guildId) {
     }
 }
 
-export async function saveWelcomeConfig(client, guildId, config) {
-    const key = getWelcomeConfigKey(guildId);
-    try {
-        if (!client.db || typeof client.db.set !== 'function') {
-            logger.error('Database client is not available for saveWelcomeConfig.');
-            return false;
-        }
-
-        const existingConfig = await getWelcomeConfig(client, guildId);
-        const mergedConfig = { ...existingConfig, ...config };
-        
-        await client.db.set(key, mergedConfig);
-        return true;
-    } catch (error) {
-        logger.error(`Error saving welcome config for guild ${guildId}:`, error);
-        return false;
+// Writes must never treat a failed database read as an empty configuration.
+// This read is intentionally separate from the legacy best-effort event read.
+async function readWelcomeForWrite(client, guildId) {
+    const wrapper = client?.db;
+    if (!wrapper || typeof wrapper.get !== 'function' || (wrapper.isAvailable && !wrapper.isAvailable())) {
+        throw new Error('Welcome configuration database unavailable');
+    }
+    let raw;
+    if (wrapper.getStatus?.()?.connectionType === 'postgresql') {
+        if (wrapper.getStatus().isDegraded || !wrapper.db?.isAvailable?.() || !wrapper.db.pool?.query) throw new Error('PostgreSQL unavailable');
+        const result = await wrapper.db.pool.query(`SELECT config FROM ${pgConfig.tables.welcome_configs} WHERE guild_id=$1`, [guildId]);
+        raw = result.rows.length ? result.rows[0].config : {};
+    } else {
+        raw = await wrapper.get(getWelcomeConfigKey(guildId), null);
+        if (raw === null) raw = {};
+    }
+    const value = unwrapReplitData(raw);
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Stored welcome configuration is invalid');
+    }
+    return normalizeWelcomeConfig(value);
+}
+export async function getWelcomeConfigForEditing(client, guildId) {
+    try { return await readWelcomeForWrite(client, guildId); }
+    catch (error) {
+        logger.error(`Error reading welcome config for editing in guild ${guildId}:`, error);
+        throw createError('Failed to read welcome configuration', ErrorTypes.DATABASE,
+            'Failed to load welcome settings. The database is unavailable or needs review.', {guildId});
     }
 }
-
-export async function updateWelcomeConfig(client, guildId, updates) {
+async function writeWelcomeChanges(client, guildId, changes) {
     try {
-        const currentConfig = await getWelcomeConfig(client, guildId);
-        const updatedConfig = { ...currentConfig, ...updates };
-        
-        await saveWelcomeConfig(client, guildId, updatedConfig);
-        return updatedConfig;
+        if (!changes || typeof changes !== 'object' || Array.isArray(changes) || typeof client?.db?.set !== 'function') throw new Error('Invalid welcome write');
+        const existing = await readWelcomeForWrite(client, guildId);
+        const merged = { ...existing, ...changes };
+        const success = await client.db.set(getWelcomeConfigKey(guildId), merged);
+        if (success !== true) throw new Error('Database rejected welcome write');
+        return merged;
     } catch (error) {
-        logger.error(`Error updating welcome config for guild ${guildId}:`, error);
-        throw error;
+        logger.error(`Error saving welcome config for guild ${guildId}:`, error);
+        throw createError('Failed to save welcome configuration', ErrorTypes.DATABASE,
+            'Failed to save welcome settings. The database is unavailable or needs review.', {guildId});
     }
+}
+export async function saveWelcomeConfig(client, guildId, config) {
+    await writeWelcomeChanges(client, guildId, config);
+    return true;
+}
+export async function updateWelcomeConfig(client, guildId, updates) {
+    return writeWelcomeChanges(client, guildId, updates);
 }
 
 export async function getLevelingConfig(client, guildId) {

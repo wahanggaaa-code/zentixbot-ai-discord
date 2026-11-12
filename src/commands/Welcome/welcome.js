@@ -1,6 +1,6 @@
 import { getColor } from '../../config/bot.js';
 import { SlashCommandBuilder, PermissionFlagsBits, ChannelType, EmbedBuilder, MessageFlags } from 'discord.js';
-import { getWelcomeConfig, updateWelcomeConfig } from '../../utils/database.js';
+import { getWelcomeConfigForEditing, updateWelcomeConfig } from '../../utils/database.js';
 import { formatWelcomeMessage, truncateForEmbedField } from '../../utils/welcome.js';
 import { logger } from '../../utils/logger.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
@@ -63,7 +63,7 @@ export default {
             const image = options.getString('image');
             const ping = options.getBoolean('ping') ?? false;
 
-            const existingConfig = await getWelcomeConfig(client, guild.id);
+            const existingConfig = await getWelcomeConfigForEditing(client, guild.id);
             if (existingConfig?.channelId) {
                 logger.info(`[Welcome] Setup blocked because config already exists in channel ${existingConfig.channelId} for guild ${guild.id}`);
                 return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: `Welcome is already configured for <#${existingConfig.channelId}>. Use **/greet dashboard** to customize channel, message, ping, or image.` });
