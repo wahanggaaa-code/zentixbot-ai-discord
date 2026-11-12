@@ -10,7 +10,7 @@ function matchesCustomId(customId, matcher) {
     return customId === matcher;
 }
 
-function wrapHandler(handler, interactionLabel = 'dashboard') {
+export function wrapDashboardHandler(handler, interactionLabel = 'dashboard') {
     return async (componentInteraction) => {
         try {
             await handler(componentInteraction);
@@ -73,7 +73,7 @@ export async function startDashboardSession({
             time: timeoutMs,
         });
 
-        selectCollector.on('collect', wrapHandler(onSelect, 'dashboard select'));
+        selectCollector.on('collect', wrapDashboardHandler(onSelect, 'dashboard select'));
         collectors.push(selectCollector);
     }
 
@@ -84,7 +84,7 @@ export async function startDashboardSession({
             time: timeoutMs,
         });
 
-        buttonCollector.on('collect', wrapHandler(onButton, 'dashboard button'));
+        buttonCollector.on('collect', wrapDashboardHandler(onButton, 'dashboard button'));
         collectors.push(buttonCollector);
     }
 

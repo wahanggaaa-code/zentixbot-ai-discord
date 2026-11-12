@@ -14,6 +14,7 @@ import {
     EmbedBuilder,
 } from 'discord.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
+import { wrapDashboardHandler } from '../../../utils/dashboardSession.js';
 import { successEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { TitanBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
@@ -273,6 +274,13 @@ export default {
                     }
                 } catch (err) {
                     logger.debug('Button interaction error:', err.message);
+                    if (!btnInteraction.replied && !btnInteraction.deferred) {
+                        await btnInteraction.deferUpdate().catch(() => {});
+                    }
+                    await replyUserError(btnInteraction, {
+                        type: ErrorTypes.CONFIGURATION,
+                        message: err instanceof TitanBotError ? err.userMessage : 'Failed to update configuration. Please reload the dashboard.',
+                    }).catch(() => {});
                 }
             });
 
@@ -345,7 +353,7 @@ async function handleCriteria(selectInteraction, rootInteraction, guildConfig, g
         max: 1,
     });
 
-    criteriaCollector.on('collect', async criteriaInteraction => {
+    criteriaCollector.on('collect', wrapDashboardHandler(async criteriaInteraction => {
         await criteriaInteraction.deferUpdate();
         const newCriteria = criteriaInteraction.values[0];
 
@@ -375,7 +383,7 @@ async function handleCriteria(selectInteraction, rootInteraction, guildConfig, g
         });
 
         await refreshDashboard(rootInteraction, guildConfig, guildId, client);
-    });
+    }, 'nested dashboard selection'));
 
     criteriaCollector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {
@@ -414,7 +422,7 @@ async function handleRole(selectInteraction, rootInteraction, guildConfig, guild
         max: 1,
     });
 
-    roleCollector.on('collect', async roleInteraction => {
+    roleCollector.on('collect', wrapDashboardHandler(async roleInteraction => {
         await roleInteraction.deferUpdate();
         const role = roleInteraction.roles.first();
 
@@ -444,7 +452,7 @@ async function handleRole(selectInteraction, rootInteraction, guildConfig, guild
         });
 
         await refreshDashboard(rootInteraction, guildConfig, guildId, client);
-    });
+    }, 'nested dashboard selection'));
 
     roleCollector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {

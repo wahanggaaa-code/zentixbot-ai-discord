@@ -26,7 +26,7 @@ import {
     getVerificationPanelStatus,
     formatPanelStatusField,
 } from '../../../utils/panelStatus.js';
-import { startDashboardSession } from '../../../utils/dashboardSession.js';
+import { startDashboardSession, wrapDashboardHandler } from '../../../utils/dashboardSession.js';
 
 async function updateLivePanel(guild, cfg) {
     if (!cfg.channelId || !cfg.messageId) return;
@@ -425,7 +425,7 @@ async function handleChannel(selectInteraction, rootInteraction, cfg, guildId, c
         max: 1,
     });
 
-    chanCollector.on('collect', async chanInteraction => {
+    chanCollector.on('collect', wrapDashboardHandler(async chanInteraction => {
         await chanInteraction.deferUpdate();
         const newChannel = chanInteraction.channels.first();
 
@@ -482,7 +482,7 @@ async function handleChannel(selectInteraction, rootInteraction, cfg, guildId, c
         });
 
         await refreshDashboard(rootInteraction, cfg, guildId, client);
-    });
+    }, 'nested dashboard selection'));
 
     chanCollector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {
@@ -523,7 +523,7 @@ async function handleRole(selectInteraction, rootInteraction, cfg, guildId, clie
         max: 1,
     });
 
-    roleCollector.on('collect', async roleInteraction => {
+    roleCollector.on('collect', wrapDashboardHandler(async roleInteraction => {
         await roleInteraction.deferUpdate();
         const role = roleInteraction.roles.first();
         const guild = rootInteraction.guild;
@@ -556,7 +556,7 @@ async function handleRole(selectInteraction, rootInteraction, cfg, guildId, clie
         });
 
         await refreshDashboard(rootInteraction, cfg, guildId, client);
-    });
+    }, 'nested dashboard selection'));
 
     roleCollector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {

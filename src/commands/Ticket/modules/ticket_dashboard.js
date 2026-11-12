@@ -28,7 +28,7 @@ import {
     messageHasButtonCustomId,
     formatPanelStatusField,
 } from '../../../utils/panelStatus.js';
-import { startDashboardSession } from '../../../utils/dashboardSession.js';
+import { startDashboardSession, wrapDashboardHandler } from '../../../utils/dashboardSession.js';
 
 function buildButtonRow(guildConfig, guildId, disabled = false, panelStatus = null) {
     const dmEnabled = guildConfig.dmOnClose !== false;
@@ -483,7 +483,7 @@ async function handleStaffRole(selectInteraction, rootInteraction, guildConfig, 
         max: 1,
     });
 
-    roleCollector.on('collect', async roleInteraction => {
+    roleCollector.on('collect', wrapDashboardHandler(async roleInteraction => {
         await roleInteraction.deferUpdate();
         const role = roleInteraction.roles.first();
 
@@ -496,7 +496,7 @@ async function handleStaffRole(selectInteraction, rootInteraction, guildConfig, 
         });
 
         await refreshDashboard(rootInteraction, guildConfig, guildId, client);
-    });
+    }, 'nested dashboard selection'));
 
     roleCollector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {
@@ -538,7 +538,7 @@ async function handleOpenCategory(selectInteraction, rootInteraction, guildConfi
         max: 1,
     });
 
-    catCollector.on('collect', async catInteraction => {
+    catCollector.on('collect', wrapDashboardHandler(async catInteraction => {
         await catInteraction.deferUpdate();
         const category = catInteraction.channels.first();
 
@@ -556,7 +556,7 @@ async function handleOpenCategory(selectInteraction, rootInteraction, guildConfi
         });
 
         await refreshDashboard(rootInteraction, guildConfig, guildId, client);
-    });
+    }, 'nested dashboard selection'));
 
     catCollector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {
@@ -598,7 +598,7 @@ async function handleClosedCategory(selectInteraction, rootInteraction, guildCon
         max: 1,
     });
 
-    catCollector.on('collect', async catInteraction => {
+    catCollector.on('collect', wrapDashboardHandler(async catInteraction => {
         await catInteraction.deferUpdate();
         const category = catInteraction.channels.first();
 
@@ -616,7 +616,7 @@ async function handleClosedCategory(selectInteraction, rootInteraction, guildCon
         });
 
         await refreshDashboard(rootInteraction, guildConfig, guildId, client);
-    });
+    }, 'nested dashboard selection'));
 
     catCollector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {
@@ -732,7 +732,7 @@ async function handleLogsChannel(selectInteraction, rootInteraction, guildConfig
         max: 1,
     });
 
-    collector.on('collect', async channelInteraction => {
+    collector.on('collect', wrapDashboardHandler(async channelInteraction => {
         await channelInteraction.deferUpdate();
         const channel = channelInteraction.channels.first();
 
@@ -745,7 +745,7 @@ async function handleLogsChannel(selectInteraction, rootInteraction, guildConfig
         });
 
         await refreshDashboard(rootInteraction, guildConfig, guildId, client);
-    });
+    }, 'nested dashboard selection'));
 
     collector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {
@@ -784,7 +784,7 @@ async function handleTranscriptChannel(selectInteraction, rootInteraction, guild
         max: 1
     });
 
-    collector.on('collect', async channelInteraction => {
+    collector.on('collect', wrapDashboardHandler(async channelInteraction => {
         await channelInteraction.deferUpdate();
         const channel = channelInteraction.channels.first();
 
@@ -797,7 +797,7 @@ async function handleTranscriptChannel(selectInteraction, rootInteraction, guild
         });
 
         await refreshDashboard(rootInteraction, guildConfig, guildId, client);
-    });
+    }, 'nested dashboard selection'));
 
     collector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {
@@ -838,7 +838,7 @@ async function handleCheckUser(selectInteraction, rootInteraction, guildConfig, 
         max: 1,
     });
 
-    userCollector.on('collect', async userInteraction => {
+    userCollector.on('collect', wrapDashboardHandler(async userInteraction => {
         await userInteraction.deferUpdate();
         const targetUser = userInteraction.users.first();
         const maxTickets = guildConfig.maxTicketsPerUser || 3;
@@ -862,7 +862,7 @@ async function handleCheckUser(selectInteraction, rootInteraction, guildConfig, 
             ],
             flags: MessageFlags.Ephemeral,
         });
-    });
+    }, 'nested dashboard selection'));
 
     userCollector.on('end', (collected, reason) => {
         if (reason === 'time' && collected.size === 0) {
