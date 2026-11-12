@@ -1,6 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
 import { getAllBirthdays } from '../../../services/birthdayService.js';
-import { deleteBirthday } from '../../../utils/database.js';
 import { logger } from '../../../utils/logger.js';
 
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
@@ -38,11 +37,6 @@ export default {
             birthdayList += `${displayIndex}. <@${birthday.userId}> - ${birthday.monthName} ${birthday.day}\n`;
         }
 
-        if (fetchedMembers && staleUserIds.length > 0) {
-            for (const userId of staleUserIds) {
-                deleteBirthday(client, guildId, userId).catch(() => null);
-            }
-        }
 
         if (displayIndex === 0) {
             const embed = new EmbedBuilder()
@@ -69,7 +63,7 @@ export default {
             userId: interaction.user.id,
             guildId,
             birthdayCount: displayIndex,
-            staleRemoved: staleUserIds.length,
+            unresolvedMembers: staleUserIds.length,
             commandName: 'birthday_list'
         });
     }

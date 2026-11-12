@@ -440,7 +440,7 @@ class PostgreSQLDatabase {
     async set(key, value, ttl = null) {
         // Replacements require the configuration service's snapshot transaction.
         // Deleting a guild row can also cascade into unrelated guild data.
-        if (typeof key === 'string' && ['guild_config','welcome_config'].includes(parseKey(canonicalizeKey(key)).type)) return false;
+        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left'].includes(parseKey(canonicalizeKey(key)).type)) return false;
         const warningKey=canonicalizeKey(key);
         if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
@@ -482,7 +482,7 @@ class PostgreSQLDatabase {
     }
 
     async delete(key) {
-        if (typeof key === 'string' && ['guild_config','welcome_config'].includes(parseKey(canonicalizeKey(key)).type)) return false;
+        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left'].includes(parseKey(canonicalizeKey(key)).type)) return false;
         const warningKey=canonicalizeKey(key);
         if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
@@ -616,7 +616,7 @@ class PostgreSQLDatabase {
     }
 
     async increment(key, amount = 1) {
-        if (typeof key === 'string' && ['guild_config','welcome_config'].includes(parseKey(canonicalizeKey(key)).type)) {
+        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left'].includes(parseKey(canonicalizeKey(key)).type)) {
             throw Object.assign(new Error('Generic configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
         }
         try {
@@ -635,7 +635,7 @@ class PostgreSQLDatabase {
     }
 
     async decrement(key, amount = 1) {
-        if (typeof key === 'string' && ['guild_config','welcome_config'].includes(parseKey(canonicalizeKey(key)).type)) {
+        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left'].includes(parseKey(canonicalizeKey(key)).type)) {
             throw Object.assign(new Error('Generic configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
         }
         try {
@@ -771,31 +771,8 @@ class PostgreSQLDatabase {
 
                 
                 case 'guild_birthdays':
-                    await this.pool.query(
-                        `INSERT INTO ${pgConfig.tables.guilds} (id, created_at) 
-                         VALUES ($1, CURRENT_TIMESTAMP) 
-                         ON CONFLICT (id) DO NOTHING`,
-                        [parsedKey.guildId]
-                    );
-                    
-                    await this.pool.query(`DELETE FROM ${pgConfig.tables.birthdays} WHERE guild_id = $1`, [parsedKey.guildId]);
-                    
-                    for (const [userId, birthday] of Object.entries(value)) {
-                        await this.pool.query(
-                            `INSERT INTO ${pgConfig.tables.users} (id, created_at) 
-                             VALUES ($1, CURRENT_TIMESTAMP) 
-                             ON CONFLICT (id) DO NOTHING`,
-                            [userId]
-                        );
-                        
-                        await this.pool.query(
-                            `INSERT INTO ${pgConfig.tables.birthdays} (guild_id, user_id, month, day) 
-                             VALUES ($1, $2, $3, $4)`,
-                            [parsedKey.guildId, userId, birthday.month, birthday.day]
-                        );
-                    }
-                    return true;
-                
+                    return false; // Per-member birthday transactions only.
+
                 case 'guild_giveaways':
                     await this.pool.query(
                         `INSERT INTO ${pgConfig.tables.guilds} (id, created_at) 
@@ -996,9 +973,8 @@ class PostgreSQLDatabase {
 
                 
                 case 'guild_birthdays':
-                    await this.pool.query(`DELETE FROM ${pgConfig.tables.birthdays} WHERE guild_id = $1`, [parsedKey.guildId]);
-                    return true;
-                
+                    return false; // Never delete the full birthday map.
+
                 case 'guild_giveaways':
                     await this.pool.query(`DELETE FROM ${pgConfig.tables.giveaways} WHERE guild_id = $1`, [parsedKey.guildId]);
                     return true;

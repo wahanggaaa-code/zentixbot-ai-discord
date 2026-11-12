@@ -1,6 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
 import { getUpcomingBirthdays } from '../../../services/birthdayService.js';
-import { deleteBirthday } from '../../../utils/database.js';
 import { logger } from '../../../utils/logger.js';
 
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
@@ -24,7 +23,6 @@ export default {
         for (const birthday of next5) {
             const member = await interaction.guild.members.fetch(birthday.userId).catch(() => null);
             if (!member) {
-                deleteBirthday(client, interaction.guildId, birthday.userId).catch(() => null);
                 continue;
             }
             displayIndex++;

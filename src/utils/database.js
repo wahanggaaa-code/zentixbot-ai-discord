@@ -7,6 +7,7 @@ import { assertOnboardingCompatible, assertOnboardingShape } from '../services/c
 import { createError, ErrorTypes, TitanBotError } from './errorHandler.js';
 import { BotConfig, getDefaultApplicationQuestions } from '../config/bot.js';
 import {isSQLiteBirthdayBackend,readSQLiteBirthdays,setSQLiteBirthday,deleteSQLiteBirthday} from '../services/storage/sqliteBirthdays.js';
+import {isPostgresBirthdayBackend,readPostgresBirthdays,setPostgresBirthday,deletePostgresBirthday} from '../services/storage/postgresBirthdays.js';
 
 export {
     db,
@@ -163,11 +164,12 @@ export async function getGuildBirthdays(client, guildId) {
         }
 
         if(isSQLiteBirthdayBackend(client))return readSQLiteBirthdays(client,guildId);
+        if(isPostgresBirthdayBackend(client))return await readPostgresBirthdays(client,guildId);
         const rawData = await client.db.get(key, {});
         return unwrapReplitData(rawData) || {};
     } catch (error) {
         logger.error(`Error retrieving birthdays for guild ${guildId}:`, error);
-        if(isSQLiteBirthdayBackend(client))throw error;
+        if(isSQLiteBirthdayBackend(client)||isPostgresBirthdayBackend(client))throw error;
         return {};
     }
 }
@@ -180,6 +182,7 @@ export async function setBirthday(client, guildId, userId, month, day) {
         }
 
         if(isSQLiteBirthdayBackend(client))return setSQLiteBirthday(client,guildId,userId,month,day);
+        if(isPostgresBirthdayBackend(client))return await setPostgresBirthday(client,guildId,userId,month,day);
         const key = getGuildBirthdaysKey(guildId);
         const birthdays = await getGuildBirthdays(client, guildId);
         birthdays[userId] = { month, day };
@@ -199,6 +202,7 @@ export async function deleteBirthday(client, guildId, userId) {
         }
 
         if(isSQLiteBirthdayBackend(client))return deleteSQLiteBirthday(client,guildId,userId);
+        if(isPostgresBirthdayBackend(client)){await deletePostgresBirthday(client,guildId,userId);return true;}
         const key = getGuildBirthdaysKey(guildId);
         const birthdays = await getGuildBirthdays(client, guildId);
         if (birthdays[userId]) {

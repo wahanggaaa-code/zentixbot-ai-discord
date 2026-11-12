@@ -9,6 +9,7 @@ import { getGuildBirthdays, deleteBirthday } from '../utils/database.js';
 import { deleteUserLevelData } from '../services/leveling/leveling.js';
 import { logger } from '../utils/logger.js';
 import {isSQLiteBirthdayBackend,moveSQLiteBirthdayOnLeave} from '../services/storage/sqliteBirthdays.js';
+import {isPostgresBirthdayBackend,movePostgresBirthdayOnLeave} from '../services/storage/postgresBirthdays.js';
 
 export default {
   name: Events.GuildMemberRemove,
@@ -62,6 +63,8 @@ export default {
                 if (moveSQLiteBirthdayOnLeave(member.client, guild.id, user.id)) {
                     logger.debug(`Birthday backed up and removed for user ${user.id} in guild ${guild.id}`);
                 }
+            } else if (isPostgresBirthdayBackend(member.client)) {
+                if (await movePostgresBirthdayOnLeave(member.client, guild.id, user.id)) logger.debug(`Birthday backed up and removed for user ${user.id} in guild ${guild.id}`);
             } else {
                 const birthdays = await getGuildBirthdays(member.client, guild.id);
                 if (birthdays[user.id]) {

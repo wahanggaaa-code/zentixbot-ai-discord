@@ -7,6 +7,7 @@ import { getServerCounters, updateCounter } from '../services/serverstatsService
 import { setBirthday as dbSetBirthday } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
 import {isSQLiteBirthdayBackend,restoreSQLiteBirthdayOnJoin} from '../services/storage/sqliteBirthdays.js';
+import {isPostgresBirthdayBackend,restorePostgresBirthdayOnJoin} from '../services/storage/postgresBirthdays.js';
 
 export default {
   name: Events.GuildMemberAdd,
@@ -91,6 +92,8 @@ export default {
                 if (restoreSQLiteBirthdayOnJoin(member.client, guild.id, user.id)) {
                     logger.debug(`Birthday restored for user ${user.id} in guild ${guild.id}`);
                 }
+            } else if (isPostgresBirthdayBackend(member.client)) {
+                if (await restorePostgresBirthdayOnJoin(member.client, guild.id, user.id)) logger.debug(`Birthday restored for user ${user.id} in guild ${guild.id}`);
             } else {
                 const backupKey = `guild:${guild.id}:birthdays:left`;
                 const backup = (await member.client.db.get(backupKey)) || {};

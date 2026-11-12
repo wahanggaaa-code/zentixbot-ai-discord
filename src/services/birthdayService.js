@@ -4,6 +4,7 @@ import { isHomeGuild } from '../utils/singleGuild.js';
 import { getGuildConfig } from './config/guildConfig.js';
 import { getGuildBirthdays, setBirthday as dbSetBirthday, deleteBirthday as dbDeleteBirthday, getMonthName, getBirthdayTrackingKey } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
+import {isPostgresBirthdayBackend,deletePostgresBirthday} from './storage/postgresBirthdays.js';
 import { TitanBotError, ErrorTypes } from '../utils/errorHandler.js';
 
 export function validateBirthday(month, day) {
@@ -160,6 +161,10 @@ export async function getAllBirthdays(client, guildId) {
 export async function deleteBirthday(client, guildId, userId) {
   try {
     
+    if (isPostgresBirthdayBackend(client)) {
+      const removed = await deletePostgresBirthday(client, guildId, userId);
+      return {status: removed ? 'removed' : 'not_found'};
+    }
     const birthday = await getUserBirthday(client, guildId, userId);
     
     if (!birthday) {
