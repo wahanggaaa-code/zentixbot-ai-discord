@@ -5,6 +5,7 @@ import { sqliteBackend } from '../services/storage/sqlite.js';
 import { normalizeWelcomeConfig } from '../utils/database.js';
 import { unwrapReplitData } from '../utils/database/guildConfigStorage.js';
 import { buildWelcomePayload } from '../services/welcomePayload.js';
+import { assertOnboardingCompatible, assertOnboardingShape } from '../services/config/onboardingConflict.js';
 
 function persistentPool(client) {
   const db = client.db;
@@ -35,15 +36,18 @@ function createStore(client) {
         await db.query('BEGIN');
         await db.query(`INSERT INTO ${t.guilds} (id, created_at) VALUES ($1, CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`,[id]);
         const guild = await db.query(`SELECT config FROM ${t.guilds} WHERE id = $1 FOR UPDATE`,[id]);
-        const cfg = unwrapReplitData(guild.rows[0]?.config || {});
-        if (patch.roleIds.length && (cfg.verification?.enabled || cfg.verification?.autoVerify?.enabled)) {
+        const cfg = guild.rows[0]?.config;
+        if (patch.roleIds.length && (cfg?.verification?.enabled || cfg?.verification?.autoVerify?.enabled)) {
           const error = new Error('Autorole tidak dapat diaktifkan saat verification atau auto-verify aktif.'); error.status=409; throw error;
         }
         await db.query(`INSERT INTO ${t.welcome_configs} (guild_id, config) VALUES ($1, '{}'::jsonb) ON CONFLICT (guild_id) DO NOTHING`,[id]);
         const old = await db.query(`SELECT config FROM ${t.welcome_configs} WHERE guild_id = $1 FOR UPDATE`,[id]);
-        const raw = old.rows[0]?.config || {};
+        const raw = old.rows[0]?.config;
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { const error=new Error('Pengaturan welcome perlu diperiksa.'); error.status=409; throw error; }
         if (raw.ok !== undefined && raw.value !== undefined) throw new Error('Format welcome lama perlu dimigrasikan sebelum diubah.');
+        assertOnboardingShape(cfg, raw);
         const merged = {...raw,...patch,welcomeEmbed:{...(raw.welcomeEmbed || {}), ...patch.welcomeEmbed}};
+        assertOnboardingCompatible(cfg, merged);
         await db.query(`UPDATE ${t.welcome_configs} SET config = $2::jsonb, updated_at = CURRENT_TIMESTAMP WHERE guild_id = $1`,[id,JSON.stringify(merged)]);
         await db.query('COMMIT'); return normalizeWelcomeConfig(merged);
       } catch (err) { await db.query('ROLLBACK').catch(()=>{}); throw err; }

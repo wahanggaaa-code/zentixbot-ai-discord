@@ -13,6 +13,7 @@ async function setup(t) {
   const schema = `config_concurrent_${randomBytes(6).toString('hex')}`;
   await admin.query(`CREATE SCHEMA "${schema}"`);
   await admin.query(`CREATE TABLE "${schema}".guilds (id varchar(20) PRIMARY KEY, config jsonb DEFAULT '{}', updated_at timestamp DEFAULT now())`);
+  await admin.query(`CREATE TABLE "${schema}".welcome_configs (guild_id varchar(20) PRIMARY KEY,config jsonb DEFAULT '{}')`);
   const pool = new pg.Pool({...base, options:`-c search_path=${schema}`, max:20});
   t.after(async()=>{await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end();});
   const backend = new PostgreSQLDatabase(); backend.pool=pool; backend.isConnected=true;

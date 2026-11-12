@@ -26,7 +26,7 @@ test('PostgreSQL welcome writes fail closed on read failure or malformed data', 
   const admin=new pg.Client(base);await admin.connect();
   const schema=`welcome_write_${randomBytes(6).toString('hex')}`;
   await admin.query(`CREATE SCHEMA "${schema}"`);
-  await admin.query(`CREATE TABLE "${schema}".guilds(id varchar(20) primary key,created_at timestamp DEFAULT now()); CREATE TABLE "${schema}".welcome_configs(guild_id varchar(20) primary key REFERENCES "${schema}".guilds(id),config jsonb,updated_at timestamp DEFAULT now())`);
+  await admin.query(`CREATE TABLE "${schema}".guilds(id varchar(20) primary key,config jsonb DEFAULT '{}',created_at timestamp DEFAULT now()); CREATE TABLE "${schema}".welcome_configs(guild_id varchar(20) primary key REFERENCES "${schema}".guilds(id),config jsonb,updated_at timestamp DEFAULT now())`);
   const pool=new pg.Pool({...base,options:`-c search_path=${schema}`});
   t.after(async()=>{await pool.end();await admin.query(`DROP SCHEMA "${schema}" CASCADE`);await admin.end()});
   const backend=new PostgreSQLDatabase();backend.pool=pool;backend.isConnected=true;

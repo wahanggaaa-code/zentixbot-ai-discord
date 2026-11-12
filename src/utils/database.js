@@ -3,6 +3,7 @@
 import { pgDb } from './postgresDatabase.js';
 import { logger } from './logger.js';
 import { pgConfig } from '../config/database/postgres.js';
+import { assertOnboardingCompatible, assertOnboardingShape } from '../services/config/onboardingConflict.js';
 import { createError, ErrorTypes, TitanBotError } from './errorHandler.js';
 import { BotConfig, getDefaultApplicationQuestions } from '../config/bot.js';
 import {isSQLiteBirthdayBackend,readSQLiteBirthdays,setSQLiteBirthday,deleteSQLiteBirthday} from '../services/storage/sqliteBirthdays.js';
@@ -477,7 +478,7 @@ async function writePostgresWelcome(pool, guildId, changes, replace) {
         await conn.query('BEGIN');
         // Same lock order as the web welcome dashboard: guild, then welcome.
         await conn.query(`INSERT INTO ${pgConfig.tables.guilds}(id) VALUES($1) ON CONFLICT(id) DO NOTHING`, [guildId]);
-        await conn.query(`SELECT id FROM ${pgConfig.tables.guilds} WHERE id=$1 FOR UPDATE`, [guildId]);
+        const guild = await conn.query(`SELECT config FROM ${pgConfig.tables.guilds} WHERE id=$1 FOR UPDATE`, [guildId]);
         const created = await conn.query(`INSERT INTO ${pgConfig.tables.welcome_configs}(guild_id,config) VALUES($1,'{}'::jsonb) ON CONFLICT(guild_id) DO NOTHING RETURNING guild_id`, [guildId]);
         const result = await conn.query(`SELECT config, config = $2::jsonb AS matches FROM ${pgConfig.tables.welcome_configs} WHERE guild_id=$1 FOR UPDATE`, [guildId, entry?.raw ?? '{}']);
         const raw = result.rows[0]?.config;
@@ -489,7 +490,9 @@ async function writePostgresWelcome(pool, guildId, changes, replace) {
             const unchanged = entry.exists ? created.rowCount === 0 && result.rows[0]?.matches === true : created.rowCount === 1;
             if (!unchanged) throw createError('Stale welcome configuration', ErrorTypes.CONFIGURATION, 'Welcome settings changed. Reload before saving.');
         }
+        assertOnboardingShape(guild.rows[0]?.config, raw);
         const merged = {...normalizeWelcomeConfig(current), ...requested};
+        assertOnboardingCompatible(guild.rows[0]?.config, merged);
         const serialized = JSON.stringify(merged);
         await conn.query(`UPDATE ${pgConfig.tables.welcome_configs} SET config=$2::jsonb, updated_at=CURRENT_TIMESTAMP WHERE guild_id=$1`, [guildId, serialized]);
         await conn.query('COMMIT');

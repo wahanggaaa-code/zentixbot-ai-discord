@@ -8,6 +8,7 @@ import { GUILD_CONFIG_DEFAULTS } from '../config/guild/guildConfigDefaults.js';
 import { EVENT_TYPES } from '../services/loggingService.js';
 import { messageHasPanelMarker } from '../utils/panelStatus.js';
 import { Mutex } from '../utils/mutex.js';
+import { assertOnboardingCompatible, assertOnboardingShape } from '../services/config/onboardingConflict.js';
 
 const tables=pgConfig.tables;
 const events=[...new Set(Object.values(EVENT_TYPES))];
@@ -24,10 +25,15 @@ async function transaction(client,id,fn,includeWelcome=false) {
  });
  const conn=await pool(client).connect();try{
   await conn.query('BEGIN');await conn.query(`INSERT INTO ${tables.guilds} (id,created_at) VALUES ($1,CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`,[id]);
-  const rows=await conn.query(`SELECT config FROM ${tables.guilds} WHERE id=$1 FOR UPDATE`,[id]);const raw=rows.rows[0]?.config||{};
+  const rows=await conn.query(`SELECT config FROM ${tables.guilds} WHERE id=$1 FOR UPDATE`,[id]);const raw=rows.rows[0]?.config;
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw bad('Konfigurasi server perlu diperiksa.',409);
   if(raw.ok!==undefined && raw.value!==undefined)throw bad('Format konfigurasi lama perlu dimigrasi.',409);
-  const config=normalizeGuildConfig(raw,GUILD_CONFIG_DEFAULTS);const welcome=includeWelcome?unwrapReplitData((await conn.query(`SELECT config FROM ${tables.welcome_configs} WHERE guild_id=$1 FOR UPDATE`,[id])).rows[0]?.config||{}):null;
+  const welcomeRows=await conn.query(`SELECT config FROM ${tables.welcome_configs} WHERE guild_id=$1 FOR UPDATE`,[id]);
+  const storedWelcome=welcomeRows.rows.length?welcomeRows.rows[0].config:{};
+  assertOnboardingShape(raw,storedWelcome);
+  const config=normalizeGuildConfig(raw,GUILD_CONFIG_DEFAULTS);const welcome=includeWelcome?storedWelcome:null;
   const result=fn(config,welcome);if(result&&typeof result.then==='function')throw bad('Mutasi konfigurasi harus sinkron.',503);
+  assertOnboardingCompatible(config,storedWelcome);
   await conn.query(`UPDATE ${tables.guilds} SET config=$2::jsonb, updated_at=CURRENT_TIMESTAMP WHERE id=$1`,[id,JSON.stringify(config)]);await conn.query('COMMIT');return result;
  }catch(e){await conn.query('ROLLBACK').catch(()=>{});throw e;}finally{conn.release();}
 }

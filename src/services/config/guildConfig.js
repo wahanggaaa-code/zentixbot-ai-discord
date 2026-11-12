@@ -7,6 +7,7 @@ import { getGuildConfigKey, getWelcomeConfigKey } from '../../utils/database/key
 import { normalizeGuildConfig, validateGuildConfigOrThrow } from '../../utils/schemas.js';
 import { createError, ErrorTypes, wrapServiceBoundary } from '../../utils/errorHandler.js';
 import { pgConfig } from '../../config/database/postgres.js';
+import { assertOnboardingCompatible, assertOnboardingShape } from './onboardingConflict.js';
 
 export { GUILD_CONFIG_DEFAULTS };
 
@@ -63,6 +64,12 @@ async function readPostgresConfig(pool, guildId) {
     const config = normalizeGuildConfig(checkedConfigObject(raw), GUILD_CONFIG_DEFAULTS);
     return postgresSnapshot(pool, guildId, config, original, exists);
 }
+async function checkPostgresOnboarding(conn, guildId, config, originalGuild) {
+    const result = await conn.query(`SELECT config FROM ${pgConfig.tables.welcome_configs} WHERE guild_id=$1 FOR UPDATE`, [guildId]);
+    const welcome = result.rows.length ? result.rows[0].config : {};
+    assertOnboardingShape(originalGuild, welcome);
+    assertOnboardingCompatible(config, welcome);
+}
 async function replacePostgresConfig(pool, guildId, config, context) {
     const entry = config && postgresSnapshots.get(config);
     if (!entry || entry.pool !== pool || entry.guildId !== guildId) {
@@ -74,9 +81,10 @@ async function replacePostgresConfig(pool, guildId, config, context) {
     try {
         await conn.query('BEGIN');
         const created = await conn.query(`INSERT INTO ${pgConfig.tables.guilds}(id) VALUES($1) ON CONFLICT(id) DO NOTHING RETURNING id`, [guildId]);
-        const rows = await conn.query(`SELECT config = $2::jsonb AS matches FROM ${pgConfig.tables.guilds} WHERE id=$1 FOR UPDATE`, [guildId, entry.raw]);
+        const rows = await conn.query(`SELECT config, config = $2::jsonb AS matches FROM ${pgConfig.tables.guilds} WHERE id=$1 FOR UPDATE`, [guildId, entry.raw]);
         const unchanged = entry.exists ? created.rowCount === 0 && rows.rows[0]?.matches === true : created.rowCount === 1;
         if (!unchanged) throw createError('Stale guild configuration', ErrorTypes.CONFIGURATION, 'Server settings changed. Reload before saving.');
+        await checkPostgresOnboarding(conn, guildId, saved, rows.rows[0]?.config);
         await conn.query(`UPDATE ${pgConfig.tables.guilds} SET config=$2::jsonb, updated_at=CURRENT_TIMESTAMP WHERE id=$1`, [guildId, serialized]);
         await conn.query('COMMIT');
         postgresSnapshot(pool, guildId, config, serialized);
@@ -97,6 +105,7 @@ async function mutatePostgresConfig(pool, guildId, context, mutate) {
         const current = normalizeGuildConfig(checkedConfigObject(rows.rows[0]?.config), GUILD_CONFIG_DEFAULTS);
         const normalized = normalizeGuildConfig(mutate(current), GUILD_CONFIG_DEFAULTS);
         const validated = validateGuildConfigOrThrow(normalized, {guildId, ...context});
+        await checkPostgresOnboarding(conn, guildId, validated, rows.rows[0]?.config);
         const serialized = JSON.stringify(validated);
         await conn.query(`UPDATE ${pgConfig.tables.guilds} SET config=$2::jsonb, updated_at=CURRENT_TIMESTAMP WHERE id=$1`, [guildId, serialized]);
         await conn.query('COMMIT');
