@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { PermissionFlagsBits } from 'discord.js';
 import { isHomeGuild } from '../utils/singleGuild.js';
 import { createBotApiRouter } from './botApi.js';
+import { createGoodbyeApi } from './goodbyeApi.js';
 import { createModulesApi } from './modulesApi.js';
 import { createOperationsApi } from './operationsApi.js';
 import { createHostingApi } from './hostingApi.js';
@@ -81,6 +82,7 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
     next();
   };
   router.use('/api/bot', createBotApiRouter(client, {auth, csrf}));
+  router.use('/api/bot', createGoodbyeApi(client, {auth, csrf}));
   router.use('/api/bot', createModulesApi(client, {auth, csrf}));
   router.use('/api/bot', createOperationsApi(client, {auth, csrf}));
   router.use('/api/bot', createHostingApi({auth, env}));
