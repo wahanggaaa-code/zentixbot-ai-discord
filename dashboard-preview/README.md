@@ -1,12 +1,14 @@
-# ZentixBot — UI Tahap 1
+# ZentixBot — Preview Dashboard Tahap 2
 
-Preview fondasi UI saja: gaya editorial, latar #A9A9A9, teks hitam, aksen lime #C4F82A, tipografi dengan sentuhan monospace, menu mengambang desktop, dan hamburger glassmorphism untuk mobile. Data tidak terhubung ke bot. Halaman kategori hanya menunjukkan struktur yang direncanakan; belum ada kontrol atau penyimpanan yang bekerja.
+Preview tampilan dengan gaya editorial, latar #A9A9A9, teks hitam dan aksen lime. Menu desktop mengambang; menu mobile memakai hamburger glassmorphism.
 
-Untuk membuka secara lokal:
+Tahap 2 menambahkan rancangan overview resource Wispbyte (CPU, RAM, disk, jaringan), beserta simulasi tampilan owner/admin dan kondisi offline. **Angka sepenuhnya contoh statis.** Belum ada login, akses owner yang nyata, refresh otomatis, atau koneksi bot/hosting. Simulasi owner/admin bukan fitur keamanan.
+
+Jalankan preview lokal:
 
 ```bash
 cd dashboard-preview
 python3 -m http.server 4174
 ```
 
-Lalu buka http://localhost:4174. Jangan gunakan preview ini sebagai dashboard produksi. Tidak ada kode bot atau file repository yang diubah pada tahap ini.
+Buka http://localhost:4174. Jangan gunakan preview sebagai dashboard produksi.
