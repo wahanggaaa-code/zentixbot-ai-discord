@@ -26,3 +26,16 @@ test('DM modal gates audio and file processing on owner settings',async()=>{
  f.setCfg({...f.settings(),audioEnabled:false});await modal.execute(i,f.client,[gid,uid]);assert.equal(transcribed,0);assert.match(reply.content,/belum diaktifkan/);
  f.setCfg({...f.settings(),audioEnabled:true});await modal.execute(i,f.client,[gid,uid]);assert.equal(transcribed,1);assert.match(f.sent.at(-1).prompt,/transkrip rahasia/);
 });
+
+test('DM modal file consent and authorization remain enforced when membership or settings change',async t=>{
+ const f=fixture();let reply,downloads=0;const bytes=Buffer.from('Dokumen uji DM');const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original});globalThis.fetch=async()=>{downloads++;return new Response(bytes)};
+ const i={guildId:null,user:{id:uid},deferReply:async()=>{},fields:{getTextInputValue:()=> 'ringkas',getCheckbox:()=>false,getUploadedFiles:()=>new Collection([['1',{name:'a.txt',size:bytes.length,url:`https://cdn.discordapp.com/ephemeral-attachments/${bot}/${uid}/a.txt`} ]])},editReply:async x=>{reply=x}};
+ f.setCfg({...f.settings(),fileEnabled:false});await modal.execute(i,f.client,[gid,uid]);assert.equal(downloads,0);assert.match(reply.content,/belum diaktifkan/);
+ f.setCfg({...f.settings(),fileEnabled:true});await modal.execute(i,f.client,[gid,uid]);assert.equal(downloads,1);assert.match(f.sent.at(-1).prompt,/Dokumen uji DM/);
+ f.setCfg({...f.settings(),dmEnabled:false});await modal.execute(i,f.client,[gid,uid]);assert.equal(downloads,1);assert.match(reply.content,/tidak aktif/);
+ f.guild.members.fetch=async()=>{throw Error('not a member')};await modal.execute(i,f.client,[gid,uid]);assert.equal(downloads,1);assert.match(reply,/anggota server/);
+});
+
+test('DM memory cannot be read or cleared by another user',async()=>{
+ const f=fixture(),other='999999999999999999';clearChatMemory(gid,uid,'dm');await runChat({client:f.client,guildId:gid,userId:uid,channelId:null,question:'isi pribadi',consent:true,dm:true,memory:true});let reply;const i={guildId:null,user:{id:other},message:{author:{id:bot}},reply:async x=>reply=x};await memoryHandlers[0].execute(i,f.client,[gid,uid]);assert.match(reply.content,/tidak tersedia/);await memoryHandlers[1].execute(i,f.client,[gid,uid]);assert.equal(viewChatMemory(gid,uid,Date.now(),'dm').length,1);clearChatMemory(gid,uid,'dm');
+});
