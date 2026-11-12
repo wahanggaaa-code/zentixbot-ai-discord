@@ -13,6 +13,7 @@ export { GUILD_CONFIG_DEFAULTS };
 // Full configuration writes require a snapshot of the original read. This prevents
 // an older Discord command from replacing a newer dashboard transaction.
 const sqliteSnapshots=new WeakMap();
+const postgresSnapshots=new WeakMap();
 function sqliteForConfig(client,guildId){
  if(client?.db?.db?.sqlite?.dialect!=='sqlite')return null;
  const sqlite=sqliteBackend(client);if(!sqlite)throw createError('SQLite unavailable',ErrorTypes.DATABASE,'Persistent storage is unavailable.');
@@ -20,7 +21,7 @@ function sqliteForConfig(client,guildId){
  return sqlite;
 }
 function snapshot(sqlite,guildId,value,raw){sqliteSnapshots.set(value,{sqlite,guildId,raw:JSON.stringify(raw)});return value;}
-export function transferGuildConfigSnapshot(source,target){const entry=source&&sqliteSnapshots.get(source);if(entry&&target&&typeof target==='object')sqliteSnapshots.set(target,entry);return target;}
+export function transferGuildConfigSnapshot(source,target){if(source&&target&&typeof target==='object'){for(const snapshots of [sqliteSnapshots,postgresSnapshots]){const entry=snapshots.get(source);if(entry)snapshots.set(target,entry);}}return target;}
 function checkLegacy(raw){if(raw&&typeof raw==='object'&&raw.ok!==undefined&&raw.value!==undefined)throw createError('Legacy config requires migration',ErrorTypes.CONFIGURATION,'Legacy configuration must be migrated before editing.');}
 function checkConflict(config,welcome){
  const verification=config.verification||{};
@@ -29,8 +30,8 @@ function checkConflict(config,welcome){
 function persistConfig(tx,guildId,config,context){const key=getGuildConfigKey(guildId),raw=tx.botGet(key);checkLegacy(raw);const validated=validateGuildConfigOrThrow(config,{guildId,...context});const welcome=unwrapReplitData(tx.botGet(getWelcomeConfigKey(guildId))||{});checkConflict(validated,welcome);tx.botSet(key,validated);return validated;}
 function mutateSQLiteConfig(sqlite,guildId,context,mutate){return sqlite.transaction(tx=>{const raw=tx.botGet(getGuildConfigKey(guildId));checkLegacy(raw);const current=normalizeGuildConfig(raw||{},GUILD_CONFIG_DEFAULTS);const result=persistConfig(tx,guildId,mutate(current),context);return snapshot(sqlite,guildId,result,result)});}
 
-// PostgreSQL partial writes serialize on the same guild row locked by the
-// dashboard. Full replacement writes and other storage paths are separate.
+// PostgreSQL mutations serialize on the same guild row locked by the dashboard.
+// Full replacements additionally compare the exact JSONB snapshot that was read.
 function postgresForConfig(client) {
     const db = client?.db;
     const status = db?.getStatus?.();
@@ -40,6 +41,51 @@ function postgresForConfig(client) {
     }
     return db.db.pool;
 }
+function postgresSnapshot(pool, guildId, value, raw, exists = true) {
+    postgresSnapshots.set(value, {pool, guildId, raw, exists});
+    return value;
+}
+function checkedConfigObject(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw createError('Invalid stored guild configuration', ErrorTypes.DATABASE, 'Server configuration needs review.');
+    }
+    const cleaned = unwrapReplitData(raw);
+    if (!cleaned || typeof cleaned !== 'object' || Array.isArray(cleaned)) {
+        throw createError('Invalid stored guild configuration', ErrorTypes.DATABASE, 'Server configuration needs review.');
+    }
+    return cleaned;
+}
+async function readPostgresConfig(pool, guildId) {
+    const rows = await pool.query(`SELECT config FROM ${pgConfig.tables.guilds} WHERE id=$1`, [guildId]);
+    const exists = rows.rows.length > 0;
+    const raw = exists ? rows.rows[0].config : {};
+    const original = JSON.stringify(raw);
+    const config = normalizeGuildConfig(checkedConfigObject(raw), GUILD_CONFIG_DEFAULTS);
+    return postgresSnapshot(pool, guildId, config, original, exists);
+}
+async function replacePostgresConfig(pool, guildId, config, context) {
+    const entry = config && postgresSnapshots.get(config);
+    if (!entry || entry.pool !== pool || entry.guildId !== guildId) {
+        throw createError('Configuration snapshot required', ErrorTypes.CONFIGURATION, 'Reload server configuration before saving.');
+    }
+    const saved = validateGuildConfigOrThrow(normalizeGuildConfig(config, GUILD_CONFIG_DEFAULTS), {guildId, ...context});
+    const serialized = JSON.stringify(saved);
+    const conn = await pool.connect();
+    try {
+        await conn.query('BEGIN');
+        const created = await conn.query(`INSERT INTO ${pgConfig.tables.guilds}(id) VALUES($1) ON CONFLICT(id) DO NOTHING RETURNING id`, [guildId]);
+        const rows = await conn.query(`SELECT config = $2::jsonb AS matches FROM ${pgConfig.tables.guilds} WHERE id=$1 FOR UPDATE`, [guildId, entry.raw]);
+        const unchanged = entry.exists ? created.rowCount === 0 && rows.rows[0]?.matches === true : created.rowCount === 1;
+        if (!unchanged) throw createError('Stale guild configuration', ErrorTypes.CONFIGURATION, 'Server settings changed. Reload before saving.');
+        await conn.query(`UPDATE ${pgConfig.tables.guilds} SET config=$2::jsonb, updated_at=CURRENT_TIMESTAMP WHERE id=$1`, [guildId, serialized]);
+        await conn.query('COMMIT');
+        postgresSnapshot(pool, guildId, config, serialized);
+        return postgresSnapshot(pool, guildId, JSON.parse(serialized), serialized);
+    } catch (error) {
+        await conn.query('ROLLBACK').catch(() => {});
+        throw error;
+    } finally { conn.release(); }
+}
 async function mutatePostgresConfig(pool, guildId, context, mutate) {
     const conn = await pool.connect();
     try {
@@ -48,20 +94,13 @@ async function mutatePostgresConfig(pool, guildId, context, mutate) {
         // placeholder if validation or any later statement fails.
         await conn.query(`INSERT INTO ${pgConfig.tables.guilds}(id) VALUES($1) ON CONFLICT(id) DO NOTHING`, [guildId]);
         const rows = await conn.query(`SELECT config FROM ${pgConfig.tables.guilds} WHERE id=$1 FOR UPDATE`, [guildId]);
-        const raw = rows.rows[0]?.config;
-        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-            throw createError('Invalid stored guild configuration', ErrorTypes.DATABASE, 'Server configuration needs review.');
-        }
-        const cleaned = unwrapReplitData(raw);
-        if (!cleaned || typeof cleaned !== 'object' || Array.isArray(cleaned)) {
-            throw createError('Invalid stored guild configuration', ErrorTypes.DATABASE, 'Server configuration needs review.');
-        }
-        const current = normalizeGuildConfig(cleaned, GUILD_CONFIG_DEFAULTS);
+        const current = normalizeGuildConfig(checkedConfigObject(rows.rows[0]?.config), GUILD_CONFIG_DEFAULTS);
         const normalized = normalizeGuildConfig(mutate(current), GUILD_CONFIG_DEFAULTS);
         const validated = validateGuildConfigOrThrow(normalized, {guildId, ...context});
-        await conn.query(`UPDATE ${pgConfig.tables.guilds} SET config=$2::jsonb, updated_at=CURRENT_TIMESTAMP WHERE id=$1`, [guildId, JSON.stringify(validated)]);
+        const serialized = JSON.stringify(validated);
+        await conn.query(`UPDATE ${pgConfig.tables.guilds} SET config=$2::jsonb, updated_at=CURRENT_TIMESTAMP WHERE id=$1`, [guildId, serialized]);
         await conn.query('COMMIT');
-        return validated;
+        return postgresSnapshot(pool, guildId, validated, serialized);
     } catch (error) {
         await conn.query('ROLLBACK').catch(() => {});
         throw error;
@@ -72,6 +111,7 @@ async function mutatePostgresConfig(pool, guildId, context, mutate) {
 
 export const getGuildConfig = wrapServiceBoundary(async function getGuildConfig(client, guildId, context = {}) {
     const sqlite=sqliteForConfig(client,guildId);if(sqlite){const raw=sqlite.botGet(getGuildConfigKey(guildId));return snapshot(sqlite,guildId,normalizeGuildConfig(unwrapReplitData(raw)||{},GUILD_CONFIG_DEFAULTS),raw);}
+    const postgres=postgresForConfig(client);if(postgres)return readPostgresConfig(postgres,guildId);
     const config = await readGuildConfig(client, guildId, context);
     return normalizeGuildConfig(config, GUILD_CONFIG_DEFAULTS);
 }, {
@@ -86,6 +126,7 @@ export const setGuildConfig = wrapServiceBoundary(async function setGuildConfig(
       const saved=sqlite.transaction(tx=>{const raw=tx.botGet(getGuildConfigKey(guildId));checkLegacy(raw);if(JSON.stringify(raw)!==entry.raw)throw createError('Stale guild configuration',ErrorTypes.CONFIGURATION,'Server settings changed. Reload before saving.');return persistConfig(tx,guildId,normalizeGuildConfig(config,GUILD_CONFIG_DEFAULTS),context)});
       snapshot(sqlite,guildId,config,saved);return snapshot(sqlite,guildId,saved,saved);
     }
+    const postgres=postgresForConfig(client);if(postgres)return replacePostgresConfig(postgres,guildId,config,context);
     const normalized = normalizeGuildConfig(config, GUILD_CONFIG_DEFAULTS);
     return await writeGuildConfig(client, guildId, normalized, context);
 }, {
