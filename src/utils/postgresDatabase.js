@@ -13,7 +13,7 @@ import {
     isTempBackedType,
     getStructuredListPlan,
 } from './database/keyParser.js';
-import { runKeyMigration } from './database/keyMigration.js';
+import { auditLegacyKeysOnStartup } from './database/legacyKeyStartupAudit.js';
 import {
     tableStatements,
     indexStatements,
@@ -167,7 +167,7 @@ class PostgreSQLDatabase {
                 }
 
                 const isLastAttempt = attempt >= attempts;
-                const isSchemaMismatch = error.code === 'SCHEMA_VERSION_MISMATCH';
+                const isSchemaMismatch = ['SCHEMA_VERSION_MISMATCH','LEGACY_KEYS_REQUIRE_REVIEW','LEGACY_KEY_AUDIT_LIMIT'].includes(error.code);
                 if (isLastAttempt) {
                     logger.error('Failed to initialize PostgreSQL Database:', error);
                     this.isConnected = false;
@@ -191,21 +191,8 @@ class PostgreSQLDatabase {
     }
 
     async runStartupKeyMigration() {
-        if (pgConfig.features.autoMigrate === false) {
-            return;
-        }
-
-        try {
-            const result = await runKeyMigration({ pool: this.pool, logger });
-            if (result?.alreadyDone) {
-                logger.debug('Key migration already applied, skipping.');
-            } else if (result && (result.migrated > 0 || result.errors > 0)) {
-                logger.info('Startup key migration finished', result);
-            }
-        } catch (error) {
-            // Never block startup on key migration; legacy reads still work via fallback.
-            logger.error('Startup key migration failed (continuing with legacy fallback):', error);
-        }
+        // Auditing is independent of AUTO_MIGRATE and never rewrites legacy data.
+        await auditLegacyKeysOnStartup(this.pool);
     }
 
     isAvailable() {

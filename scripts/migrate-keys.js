@@ -2,10 +2,9 @@
 /**
  * Manually migrate legacy database keys to canonical form.
  *
- * NOTE: This also runs automatically on bot startup (see runStartupKeyMigration
- * in src/utils/postgresDatabase.js), which is the recommended path for hosts
- * like Railway where one-off scripts are inconvenient. Use this script only for
- * a dry-run preview or to force a re-run.
+ * Startup no longer runs this automatically. Always stop all writers, verify a
+ * backup, inspect the dry-run, and review conflicting keys before using it.
+ * This legacy script is not a complete transactional migration or rollback.
  *
  * Usage:
  *   node scripts/migrate-keys.js [--dry-run] [--force]
@@ -31,6 +30,10 @@ async function run() {
 
     try {
         const summary = await runKeyMigration({ pool, dryRun, force, logger });
+        if (summary.errors || summary.skipped) {
+            logger.warn('Key migration incomplete; review conflicts and errors.');
+            process.exitCode = 1;
+        }
         if (summary?.alreadyDone) {
             logger.info('Key migration already applied. Use --force to re-run.');
         }

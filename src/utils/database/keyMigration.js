@@ -255,8 +255,10 @@ export async function runKeyMigration({ pool, dryRun = false, force = false, log
             }
         }
 
-        if (!dryRun) {
+        if (!dryRun && summary.errors === 0 && summary.skipped === 0) {
             await writeCompletedMarker(client, summary);
+        } else if (!dryRun) {
+            logger.warn('Key migration incomplete; marker not updated (an older marker may exist). Review retained data.');
         }
 
         logger.info('Key migration complete', summary);

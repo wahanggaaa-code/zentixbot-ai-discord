@@ -37,6 +37,9 @@ class DatabaseWrapper {
         }
         if (!connected || !pgDb.isAvailable()) {
             const failureCode = connectionError ? connectionError.code : pgDb.getLastFailure?.()?.reason;
+            if (['LEGACY_KEYS_REQUIRE_REVIEW','LEGACY_KEY_AUDIT_LIMIT'].includes(failureCode)) {
+                throw Object.assign(new Error('PostgreSQL legacy keys require offline review. Startup aborted without automatic migration.'), {code: failureCode});
+            }
             if (failureCode === 'SCHEMA_VERSION_MISMATCH') {
                 throw Object.assign(new Error('PostgreSQL schema version mismatch. Run the appropriate migration before startup.'), {code: 'SCHEMA_VERSION_MISMATCH'});
             }
