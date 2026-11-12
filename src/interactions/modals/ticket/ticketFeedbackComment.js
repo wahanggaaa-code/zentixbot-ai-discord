@@ -52,7 +52,9 @@ export default {
         try {
             ticketData = await getTicketData(guildId, channelId);
         } catch (err) {
-            logger.warn('ticketFeedbackComment: failed to load ticket data', { guildId, channelId, error: err.message });
+            logger.warn('ticketFeedbackComment: failed to load ticket data', { guildId, channelId });
+            await InteractionHelper.safeEditReply(interaction, { content: 'Ticket data is temporarily unavailable. Please try again.' });
+            return;
         }
 
         if (!ticketData) {

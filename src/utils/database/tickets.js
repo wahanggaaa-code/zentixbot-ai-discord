@@ -1,9 +1,15 @@
 import { logger } from '../logger.js';
+import { pgConfig } from '../../config/database/postgres.js';
 import { db, getFromDb } from './wrapper.js';
 import { getTicketCounterKey, getTicketKey } from './keys.js';
 import {isSQLiteTicketBackend,readSQLiteTicket,saveSQLiteTicket,listSQLiteTicketKeys} from '../../services/storage/sqliteTickets.js';
 
 export { getTicketKey, getTicketCounterKey } from './keys.js';
+
+function requireTicketPool() {
+    if (db.useFallback || !db.db?.isAvailable?.() || !db.db.pool) throw Object.assign(new Error('Persistent ticket database unavailable'), {code: 'TICKET_DB_UNAVAILABLE'});
+    return db.db.pool;
+}
 
 export async function getTicketData(guildId, channelId) {
     if (!db.initialized) {
@@ -11,8 +17,8 @@ export async function getTicketData(guildId, channelId) {
     }
 
     if (isSQLiteTicketBackend(db)) return readSQLiteTicket(db,guildId,channelId);
-    const key = getTicketKey(guildId, channelId);
-    return await db.get(key);
+    const result = await requireTicketPool().query(`SELECT data FROM ${pgConfig.tables.tickets} WHERE guild_id = $1 AND channel_id = $2`, [guildId, channelId]);
+    return result.rows.length ? result.rows[0].data : null;
 }
 
 export async function getOpenTicketCountForUser(guildId, userId) {
@@ -21,9 +27,8 @@ export async function getOpenTicketCountForUser(guildId, userId) {
             await db.initialize();
         }
 
-        if (db.db?.pool && typeof db.db.isAvailable === 'function' && db.db.isAvailable()) {
-            const { pgConfig } = await import('../../config/database/postgres.js');
-            const result = await db.db.pool.query(
+        if (!isSQLiteTicketBackend(db)) {
+            const result = await requireTicketPool().query(
                 `SELECT COUNT(*)::int AS count FROM ${pgConfig.tables.tickets}
                  WHERE guild_id = $1
                    AND data->>'userId' = $2
@@ -52,8 +57,7 @@ export async function getOpenTicketCountForUser(guildId, userId) {
         return 0;
     } catch (error) {
         logger.error(`Error counting open tickets for user ${userId} in guild ${guildId}:`, error);
-        if (isSQLiteTicketBackend(db)) throw error;
-        return 0;
+        throw error;
     }
 }
 
@@ -74,7 +78,7 @@ export async function deleteTicketData(guildId, channelId) {
 
     if (isSQLiteTicketBackend(db)) throw Object.assign(new Error('SQLite ticket deletion is disabled pending safe Discord coordination'),{code:'TICKET_DELETE_DISABLED'});
     const key = getTicketKey(guildId, channelId);
-    await db.delete(key);
+    if (!await db.delete(key)) throw Object.assign(new Error('Ticket data could not be deleted'), {code:'TICKET_DELETE_FAILED'});
 }
 
 export async function getTicketCounter(guildId) {
@@ -82,9 +86,15 @@ export async function getTicketCounter(guildId) {
         await db.initialize();
     }
 
-    const key = getTicketCounterKey(guildId);
-    const counter = await db.get(key);
-    return counter || 0;
+    if (db.db?.sqlite?.dialect === 'sqlite') {
+        const counter = await db.get(getTicketCounterKey(guildId));
+        return counter ?? 0;
+    }
+    const result = await requireTicketPool().query(`SELECT value, expires_at FROM ${pgConfig.tables.temp_data} WHERE key=$1`, [getTicketCounterKey(guildId)]);
+    if (!result.rows.length) return 0;
+    const {value, expires_at: expiresAt} = result.rows[0];
+    if (expiresAt !== null || !Number.isSafeInteger(value) || value < 0) throw Object.assign(new Error('Invalid ticket counter'), {code:'TICKET_COUNTER_INVALID'});
+    return value;
 }
 
 export async function incrementTicketCounter(guildId) {
@@ -97,12 +107,23 @@ export async function incrementTicketCounter(guildId) {
         const nextCounter = await db.increment(key, 1);
         return nextCounter.toString().padStart(3, '0');
     }
-    const currentCounter = await getTicketCounter(guildId);
-    const nextCounter = currentCounter + 1;
-
-    await db.set(key, nextCounter);
-
-    return nextCounter.toString().padStart(3, '0');
+    const conn = await requireTicketPool().connect();
+    try {
+        await conn.query('BEGIN');
+        await conn.query(`INSERT INTO ${pgConfig.tables.temp_data} (key,value) VALUES ($1,'0'::jsonb) ON CONFLICT (key) DO NOTHING`, [key]);
+        const result = await conn.query(`SELECT value, expires_at FROM ${pgConfig.tables.temp_data} WHERE key=$1 FOR UPDATE`, [key]);
+        const {value, expires_at: expiresAt} = result.rows[0];
+        if (expiresAt !== null || !Number.isSafeInteger(value) || value < 0 || value >= Number.MAX_SAFE_INTEGER) throw Object.assign(new Error('Invalid ticket counter'), {code:'TICKET_COUNTER_INVALID'});
+        const nextCounter = value + 1;
+        await conn.query(`UPDATE ${pgConfig.tables.temp_data} SET value=$2::jsonb WHERE key=$1`, [key, JSON.stringify(nextCounter)]);
+        await conn.query('COMMIT');
+        return nextCounter.toString().padStart(3, '0');
+    } catch (error) {
+        await conn.query('ROLLBACK').catch(() => {});
+        throw error;
+    } finally {
+        conn.release();
+    }
 }
 
 async function listGuildTickets(guildId) {
@@ -110,9 +131,8 @@ async function listGuildTickets(guildId) {
         await db.initialize();
     }
 
-    if (db.db?.pool && typeof db.db.isAvailable === 'function' && db.db.isAvailable()) {
-        const { pgConfig } = await import('../../config/database/postgres.js');
-        const result = await db.db.pool.query(
+    if (!isSQLiteTicketBackend(db)) {
+        const result = await requireTicketPool().query(
             `SELECT data FROM ${pgConfig.tables.tickets} WHERE guild_id = $1`,
             [guildId],
         );
@@ -175,13 +195,6 @@ export async function getGuildTicketStats(guildId) {
         };
     } catch (error) {
         logger.error(`Error computing ticket stats for guild ${guildId}:`, error);
-        if (isSQLiteTicketBackend(db)) throw error;
-        return {
-            openCount: 0,
-            closedCount: 0,
-            avgCloseTimeMs: null,
-            feedbackCount: 0,
-            avgRating: null,
-        };
+        throw error;
     }
 }

@@ -99,6 +99,9 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
       );
     }
     
+    // Allocate before any Discord mutation: a database failure must not create a category.
+    const ticketNumber = await getNextTicketNumber(guild.id);
+
     let category = categoryId ? 
       guild.channels.cache.get(categoryId) :
       guild.channels.cache.find(c => 
@@ -118,8 +121,6 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
         ],
       });
     }
-    
-    const ticketNumber = await getNextTicketNumber(guild.id);
     
     let channelName = `ticket-${ticketNumber}`;
     

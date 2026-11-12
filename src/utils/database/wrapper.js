@@ -173,8 +173,7 @@ export async function setInDb(key, value, ttl = null) {
 
 export async function deleteFromDb(key) {
     try {
-        await db.delete(key);
-        return true;
+        return await db.delete(key) === true;
     } catch (error) {
         logger.error(`Error deleting key ${key}:`, error);
         return false;

@@ -44,7 +44,9 @@ const feedbackHandler = {
         try {
             ticketData = await getTicketData(guildId, channelId);
         } catch (err) {
-            logger.warn('ticketFeedback: failed to load ticket data', { guildId, channelId, error: err.message });
+            logger.warn('ticketFeedback: failed to load ticket data', { guildId, channelId });
+            await InteractionHelper.safeEditReply(interaction, { content: 'Ticket data is temporarily unavailable. Please try again.' });
+            return;
         }
 
         if (!ticketData) {
@@ -155,7 +157,9 @@ const commentHandler = {
             return;
         }
 
-        const ticketData = await getTicketData(guildId, channelId);
+        let ticketData;
+        try { ticketData = await getTicketData(guildId, channelId); }
+        catch { await InteractionHelper.safeReply(interaction, { content: 'Ticket data is temporarily unavailable. Please try again.' }); return; }
         if (!ticketData || ticketData.userId !== interaction.user.id) {
             await InteractionHelper.safeReply(interaction, { content: 'Only the ticket creator can submit feedback for this ticket.' });
             return;
@@ -184,7 +188,9 @@ const declineHandler = {
 
     async execute(interaction, client, args) {
         const [guildId, channelId] = args;
-        const ticketData = await getTicketData(guildId, channelId);
+        let ticketData;
+        try { ticketData = await getTicketData(guildId, channelId); }
+        catch { await InteractionHelper.safeReply(interaction, { content: 'Ticket data is temporarily unavailable. Please try again.' }); return; }
         if (!ticketData || ticketData.userId !== interaction.user.id) {
             await InteractionHelper.safeReply(interaction, { content: 'Only the ticket creator can dismiss this survey.' });
             return;
