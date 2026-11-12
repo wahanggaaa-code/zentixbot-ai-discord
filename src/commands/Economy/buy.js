@@ -3,6 +3,7 @@ import { createEmbed, errorEmbed, successEmbed, infoEmbed, warningEmbed } from '
 import { shopItems } from '../../config/shop/items.js';
 import { getEconomyData, setEconomyData } from '../../utils/economy.js';
 import { getGuildConfig } from '../../services/config/guildConfig.js';
+import { withEconomyTransaction } from '../../services/economy/transaction.js';
 import { withErrorHandling, createError, ErrorTypes } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 
@@ -57,6 +58,24 @@ export default {
             }
 
             const totalCost = item.price * quantity;
+
+            if (item.type !== 'role') {
+                if (!['upgrade','consumable','tool'].includes(item.type)) throw createError('Unsupported item', ErrorTypes.VALIDATION, 'This item is not available.');
+                const data = await withEconomyTransaction(client,guildId,[userId],accounts => {
+                    const account=accounts.get(userId);
+                    if (account.wallet < totalCost) throw createError('Insufficient funds', ErrorTypes.VALIDATION, `You need **$${totalCost.toLocaleString()}** to purchase ${quantity}x **${item.name}**, but you only have **$${account.wallet.toLocaleString()}** in cash.`, {required:totalCost,current:account.wallet,itemId,quantity});
+                    account.wallet-=totalCost;
+                    if(item.type==='upgrade') account.upgrades[itemId]=true;
+                    else account.inventory[itemId]=(account.inventory[itemId]||0)+quantity;
+                    return account;
+                });
+                let description=`You successfully purchased ${quantity}x **${item.name}** for **$${totalCost.toLocaleString()}**!`;
+                if(item.type==='upgrade')description+='\n\n**✨ Your upgrade is now active!**';
+                else if(item.type==='tool')description+=`\n\n**🛠️ ${item.name} added to your inventory!**`;
+                const embed=successEmbed('💰 Purchase Successful',description).addFields({name:'New Balance',value:`$${data.wallet.toLocaleString()}`,inline:true});
+                await InteractionHelper.safeEditReply(interaction,{embeds:[embed],flags:[MessageFlags.Ephemeral]});
+                return;
+            }
 
             const guildConfig = await getGuildConfig(client, guildId);
             const PREMIUM_ROLE_ID = guildConfig.premiumRoleId;

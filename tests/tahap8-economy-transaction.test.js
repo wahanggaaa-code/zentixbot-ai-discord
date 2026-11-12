@@ -54,3 +54,15 @@ test('withdraw serializes concurrent requests and preserves total balance',async
 for(const commandName of ['gamble','crime','slut'])test(`${commandName} mutates balances and cooldowns within one transaction`,async()=>{
  const {default:command}=await import(`../src/commands/Economy/${commandName}.js`),f=fixture({[a]:{wallet:1000,bank:0,inventory:{lucky_clover:1},cooldowns:{}}});const make=()=>({id:'111111111111111111',guildId:gid,user:{id:a},options:{getString:()=> 'pickpocketing',getInteger:()=>10},deferred:true,isChatInputCommand:()=>true,editReply:async()=>{}});const results=await Promise.allSettled([command.execute(make(),{},f.client),command.execute(make(),{},f.client)]);assert.equal(results.filter(x=>x.status==='fulfilled').length,1);assert.equal(results.filter(x=>x.status==='rejected').length,1);assert.ok(Number.isSafeInteger(f.read(a).wallet));assert.equal(f.commands.filter(x=>x.sql==='COMMIT').length,1);assert.equal(f.commands.filter(x=>x.sql==='ROLLBACK').length,1);
 });
+
+test('economy add/remove helpers use the transaction and preserve concurrent credits',async()=>{
+ const {addMoney,removeMoney,updateBalance}=await import('../src/utils/economy.js');const f=fixture({[a]:{wallet:100,bank:0}});await Promise.all([addMoney(f.client,gid,a,30),addMoney(f.client,gid,a,20)]);assert.equal(f.read(a).wallet,150);const results=await Promise.allSettled([removeMoney(f.client,gid,a,100),removeMoney(f.client,gid,a,100)]);assert.equal(results.filter(x=>x.status==='fulfilled').length,1);assert.equal(f.read(a).wallet,50);await updateBalance(f.client,gid,a,{wallet:5});assert.equal(f.read(a).wallet,55);
+});
+
+test('non-role shop purchases debit and add inventory atomically',async()=>{
+ const {default:command}=await import('../src/commands/Economy/buy.js'),f=fixture({[a]:{wallet:5000,bank:0,inventory:{}}});const make=()=>({id:'111111111111111111',guildId:gid,user:{id:a},options:{getString:()=> 'extra_work',getInteger:()=>1},deferred:true,isChatInputCommand:()=>true,editReply:async()=>{}});const result=await Promise.allSettled([command.execute(make(),{},f.client),command.execute(make(),{},f.client)]);assert.equal(result.filter(x=>x.status==='fulfilled').length,1);assert.equal(result.filter(x=>x.status==='rejected').length,1);assert.equal(f.read(a).wallet,0);assert.equal(f.read(a).inventory.extra_work,1);
+});
+
+test('economy service mutations use locked transactions and guard overdrafts',async()=>{
+ const f=fixture({[a]:{wallet:100,bank:10}});await Promise.all([EconomyService.addMoney(f.client,gid,a,20),EconomyService.addMoney(f.client,gid,a,30)]);assert.equal(f.read(a).wallet,150);await EconomyService.depositToBank(f.client,gid,a,100);assert.equal(f.read(a).wallet,50);assert.equal(f.read(a).bank,110);await EconomyService.withdrawFromBank(f.client,gid,a,10);assert.equal(f.read(a).wallet,60);assert.equal(f.read(a).bank,100);await assert.rejects(EconomyService.removeMoney(f.client,gid,a,1000));assert.equal(f.read(a).wallet,60);
+});

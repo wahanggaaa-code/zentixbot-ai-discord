@@ -7,6 +7,7 @@ import { logger } from './logger.js';
 import { validateDiscordId, validateNumber } from './validation.js';
 import { DEFAULT_ECONOMY_DATA } from './constants.js';
 import { createError, ErrorTypes, wrapServiceBoundary } from './errorHandler.js';
+import { withEconomyTransaction } from '../services/economy/transaction.js';
 
 const ECONOMY_CONFIG = BotConfig.economy || {};
 const BASE_BANK_CAPACITY = ECONOMY_CONFIG.baseBankCapacity || 10000;
@@ -93,7 +94,8 @@ export async function setEconomyData(client, guildId, userId, data) {
 }
 
 export async function updateBalance(client, guildId, userId, options = {}) {
-    const data = await getEconomyData(client, guildId, userId);
+    return withEconomyTransaction(client,guildId,[userId],accounts => {
+    const data = accounts.get(userId);
     
     if (options.wallet !== undefined) {
         data.wallet = Math.max(0, (data.wallet || 0) + options.wallet);
@@ -115,8 +117,8 @@ export async function updateBalance(client, guildId, userId, options = {}) {
         }
     }
     
-    await setEconomyData(client, guildId, userId, data);
     return data;
+    });
 }
 
 export function checkCooldown(userData, action) {
@@ -265,7 +267,8 @@ export const addMoney = wrapServiceBoundary(async function addMoney(client, guil
         );
     }
 
-    const userData = await getEconomyData(client, guildId, userId);
+    return withEconomyTransaction(client,guildId,[userId],accounts => {
+    const userData = accounts.get(userId);
 
     if (type === 'bank') {
         const maxBank = getMaxBankCapacity(userData);
@@ -282,12 +285,11 @@ export const addMoney = wrapServiceBoundary(async function addMoney(client, guil
         userData.wallet = (userData.wallet || 0) + validAmount;
     }
 
-    await setEconomyData(client, guildId, userId, userData);
-
     return {
         newBalance: type === 'bank' ? userData.bank : userData.wallet,
         ...(type === 'bank' ? { maxBank: getMaxBankCapacity(userData) } : {}),
     };
+    });
 }, {
     service: 'economy',
     operation: 'addMoney',
@@ -314,7 +316,8 @@ export const removeMoney = wrapServiceBoundary(async function removeMoney(client
         );
     }
 
-    const userData = await getEconomyData(client, guildId, userId);
+    return withEconomyTransaction(client,guildId,[userId],accounts => {
+    const userData = accounts.get(userId);
 
     if (type === 'bank') {
         if ((userData.bank || 0) < validAmount) {
@@ -338,11 +341,10 @@ export const removeMoney = wrapServiceBoundary(async function removeMoney(client
         userData.wallet = (userData.wallet || 0) - validAmount;
     }
 
-    await setEconomyData(client, guildId, userId, userData);
-
     return {
         newBalance: type === 'bank' ? userData.bank : userData.wallet,
     };
+    });
 }, {
     service: 'economy',
     operation: 'removeMoney',
