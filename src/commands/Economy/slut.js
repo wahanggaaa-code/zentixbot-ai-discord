@@ -1,6 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { createEmbed } from '../../utils/embeds.js';
-import { getEconomyData, setEconomyData } from '../../utils/economy.js';
+import { withEconomyTransaction } from '../../services/economy/transaction.js';
 import { withErrorHandling, createError, ErrorTypes } from '../../utils/errorHandler.js';
 import { logger } from '../../utils/logger.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
@@ -116,45 +116,38 @@ export default {
 
             logger.debug(`[ECONOMY] Slut command started for ${userId}`, { userId, guildId });
 
-            const userData = await getEconomyData(client, guildId, userId);
+            const result = await withEconomyTransaction(client,guildId,[userId],accounts => {
+                const userData = accounts.get(userId);
+                const lastSlut = userData.lastSlut || 0;
 
-            if (!userData) {
-                throw createError(
-                    "Failed to load economy data for slut command",
-                    ErrorTypes.DATABASE,
-                    "Failed to load your economy data. Please try again later.",
-                    { userId, guildId }
-                );
-            }
+                if (now - lastSlut < SLUT_COOLDOWN) {
+                    const remainingTime = lastSlut + SLUT_COOLDOWN - now;
+                    throw createError(
+                        "Slut cooldown active",
+                        ErrorTypes.RATE_LIMIT,
+                        `You need to wait before you can work again! Try again in **${Math.ceil(remainingTime / 60000)}** minutes.`,
+                        { timeRemaining: remainingTime, cooldownType: 'slut' }
+                    );
+                }
 
-            const lastSlut = userData.lastSlut || 0;
+                const activity = randomChoice(SLUT_ACTIVITIES);
 
-            if (now - lastSlut < SLUT_COOLDOWN) {
-                const remainingTime = lastSlut + SLUT_COOLDOWN - now;
-                throw createError(
-                    "Slut cooldown active",
-                    ErrorTypes.RATE_LIMIT,
-                    `You need to wait before you can work again! Try again in **${Math.ceil(remainingTime / 60000)}** minutes.`,
-                    { timeRemaining: remainingTime, cooldownType: 'slut' }
-                );
-            }
+                const outcome = resolveOutcome(activity, userData.wallet || 0);
 
-            const activity = randomChoice(SLUT_ACTIVITIES);
+                userData.lastSlut = now;
+                userData.totalSluts = (userData.totalSluts || 0) + 1;
+                userData.totalSlutEarnings = (userData.totalSlutEarnings || 0) + Math.max(0, outcome.delta);
+                userData.totalSlutLosses = (userData.totalSlutLosses || 0) + Math.max(0, -outcome.delta);
 
-            const outcome = resolveOutcome(activity, userData.wallet || 0);
+                if (outcome.type !== 'payout') {
+                    userData.failedSluts = (userData.failedSluts || 0) + 1;
+                }
 
-            userData.lastSlut = now;
-            userData.totalSluts = (userData.totalSluts || 0) + 1;
-            userData.totalSlutEarnings = (userData.totalSlutEarnings || 0) + Math.max(0, outcome.delta);
-            userData.totalSlutLosses = (userData.totalSlutLosses || 0) + Math.max(0, -outcome.delta);
+                userData.wallet = Math.max(0, (userData.wallet || 0) + outcome.delta);
 
-            if (outcome.type !== 'payout') {
-                userData.failedSluts = (userData.failedSluts || 0) + 1;
-            }
-
-            userData.wallet = Math.max(0, (userData.wallet || 0) + outcome.delta);
-
-            await setEconomyData(client, guildId, userId, userData);
+                return {userData,activity,outcome};
+            });
+            const {userData,activity,outcome}=result;
 
             logger.info(`[ECONOMY_TRANSACTION] Slut activity resolved`, {
                 userId,

@@ -34,3 +34,23 @@ test('unmigrated legacy records prevent creating a fresh account and cannot be o
 test('daily claim checks cooldown and credits wallet in one transaction',async()=>{
  const {claimDailyAtomic}=await import('../src/services/economy/daily.js');const f=fixture({[a]:{wallet:25,bank:0,lastDaily:0}}),args={client:f.client,guildId:gid,userId:a,premium:true,now:200000000};const outcomes=await Promise.allSettled([claimDailyAtomic(args),claimDailyAtomic(args)]);assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);const reward=outcomes.find(x=>x.status==='fulfilled').value;assert.equal(reward.bonus,10);assert.equal(reward.earned,110);assert.equal(f.read(a).wallet,135);assert.equal(f.read(a).lastDaily,args.now);assert.equal(outcomes.filter(x=>x.status==='rejected').length,1);
 });
+
+for(const [commandName,field] of [['work','lastWork'],['beg','lastBeg'],['mine','lastMine'],['fish','lastFish']])test(`${commandName} command commits reward and cooldown together under concurrency`,async()=>{
+ const {default:command}=await import(`../src/commands/Economy/${commandName}.js`),f=fixture({[a]:{wallet:0,bank:0,inventory:{}}});const makeInteraction=()=>({id:'111111111111111111',guildId:gid,user:{id:a,tag:'Tester',displayAvatarURL:()=> 'https://example.com/avatar.png'},deferred:true,replied:false,isChatInputCommand:()=>true,editReply:async()=>{}});
+ const outcomes=await Promise.allSettled([command.execute(makeInteraction(),{},f.client),command.execute(makeInteraction(),{},f.client)]);assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);assert.equal(outcomes.filter(x=>x.status==='rejected').length,1);assert.ok(f.read(a)[field]>0);assert.ok(Number.isSafeInteger(f.read(a).wallet));assert.equal(f.commands.filter(x=>x.sql==='COMMIT').length,1);assert.equal(f.commands.filter(x=>x.sql==='ROLLBACK').length,1);
+});
+
+test('work consumes at most one extra shift inside the transaction',async()=>{
+ const {default:command}=await import('../src/commands/Economy/work.js'),f=fixture({[a]:{wallet:0,bank:0,lastWork:Date.now(),inventory:{extra_work:1,laptop:1}}});const make=()=>({id:'111111111111111111',guildId:gid,user:{id:a,tag:'Tester',displayAvatarURL:()=> 'https://example.com/avatar.png'},deferred:true,isChatInputCommand:()=>true,editReply:async()=>{}});const outcomes=await Promise.allSettled([command.execute(make(),{},f.client),command.execute(make(),{},f.client)]);assert.equal(outcomes.filter(x=>x.status==='fulfilled').length,1);assert.equal(f.read(a).inventory.extra_work,0);assert.ok(f.read(a).wallet>0);
+});
+
+test('deposit serializes concurrent all requests without creating or losing funds',async()=>{
+ const {default:command}=await import('../src/commands/Economy/deposit.js'),f=fixture({[a]:{wallet:100,bank:0,inventory:{}}});const make=()=>({id:'111111111111111111',guildId:gid,user:{id:a},options:{getString:()=> 'all'},deferred:true,isChatInputCommand:()=>true,editReply:async()=>{},followUp:async()=>{}});const results=await Promise.allSettled([command.execute(make(),{},f.client),command.execute(make(),{},f.client)]);assert.equal(results.filter(x=>x.status==='fulfilled').length,1);assert.equal(f.read(a).wallet,0);assert.equal(f.read(a).bank,100);
+});
+test('withdraw serializes concurrent requests and preserves total balance',async()=>{
+ const {default:command}=await import('../src/commands/Economy/withdraw.js'),f=fixture({[a]:{wallet:0,bank:100}});const make=()=>({id:'111111111111111111',guildId:gid,user:{id:a},options:{getInteger:()=>80},deferred:true,isChatInputCommand:()=>true,editReply:async()=>{}});const results=await Promise.allSettled([command.execute(make(),{},f.client),command.execute(make(),{},f.client)]);assert.equal(results.filter(x=>x.status==='fulfilled').length,2);assert.equal(f.read(a).wallet,100);assert.equal(f.read(a).bank,0);
+});
+
+for(const commandName of ['gamble','crime','slut'])test(`${commandName} mutates balances and cooldowns within one transaction`,async()=>{
+ const {default:command}=await import(`../src/commands/Economy/${commandName}.js`),f=fixture({[a]:{wallet:1000,bank:0,inventory:{lucky_clover:1},cooldowns:{}}});const make=()=>({id:'111111111111111111',guildId:gid,user:{id:a},options:{getString:()=> 'pickpocketing',getInteger:()=>10},deferred:true,isChatInputCommand:()=>true,editReply:async()=>{}});const results=await Promise.allSettled([command.execute(make(),{},f.client),command.execute(make(),{},f.client)]);assert.equal(results.filter(x=>x.status==='fulfilled').length,1);assert.equal(results.filter(x=>x.status==='rejected').length,1);assert.ok(Number.isSafeInteger(f.read(a).wallet));assert.equal(f.commands.filter(x=>x.sql==='COMMIT').length,1);assert.equal(f.commands.filter(x=>x.sql==='ROLLBACK').length,1);
+});

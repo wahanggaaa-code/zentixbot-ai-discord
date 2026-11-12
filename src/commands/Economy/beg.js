@@ -1,6 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { successEmbed, warningEmbed } from '../../utils/embeds.js';
-import { getEconomyData, setEconomyData } from '../../utils/economy.js';
+import { withEconomyTransaction } from '../../services/economy/transaction.js';
 import { botConfig } from '../../config/bot.js';
 import { withErrorHandling, createError, ErrorTypes } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
@@ -22,77 +22,69 @@ export default {
             const userId = interaction.user.id;
             const guildId = interaction.guildId;
 
-            let userData = await getEconomyData(client, guildId, userId);
-            
-            if (!userData) {
-                throw createError(
-                    "Failed to load economy data",
-                    ErrorTypes.DATABASE,
-                    "Failed to load your economy data. Please try again later.",
-                    { userId, guildId }
-                );
-            }
+            const replyEmbed = await withEconomyTransaction(client,guildId,[userId],accounts => {
+                const userData = accounts.get(userId);
+                const lastBeg = userData.lastBeg || 0;
+                const remainingTime = lastBeg + COOLDOWN - Date.now();
 
-            const lastBeg = userData.lastBeg || 0;
-            const remainingTime = lastBeg + COOLDOWN - Date.now();
+                if (remainingTime > 0) {
+                    const minutes = Math.floor(remainingTime / 60000);
+                    const seconds = Math.floor((remainingTime % 60000) / 1000);
 
-            if (remainingTime > 0) {
-                const minutes = Math.floor(remainingTime / 60000);
-                const seconds = Math.floor((remainingTime % 60000) / 1000);
+                    let timeMessage =
+                        minutes > 0 ? `${minutes} minute(s)` : `${seconds} second(s)`;
 
-                let timeMessage =
-                    minutes > 0 ? `${minutes} minute(s)` : `${seconds} second(s)`;
+                    throw createError(
+                        "Beg cooldown active",
+                        ErrorTypes.RATE_LIMIT,
+                        `You are tired from begging! Try again in **${timeMessage}**.`,
+                        { remainingTime, minutes, seconds, cooldownType: 'beg' }
+                    );
+                }
 
-                throw createError(
-                    "Beg cooldown active",
-                    ErrorTypes.RATE_LIMIT,
-                    `You are tired from begging! Try again in **${timeMessage}**.`,
-                    { remainingTime, minutes, seconds, cooldownType: 'beg' }
-                );
-            }
+                const success = Math.random() < SUCCESS_CHANCE;
 
-            const success = Math.random() < SUCCESS_CHANCE;
+                let replyEmbed;
+                let newCash = userData.wallet;
 
-            let replyEmbed;
-            let newCash = userData.wallet;
+                if (success) {
+                    const amountWon =
+                        Math.floor(Math.random() * (MAX_WIN - MIN_WIN + 1)) + MIN_WIN;
 
-            if (success) {
-                const amountWon =
-                    Math.floor(Math.random() * (MAX_WIN - MIN_WIN + 1)) + MIN_WIN;
+                    newCash += amountWon;
 
-                newCash += amountWon;
+                    const successMessages = [
+                        `A kind stranger drops **$${amountWon.toLocaleString()}** into your cup.`,
+                        `You spotted an unattended wallet! You grab **$${amountWon.toLocaleString()}** and run.`,
+                        `Someone took pity on you and gave you **$${amountWon.toLocaleString()}**!`,
+                        `You found **$${amountWon.toLocaleString()}** under a park bench.`,
+                    ];
 
-                const successMessages = [
-                    `A kind stranger drops **$${amountWon.toLocaleString()}** into your cup.`,
-                    `You spotted an unattended wallet! You grab **$${amountWon.toLocaleString()}** and run.`,
-                    `Someone took pity on you and gave you **$${amountWon.toLocaleString()}**!`,
-                    `You found **$${amountWon.toLocaleString()}** under a park bench.`,
-                ];
+                    replyEmbed = successEmbed(
+                        'Begging Successful',
+                        successMessages[
+                            Math.floor(Math.random() * successMessages.length)
+                        ]
+                    );
+                } else {
+                    const failMessages = [
+                        "The police chased you off. You got nothing.",
+                        "Someone yelled, 'Get a job!' and walked past.",
+                        "A squirrel stole the single coin you had.",
+                        "You tried to beg, but you were too embarrassed and gave up.",
+                    ];
 
-                replyEmbed = successEmbed(
-                    'Begging Successful',
-                    successMessages[
-                        Math.floor(Math.random() * successMessages.length)
-                    ]
-                );
-            } else {
-                const failMessages = [
-                    "The police chased you off. You got nothing.",
-                    "Someone yelled, 'Get a job!' and walked past.",
-                    "A squirrel stole the single coin you had.",
-                    "You tried to beg, but you were too embarrassed and gave up.",
-                ];
+                    replyEmbed = warningEmbed(
+                        'Insufficient Funds',
+                        failMessages[Math.floor(Math.random() * failMessages.length)]
+                    );
+                }
 
-                replyEmbed = warningEmbed(
-                    'Insufficient Funds',
-                    failMessages[Math.floor(Math.random() * failMessages.length)]
-                );
-            }
+                userData.wallet = newCash;
+                userData.lastBeg = Date.now();
 
-            userData.wallet = newCash;
-userData.lastBeg = Date.now();
-
-            await setEconomyData(client, guildId, userId, userData);
+                return replyEmbed;
+            });
 
             await InteractionHelper.safeEditReply(interaction, { embeds: [replyEmbed] });
     }, { command: 'beg' })
