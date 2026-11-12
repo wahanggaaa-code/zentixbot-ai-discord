@@ -187,19 +187,13 @@ export const setConfigValue = wrapServiceBoundary(async function setConfigValue(
  * Merge partial updates into a nested config object (e.g. verification, logging).
  */
 export const patchGuildConfig = wrapServiceBoundary(async function patchGuildConfig(client, guildId, patch, context = {}) {
-    if (!patch || typeof patch !== 'object') {
-        throw createError(
-            'Invalid guild config patch',
-            ErrorTypes.VALIDATION,
-            'Invalid configuration update.',
-            { guildId, ...context },
-        );
-    }
-
-    const sqlite=sqliteForConfig(client,guildId);if(sqlite)return mutateSQLiteConfig(sqlite,guildId,context,current=>deepMergeGuildConfig(current,patch));
-    const postgres=postgresForConfig(client);if(postgres)return mutatePostgresConfig(postgres,guildId,context,current=>deepMergeGuildConfig(current,patch));
+    // Capture and validate the entire request before any await. The caller may
+    // otherwise mutate its object while waiting for a database lock.
+    const capturedPatch = captureGuildConfigPatch(patch);
+    const sqlite=sqliteForConfig(client,guildId);if(sqlite)return mutateSQLiteConfig(sqlite,guildId,context,current=>deepMergeGuildConfig(current,capturedPatch));
+    const postgres=postgresForConfig(client);if(postgres)return mutatePostgresConfig(postgres,guildId,context,current=>deepMergeGuildConfig(current,capturedPatch));
     const currentConfig = await readGuildConfig(client, guildId, context);
-    const merged = deepMergeGuildConfig(currentConfig, patch);
+    const merged = deepMergeGuildConfig(currentConfig, capturedPatch);
     const normalized = normalizeGuildConfig(merged, GUILD_CONFIG_DEFAULTS);
     validateGuildConfigOrThrow(normalized, { guildId, ...context });
     return await writeGuildConfig(client, guildId, normalized, context);
@@ -211,23 +205,53 @@ export const patchGuildConfig = wrapServiceBoundary(async function patchGuildCon
     userMessage: 'Failed to update server configuration. Please try again.',
 });
 
-function deepMergeGuildConfig(base, patch) {
-    const result = { ...base };
-
-    for (const [key, value] of Object.entries(patch)) {
-        if (
-            value &&
-            typeof value === 'object' &&
-            !Array.isArray(value) &&
-            base[key] &&
-            typeof base[key] === 'object' &&
-            !Array.isArray(base[key])
-        ) {
-            result[key] = { ...base[key], ...value };
-        } else {
-            result[key] = value;
+// Patches are JSON records; arrays and scalars replace values, whereas records
+// recursively merge. Disallow accessors and dangerous keys even inside arrays.
+const unsafePatchKeys = new Set(['__proto__', 'prototype', 'constructor']);
+const plainRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+function captureGuildConfigPatch(patch) {
+    const invalid = () => { throw createError('Invalid guild config patch', ErrorTypes.VALIDATION, 'Invalid configuration update.'); };
+    if (!plainRecord(patch)) invalid();
+    const ancestors = new Set();
+    let nodes = 0;
+    function copy(value, depth) {
+        if (++nodes > 20000 || depth > 32) invalid();
+        if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+        if (typeof value === 'number') { if (!Number.isFinite(value)) invalid(); return value; }
+        if (!Array.isArray(value) && !plainRecord(value)) invalid();
+        if (ancestors.has(value)) invalid();
+        ancestors.add(value);
+        if (Object.getOwnPropertySymbols(value).length) invalid();
+        const descriptors = Object.getOwnPropertyDescriptors(value);
+        if (Array.isArray(value)) {
+            const keys = Object.keys(descriptors).filter(key => key !== 'length');
+            if (keys.length !== value.length) invalid();
+            const result = [];
+            for (let i = 0; i < value.length; i++) {
+                const d = descriptors[String(i)];
+                if (!d || !d.enumerable || !Object.hasOwn(d, 'value')) invalid();
+                result.push(copy(d.value, depth + 1));
+            }
+            ancestors.delete(value);
+            return result;
         }
+        const result = {};
+        for (const [key, d] of Object.entries(descriptors)) {
+            if (unsafePatchKeys.has(key) || !d.enumerable || !Object.hasOwn(d, 'value')) invalid();
+            Object.defineProperty(result, key, { value: copy(d.value, depth + 1), enumerable: true, writable: true, configurable: true });
+        }
+        ancestors.delete(value);
+        return result;
     }
-
+    return copy(patch, 0);
+}
+function deepMergeGuildConfig(base, patch) {
+    const result = plainRecord(base) ? { ...base } : {};
+    for (const [key, value] of Object.entries(patch)) {
+        const previous = Object.hasOwn(result, key) ? result[key] : undefined;
+        const next = plainRecord(value) ? deepMergeGuildConfig(previous, value) : value;
+        Object.defineProperty(result, key, { value: next, enumerable: true, writable: true, configurable: true });
+    }
     return result;
 }
