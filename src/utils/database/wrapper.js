@@ -18,6 +18,15 @@ class DatabaseWrapper {
             return;
         }
 
+        // Never interpret a SQLite deployment request as permission to fall back to RAM.
+        // SQLite integration is still incomplete, so abort before connecting to anything.
+        const sqliteRequested = ['DATABASE_ENGINE','DATABASE_DRIVER','DB_TYPE'].some(key => process.env[key]?.trim().toLowerCase() === 'sqlite') || /^(sqlite|file):/i.test((process.env.DATABASE_URL || '').trim()) || Boolean(process.env.DATABASE_PATH?.trim());
+        if (sqliteRequested) {
+            const error = new Error('SQLite deployment is not yet supported; startup aborted without fallback.');
+            error.code = 'SQLITE_INCOMPLETE';
+            throw error;
+        }
+
         try {
             logger.info('Attempting to connect to PostgreSQL...');
             const pgConnected = await pgDb.connect();
@@ -155,7 +164,7 @@ export async function initializeDatabase() {
     } catch (error) {
         logger.error('❌ Database Initialization Error:', error);
 
-        if (error.code === 'SCHEMA_VERSION_MISMATCH') {
+        if (error.code === 'SCHEMA_VERSION_MISMATCH' || error.code === 'SQLITE_INCOMPLETE') {
             throw error;
         }
 

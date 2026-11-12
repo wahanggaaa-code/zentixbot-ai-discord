@@ -17,14 +17,16 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
   // Do not alter the journal mode or create Zentix tables in an unrelated SQLite file.
   const initial=database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(x=>x.name);
   if(initial.length&&!initial.includes('zentix_storage_meta'))throw error('File SQLite bukan database Zentix.','SQLITE_SCHEMA');
-  if(initial.includes('zentix_storage_meta')){const prior=database.prepare("SELECT value FROM zentix_storage_meta WHERE key='schema_version'").get()?.value;if(prior!==undefined&&!['1','2','3'].includes(prior))throw error('Versi skema SQLite tidak didukung.','SQLITE_SCHEMA');if(prior===undefined&&initial.some(name=>name!=='zentix_storage_meta'))throw error('Skema SQLite tanpa versi tidak dikenali.','SQLITE_SCHEMA');}
+  if(initial.includes('zentix_storage_meta')){const prior=database.prepare("SELECT value FROM zentix_storage_meta WHERE key='schema_version'").get()?.value;if(prior!==undefined&&!['1','2','3','4'].includes(prior))throw error('Versi skema SQLite tidak didukung.','SQLITE_SCHEMA');if(prior===undefined&&initial.some(name=>name!=='zentix_storage_meta'))throw error('Skema SQLite tanpa versi tidak dikenali.','SQLITE_SCHEMA');}
   const mode=database.prepare('PRAGMA journal_mode=WAL').get()?.journal_mode;if(file!==':memory:'&&String(mode).toLowerCase()!=='wal')throw error('SQLite WAL tidak tersedia.','SQLITE_UNAVAILABLE');
   database.exec('BEGIN IMMEDIATE');
   database.exec('CREATE TABLE IF NOT EXISTS zentix_storage_meta (key TEXT PRIMARY KEY,value TEXT NOT NULL)');
   const version=database.prepare("SELECT value FROM zentix_storage_meta WHERE key='schema_version'").get()?.value;
-  if(version!==undefined&&!['1','2','3'].includes(version))throw error('Versi skema SQLite tidak didukung.','SQLITE_SCHEMA');
-  const expected={zentix_kv:[['key','TEXT',1],['value','TEXT',0],['expires_at','INTEGER',0]],zentix_economy:[['guild_id','TEXT',1],['user_id','TEXT',2],['data','TEXT',0]],zentix_bot_kv:[['key','TEXT',1],['value','TEXT',0],['expires_at','INTEGER',0],...(version==='3'?[['updated_at','INTEGER',0]]:[])]};
+  if(version!==undefined&&!['1','2','3','4'].includes(version))throw error('Versi skema SQLite tidak didukung.','SQLITE_SCHEMA');
+  const expected={zentix_kv:[['key','TEXT',1],['value','TEXT',0],['expires_at','INTEGER',0]],zentix_economy:[['guild_id','TEXT',1],['user_id','TEXT',2],['data','TEXT',0]],zentix_bot_kv:[['key','TEXT',1],['value','TEXT',0],['expires_at','INTEGER',0],...(['3','4'].includes(version)?[['updated_at','INTEGER',0]]:[])]};
   const exists=database.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name=?");
+  if(version==='4')expected.zentix_verification_audit=[['id','INTEGER',1],['guild_id','TEXT',0],['user_id','TEXT',0],['action','TEXT',0],['source','TEXT',0],['moderator_id','TEXT',0],['metadata','TEXT',0],['created_at','TEXT',0]];
+  if(version!=='4'&&exists.get('zentix_verification_audit'))throw error('Tabel audit SQLite tidak dikenali.','SQLITE_SCHEMA');
   if(version===undefined){for(const name of Object.keys(expected))if(exists.get(name))throw error('Skema SQLite tanpa versi tidak dikenali.','SQLITE_SCHEMA');}
   else for(const [name,columns] of Object.entries(expected)){
    if(name==='zentix_bot_kv'&&version==='1'){if(exists.get(name))throw error('Tabel SQLite versi lama tidak dikenali.','SQLITE_SCHEMA');continue;}
@@ -36,8 +38,10 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
    CREATE TABLE IF NOT EXISTS zentix_economy (guild_id TEXT NOT NULL,user_id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(guild_id,user_id));
    CREATE TABLE IF NOT EXISTS zentix_bot_kv (key TEXT PRIMARY KEY,value TEXT NOT NULL,expires_at INTEGER);
    `);
-  if(version!=='3')database.exec('ALTER TABLE zentix_bot_kv ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
-  database.exec("INSERT INTO zentix_storage_meta (key,value) VALUES ('schema_version','3') ON CONFLICT(key) DO UPDATE SET value=excluded.value; COMMIT;");
+  if(!['3','4'].includes(version))database.exec('ALTER TABLE zentix_bot_kv ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
+  database.exec(`CREATE TABLE IF NOT EXISTS zentix_verification_audit (id INTEGER PRIMARY KEY, guild_id TEXT NOT NULL, user_id TEXT NOT NULL, action TEXT NOT NULL, source TEXT, moderator_id TEXT, metadata TEXT NOT NULL, created_at TEXT NOT NULL);
+   CREATE INDEX IF NOT EXISTS zentix_verification_audit_guild ON zentix_verification_audit(guild_id,id);
+   INSERT INTO zentix_storage_meta (key,value) VALUES ('schema_version','4') ON CONFLICT(key) DO UPDATE SET value=excluded.value; COMMIT;`);
  }catch(e){try{database.exec('ROLLBACK')}catch{}database.close();throw e;}
  const getKV=database.prepare('SELECT value,expires_at FROM zentix_kv WHERE key=?');
  const putKV=database.prepare('INSERT INTO zentix_kv(key,value,expires_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,expires_at=excluded.expires_at');
@@ -51,6 +55,8 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  const listLevels=database.prepare('SELECT key,value FROM zentix_bot_kv WHERE (substr(key,1,length(?))=? OR substr(key,1,length(?))=?) AND (expires_at IS NULL OR expires_at>?) ORDER BY key LIMIT 10001');
  const listTickets=database.prepare("SELECT key,value,updated_at FROM zentix_bot_kv WHERE substr(key,1,length(?))=? AND length(substr(key,length(?)+1)) BETWEEN 17 AND 20 AND substr(key,length(?)+1) NOT GLOB '*[^0-9]*' AND (expires_at IS NULL OR expires_at>?) ORDER BY updated_at DESC,key ASC LIMIT ?");
  const listAccounts=database.prepare("SELECT 'guild:'||guild_id||':economy:'||user_id AS key FROM zentix_economy ORDER BY guild_id,user_id LIMIT 10001");
+ const addAudit=database.prepare('INSERT INTO zentix_verification_audit(guild_id,user_id,action,source,moderator_id,metadata,created_at) VALUES(?,?,?,?,?,?,?)');
+ const readAudit=database.prepare('SELECT id,guild_id,user_id,action,source,moderator_id,metadata,created_at FROM zentix_verification_audit WHERE guild_id=? ORDER BY id DESC LIMIT ?');
  const day=database.prepare("SELECT strftime('%Y-%m-%d','now') AS day");
  function open(){if(closed)throw error('SQLite sudah ditutup.','SQLITE_CLOSED')}
  function checkKey(k){if(!validKey(k))throw error('Key SQLite tidak valid.')}
@@ -68,6 +74,8 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
   accountKeys(){open();const rows=listAccounts.all();if(rows.length>10000)throw error('Terlalu banyak akun untuk didaftar.','SQLITE_LIST_LIMIT');return rows.map(row=>row.key)},
   getAccount(g,u){open();checkIds(g,u);const row=getAccount.get(g,u);return row?decode(row.data):null},
   setAccount(g,u,value){open();checkIds(g,u);if(!value||typeof value!=='object'||Array.isArray(value))throw error('Akun tidak valid.');putAccount.run(g,u,encode(value))},
+  addVerificationAudit(record){open();if(!record||!validId(record.guildId)||!validId(record.userId)||typeof record.action!=='string'||!record.action||record.action.length>50||(record.source!=null&&(typeof record.source!=='string'||record.source.length>50))||(record.moderatorId!=null&&!validId(record.moderatorId)))throw error('Audit verifikasi tidak valid.');const created=new Date(record.createdAt??Date.now());if(Number.isNaN(created.getTime()))throw error('Waktu audit tidak valid.');const metadata=encode(record.metadata??{});if(Buffer.byteLength(metadata)>65536)throw error('Metadata audit terlalu besar.');addAudit.run(record.guildId,record.userId,record.action,record.source??null,record.moderatorId??null,metadata,created.toISOString());},
+  verificationAudit(guild,limit=100){open();if(!validId(guild)||!Number.isInteger(limit)||limit<1||limit>1000)throw error('Permintaan audit tidak valid.');return readAudit.all(guild,limit).map(row=>({id:row.id,guildId:row.guild_id,userId:row.user_id,action:row.action,source:row.source,moderatorId:row.moderator_id,metadata:decode(row.metadata),createdAt:row.created_at}))},
   utcDay(){open();return day.get().day},
  };
  return {
@@ -76,6 +84,7 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
   get(key){return ops.get(key)},
   getAccount(g,u){return ops.getAccount(g,u)},
   botGet(key){return ops.botGet(key)},
+  verificationAudit(guild,limit=100){return ops.verificationAudit(guild,limit)},
   botList(){return ops.botList()},
   botTickets(guild,limit){return ops.botTickets(guild,limit)},
   botLevels(guild){return ops.botLevels(guild)},

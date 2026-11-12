@@ -12,7 +12,7 @@ export function readSQLiteBotValue(tx,key,def=null){const canonical=checkKey(key
  }
  for(const k of legacyKeys(canonical,key)){const v=tx.botGet(k);if(v!==null)return v}return def;
 }
-function nonEconomy(key){const canonical=checkKey(key);if(parseKey(canonical).type==='economy')throw failure('Penulisan ekonomi lama dinonaktifkan; gunakan transaksi ekonomi.','ECONOMY_LEGACY_WRITE_DISABLED');return canonical}
+function nonEconomy(key){const canonical=checkKey(key);if(parseKey(canonical).type==='guild_config')throw failure('Gunakan transaksi konfigurasi guild.','CONFIG_WRITE_DISABLED');if(parseKey(canonical).type==='economy')throw failure('Penulisan ekonomi lama dinonaktifkan; gunakan transaksi ekonomi.','ECONOMY_LEGACY_WRITE_DISABLED');return canonical}
 function ttlToExpiry(key,ttl){if(ttl===null||ttl===undefined||ttl===0)return null;if(typeof ttl!=='number'||!Number.isFinite(ttl)||ttl<0)throw failure('TTL tidak valid.');const parsed=parseKey(key);if(parsed.type!=='cache'&&!isTempBackedType(parsed.type))return null;const value=Date.now()+ttl*1000;if(!Number.isSafeInteger(value))throw failure('TTL di luar batas.');return value;}
 function canonicalPrefix(prefix){if(prefix===undefined||prefix==='')return '';if(typeof prefix!=='string'||prefix.length>255||/[\u0000-\u001f]/.test(prefix))throw failure('Prefix tidak valid.');
  let m;if((m=prefix.match(/^economy:([^:]+):/)))return `guild:${m[1]}:economy:${prefix.slice(m[0].length)}`;
@@ -29,6 +29,7 @@ export function createSQLiteBotDatabase(sqlite){
  return {
   sqlite,
   isAvailable(){return sqlite.isOpen()},
+  async insertVerificationAudit(record){ensure();sqlite.transaction(tx=>tx.addVerificationAudit(record));return true;},
   async get(key,defaultValue=null){ensure();return readSQLiteBotValue(view,key,defaultValue)},
   async set(key,value,ttl=null){ensure();const canonical=nonEconomy(key),expires=ttlToExpiry(canonical,ttl);sqlite.transaction(tx=>tx.botSet(canonical,value??null,expires));return true},
   async delete(key){ensure();const canonical=nonEconomy(key);sqlite.transaction(tx=>{for(const k of legacyKeys(canonical,key))tx.botDelete(k)});return true},

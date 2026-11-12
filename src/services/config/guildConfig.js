@@ -1,13 +1,36 @@
 // guildConfig.js — the only module that should read/write guild configuration.
 
 import { GUILD_CONFIG_DEFAULTS } from '../../config/guild/guildConfigDefaults.js';
-import { readGuildConfig, writeGuildConfig } from '../../utils/database/guildConfigStorage.js';
+import { readGuildConfig, writeGuildConfig, unwrapReplitData } from '../../utils/database/guildConfigStorage.js';
+import { sqliteBackend } from '../storage/sqlite.js';
+import { getGuildConfigKey, getWelcomeConfigKey } from '../../utils/database/keys.js';
 import { normalizeGuildConfig, validateGuildConfigOrThrow } from '../../utils/schemas.js';
 import { createError, ErrorTypes, wrapServiceBoundary } from '../../utils/errorHandler.js';
 
 export { GUILD_CONFIG_DEFAULTS };
 
+// Full configuration writes require a snapshot of the original read. This prevents
+// an older Discord command from replacing a newer dashboard transaction.
+const sqliteSnapshots=new WeakMap();
+function sqliteForConfig(client,guildId){
+ if(client?.db?.db?.sqlite?.dialect!=='sqlite')return null;
+ const sqlite=sqliteBackend(client);if(!sqlite)throw createError('SQLite unavailable',ErrorTypes.DATABASE,'Persistent storage is unavailable.');
+ if(!/^\d{17,20}$/.test(guildId||'')||(client.homeGuildId&&client.homeGuildId!==guildId))throw createError('Invalid guild',ErrorTypes.VALIDATION,'Invalid server.');
+ return sqlite;
+}
+function snapshot(sqlite,guildId,value,raw){sqliteSnapshots.set(value,{sqlite,guildId,raw:JSON.stringify(raw)});return value;}
+export function transferGuildConfigSnapshot(source,target){const entry=source&&sqliteSnapshots.get(source);if(entry&&target&&typeof target==='object')sqliteSnapshots.set(target,entry);return target;}
+function checkLegacy(raw){if(raw&&typeof raw==='object'&&raw.ok!==undefined&&raw.value!==undefined)throw createError('Legacy config requires migration',ErrorTypes.CONFIGURATION,'Legacy configuration must be migrated before editing.');}
+function checkConflict(config,welcome){
+ const verification=config.verification||{};
+ if((welcome?.roleIds?.length&&(verification.enabled||verification.autoVerify?.enabled))||(verification.enabled&&(config.autoRole||verification.autoVerify?.enabled)))throw createError('Conflicting verification and autorole settings',ErrorTypes.CONFIGURATION,'Disable conflicting autorole or verification settings before saving.');
+}
+function persistConfig(tx,guildId,config,context){const key=getGuildConfigKey(guildId),raw=tx.botGet(key);checkLegacy(raw);const validated=validateGuildConfigOrThrow(config,{guildId,...context});const welcome=unwrapReplitData(tx.botGet(getWelcomeConfigKey(guildId))||{});checkConflict(validated,welcome);tx.botSet(key,validated);return validated;}
+function mutateSQLiteConfig(sqlite,guildId,context,mutate){return sqlite.transaction(tx=>{const raw=tx.botGet(getGuildConfigKey(guildId));checkLegacy(raw);const current=normalizeGuildConfig(raw||{},GUILD_CONFIG_DEFAULTS);const result=persistConfig(tx,guildId,mutate(current),context);return snapshot(sqlite,guildId,result,result)});}
+
+
 export const getGuildConfig = wrapServiceBoundary(async function getGuildConfig(client, guildId, context = {}) {
+    const sqlite=sqliteForConfig(client,guildId);if(sqlite){const raw=sqlite.botGet(getGuildConfigKey(guildId));return snapshot(sqlite,guildId,normalizeGuildConfig(unwrapReplitData(raw)||{},GUILD_CONFIG_DEFAULTS),raw);}
     const config = await readGuildConfig(client, guildId, context);
     return normalizeGuildConfig(config, GUILD_CONFIG_DEFAULTS);
 }, {
@@ -18,6 +41,10 @@ export const getGuildConfig = wrapServiceBoundary(async function getGuildConfig(
 });
 
 export const setGuildConfig = wrapServiceBoundary(async function setGuildConfig(client, guildId, config, context = {}) {
+    const sqlite=sqliteForConfig(client,guildId);if(sqlite){const entry=config&&sqliteSnapshots.get(config);if(!entry||entry.sqlite!==sqlite||entry.guildId!==guildId)throw createError('Configuration snapshot required',ErrorTypes.CONFIGURATION,'Reload server configuration before saving.');
+      const saved=sqlite.transaction(tx=>{const raw=tx.botGet(getGuildConfigKey(guildId));checkLegacy(raw);if(JSON.stringify(raw)!==entry.raw)throw createError('Stale guild configuration',ErrorTypes.CONFIGURATION,'Server settings changed. Reload before saving.');return persistConfig(tx,guildId,normalizeGuildConfig(config,GUILD_CONFIG_DEFAULTS),context)});
+      snapshot(sqlite,guildId,config,saved);return snapshot(sqlite,guildId,saved,saved);
+    }
     const normalized = normalizeGuildConfig(config, GUILD_CONFIG_DEFAULTS);
     return await writeGuildConfig(client, guildId, normalized, context);
 }, {
@@ -28,6 +55,7 @@ export const setGuildConfig = wrapServiceBoundary(async function setGuildConfig(
 });
 
 export const updateGuildConfig = wrapServiceBoundary(async function updateGuildConfig(client, guildId, updates, context = {}) {
+    const sqlite=sqliteForConfig(client,guildId);if(sqlite)return mutateSQLiteConfig(sqlite,guildId,context,current=>({...current,...updates}));
     const currentConfig = await readGuildConfig(client, guildId, context);
     const merged = { ...currentConfig, ...updates };
     const normalized = normalizeGuildConfig(merged, GUILD_CONFIG_DEFAULTS);
@@ -71,6 +99,7 @@ export const patchGuildConfig = wrapServiceBoundary(async function patchGuildCon
         );
     }
 
+    const sqlite=sqliteForConfig(client,guildId);if(sqlite)return mutateSQLiteConfig(sqlite,guildId,context,current=>deepMergeGuildConfig(current,patch));
     const currentConfig = await readGuildConfig(client, guildId, context);
     const merged = deepMergeGuildConfig(currentConfig, patch);
     const normalized = normalizeGuildConfig(merged, GUILD_CONFIG_DEFAULTS);

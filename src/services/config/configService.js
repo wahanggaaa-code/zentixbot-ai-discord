@@ -1,7 +1,7 @@
 // configService.js
 
 import { logger } from '../../utils/logger.js';
-import { getGuildConfig, setGuildConfig } from './guildConfig.js';
+import { getGuildConfig, setGuildConfig, transferGuildConfigSnapshot } from './guildConfig.js';
 import { PermissionFlagsBits } from 'discord.js';
 import { createError, ErrorTypes } from '../../utils/errorHandler.js';
 import { wrapServiceClassMethods } from '../../utils/serviceErrorBoundary.js';
@@ -385,7 +385,7 @@ class ConfigService {
         let updatedConfig = { ...currentConfig, [key]: value };
         updatedConfig = this.applyLoggingLegacyKey(updatedConfig, key, value, currentConfig);
 
-        await setGuildConfig(client, guildId, updatedConfig);
+        await setGuildConfig(client, guildId, transferGuildConfigSnapshot(currentConfig, updatedConfig));
 
         this.recordChange(guildId, {
             key,
@@ -466,7 +466,7 @@ class ConfigService {
         const currentConfig = await getGuildConfig(client, guildId);
 
         const updatedConfig = { ...currentConfig, ...validatedUpdates };
-        await setGuildConfig(client, guildId, updatedConfig);
+        await setGuildConfig(client, guildId, transferGuildConfigSnapshot(currentConfig, updatedConfig));
 
         for (const [key, value] of Object.entries(validatedUpdates)) {
             this.recordChange(guildId, {
@@ -532,7 +532,7 @@ class ConfigService {
         const defaultValue = null;
 
         const updatedConfig = { ...currentConfig, [key]: defaultValue };
-        await setGuildConfig(client, guildId, updatedConfig);
+        await setGuildConfig(client, guildId, transferGuildConfigSnapshot(currentConfig, updatedConfig));
 
         this.recordChange(guildId, {
             key,

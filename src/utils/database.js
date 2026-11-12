@@ -84,8 +84,9 @@ export async function insertVerificationAudit(record) {
             await db.initialize();
         }
 
-        if (db.isAvailable() && typeof pgDb.insertVerificationAudit === 'function') {
-            return await pgDb.insertVerificationAudit(record);
+        if (db.db?.sqlite?.dialect === 'sqlite' && (!db.isAvailable() || !db.db.isAvailable())) return false;
+        if (db.isAvailable() && typeof db.db?.insertVerificationAudit === 'function') {
+            return await db.db.insertVerificationAudit(record);
         }
 
         const key = `verification:audit:${record.guildId}`;
@@ -102,8 +103,7 @@ export async function insertVerificationAudit(record) {
             auditEntries.splice(0, auditEntries.length - maxInMemoryAuditEntries);
         }
 
-        await setInDb(key, auditEntries);
-        return true;
+        return await setInDb(key, auditEntries);
     } catch (error) {
         logger.error('Error storing verification audit:', error);
         return false;
