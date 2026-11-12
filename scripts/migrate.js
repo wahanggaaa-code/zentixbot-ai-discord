@@ -19,12 +19,13 @@ const {
   triggerDefinitions,
 } = await import('../src/utils/database/schema.js');
 const { assertAllowlistedIdentifier, quoteIdentifier } = await import('../src/utils/sqlIdentifiers.js');
+const { inspectStartupSchema } = await import('../src/utils/database/schemaStartupPreflight.js');
 
 const { Pool } = pg;
 
 const pool = new Pool(resolvePostgresPoolConfig());
 
-const migrationTable = process.env.POSTGRES_MIGRATION_TABLE || 'schema_migrations';
+const migrationTable = 'schema_migrations';
 const migrationTablePattern = /^[a-z_][a-z0-9_]*$/;
 
 if (!migrationTablePattern.test(migrationTable)) {
@@ -53,7 +54,8 @@ const recordSchemaVersion = async (client) => {
 };
 
 const getCurrentSchemaVersion = async (client) => {
-  await ensureMigrationLedger(client);
+  const check = await client.query('SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema() AND c.relname=$1', [migrationTable]);
+  if (check.rows.length === 0) return null;
   const result = await client.query(
     `SELECT version, label, applied_at FROM ${migrationTable} ORDER BY version DESC LIMIT 1`
   );
@@ -133,6 +135,7 @@ const migrate = async () => {
   try {
     logger.info('🚀 Starting database migration...');
 
+    await inspectStartupSchema(client);
     await createTables(client);
     await createIndexes(client);
     await createTriggers(client);

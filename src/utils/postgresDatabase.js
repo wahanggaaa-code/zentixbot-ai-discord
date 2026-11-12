@@ -14,6 +14,7 @@ import {
     getStructuredListPlan,
 } from './database/keyParser.js';
 import { auditLegacyKeysOnStartup } from './database/legacyKeyStartupAudit.js';
+import { inspectStartupSchema } from './database/schemaStartupPreflight.js';
 import {
     tableStatements,
     indexStatements,
@@ -97,6 +98,13 @@ class PostgreSQLDatabase {
                 this.lastFailureReason = null;
                 this.lastFailureMessage = null;
 
+                // Check before DDL so an unversioned existing installation is
+                // never stamped as fresh merely because CREATE IF NOT EXISTS succeeded.
+                const schemaState = pgConfig.migration.enabled ? await inspectStartupSchema(this.pool) : null;
+                if (schemaState?.fresh && !pgConfig.features.autoMigrate) {
+                    throw Object.assign(new Error('Schema bootstrap is disabled.'), {code:'SCHEMA_VERSION_MISMATCH'});
+                }
+
                 if (pgConfig.features.autoCreateTables) {
                     await this.createTables();
 
@@ -167,7 +175,7 @@ class PostgreSQLDatabase {
                 }
 
                 const isLastAttempt = attempt >= attempts;
-                const isSchemaMismatch = ['SCHEMA_VERSION_MISMATCH','LEGACY_KEYS_REQUIRE_REVIEW','LEGACY_KEY_AUDIT_LIMIT'].includes(error.code);
+                const isSchemaMismatch = ['SCHEMA_VERSION_MISMATCH','SCHEMA_UNVERSIONED_EXISTING','SCHEMA_INCOMPLETE','LEGACY_KEYS_REQUIRE_REVIEW','LEGACY_KEY_AUDIT_LIMIT'].includes(error.code);
                 if (isLastAttempt) {
                     logger.error('Failed to initialize PostgreSQL Database:', error);
                     this.isConnected = false;

@@ -40,6 +40,9 @@ class DatabaseWrapper {
             if (['LEGACY_KEYS_REQUIRE_REVIEW','LEGACY_KEY_AUDIT_LIMIT'].includes(failureCode)) {
                 throw Object.assign(new Error('PostgreSQL legacy keys require offline review. Startup aborted without automatic migration.'), {code: failureCode});
             }
+            if (['SCHEMA_UNVERSIONED_EXISTING','SCHEMA_INCOMPLETE'].includes(failureCode)) {
+                throw Object.assign(new Error('Existing PostgreSQL schema requires offline review. Startup aborted.'), {code: failureCode});
+            }
             if (failureCode === 'SCHEMA_VERSION_MISMATCH') {
                 throw Object.assign(new Error('PostgreSQL schema version mismatch. Run the appropriate migration before startup.'), {code: 'SCHEMA_VERSION_MISMATCH'});
             }
