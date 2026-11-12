@@ -11,6 +11,7 @@
     "migrate:status": "node scripts/migrate.js status",
     "migrate:keys": "node scripts/migrate-keys.js",
     "migrate:keys:dry": "node scripts/migrate-keys.js --dry-run",
+    "migrate:sqlite:inventory": "node scripts/sqlite-migration-inventory.js",
     "backup:db": "node scripts/backup.js",
     "restore:db": "node scripts/restore.js",
     "backup:drill": "node scripts/restore-drill.js"
