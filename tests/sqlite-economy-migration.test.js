@@ -29,3 +29,7 @@ test('independent processes cannot both import the same account',async t=>{
 test('reconciliation totals use BigInt across individually safe account balances',async t=>{
  const db=await openSQLiteStore({path:file(t)}),max='9007199254740991';const result=importEconomyBatch(db,g,[row(a,{balance_text:max,bank_text:'0',data_text:'{}'}),row(b,{balance_text:max,bank_text:'0',data_text:'{}'})]);assert.equal(result.walletTotal,'18014398509481982');db.close();
 });
+test('reconciliation mismatch and unrelated legacy data roll back before any write',async t=>{
+ const db=await openSQLiteStore({path:file(t)});assert.throws(()=>importEconomyBatch(db,g,[row()],{expectedTotals:{wallet:'43',bank:'10'}}),{code:'MIGRATION_VERIFY_FAILED'});assert.equal(db.getAccount(g,a),null);
+ db.transaction(tx=>tx.set(`economy:${g}:${b}`,null,Date.now()-1000));assert.throws(()=>importEconomyBatch(db,g,[row()],{requireEmptyDestination:true}),{code:'MIGRATION_DESTINATION_CONFLICT'});assert.equal(db.getAccount(g,a),null);db.close();
+});

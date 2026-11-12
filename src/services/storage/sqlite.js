@@ -55,6 +55,9 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  const getKV=database.prepare('SELECT value,expires_at FROM zentix_kv WHERE key=?');
  const putKV=database.prepare('INSERT INTO zentix_kv(key,value,expires_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,expires_at=excluded.expires_at');
  const delKV=database.prepare('DELETE FROM zentix_kv WHERE key=?');
+ const anyEconomyAccount=database.prepare('SELECT 1 AS found FROM zentix_economy LIMIT 1');
+ const anyLegacyAI=database.prepare("SELECT 1 AS found FROM zentix_kv WHERE key GLOB 'economy:*' OR key GLOB 'guild:*:economy:*' LIMIT 1");
+ const anyLegacyBot=database.prepare("SELECT 1 AS found FROM zentix_bot_kv WHERE key GLOB 'economy:*' OR key GLOB 'guild:*:economy:*' LIMIT 1");
  const getAccount=database.prepare('SELECT data FROM zentix_economy WHERE guild_id=? AND user_id=?');
  const putAccount=database.prepare('INSERT INTO zentix_economy(guild_id,user_id,data) VALUES(?,?,?) ON CONFLICT(guild_id,user_id) DO UPDATE SET data=excluded.data');
  const getBot=database.prepare('SELECT value,expires_at FROM zentix_bot_kv WHERE key=?');
@@ -75,6 +78,7 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  const ops={
   // Raw existence includes expired or JSON-null values; migration must not silently overwrite them.
   hasRawKey(key){open();checkKey(key);return Boolean(getKV.get(key)||getBot.get(key))},
+  hasAnyEconomyData(){open();return Boolean(anyEconomyAccount.get()||anyLegacyAI.get()||anyLegacyBot.get())},
   get(key){open();checkKey(key);const row=getKV.get(key);return !row||(row.expires_at!==null&&row.expires_at<=Date.now())?null:decode(row.value)},
   set(key,value,expiresAt=null){open();checkKey(key);if(expiresAt!==null&&(!Number.isSafeInteger(expiresAt)||expiresAt<0))throw error('Kedaluwarsa tidak valid.');putKV.run(key,encode(value),expiresAt)},
   delete(key){open();checkKey(key);return Number(delKV.run(key).changes)>0},

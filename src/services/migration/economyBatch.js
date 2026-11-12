@@ -38,13 +38,15 @@ export function convertEconomyRow(row,homeGuildId){
  return {guildId:homeGuildId,userId:row.user_id,account};
 }
 /** Synchronous all-or-nothing batch; never overwrites an account or raw legacy key. */
-export function importEconomyBatch(sqlite,homeGuildId,rows){
- if(!sqlite||sqlite.dialect!=='sqlite'||!sqlite.isOpen()||!id(homeGuildId)||!Array.isArray(rows)||rows.length<1||rows.length>MAX_BATCH)throw failure('Invalid economy migration batch');
+export function importEconomyBatch(sqlite,homeGuildId,rows,{requireEmptyDestination=false,expectedTotals=null}={}){
+ if(expectedTotals!==null&&(!expectedTotals||typeof expectedTotals!=='object'||typeof expectedTotals.wallet!=='string'||!/^\d+$/.test(expectedTotals.wallet)||typeof expectedTotals.bank!=='string'||!/^\d+$/.test(expectedTotals.bank)))throw failure('Invalid expected totals');
+ if(!sqlite||sqlite.dialect!=='sqlite'||!sqlite.isOpen()||!id(homeGuildId)||!Array.isArray(rows)||rows.length<1||rows.length>MAX_BATCH||typeof requireEmptyDestination!=='boolean')throw failure('Invalid economy migration batch');
  let size=0;const ids=new Set(),accounts=rows.map(row=>{
   size+=typeof row?.data_text==='string'?Buffer.byteLength(row.data_text):0;if(size>MAX_BATCH_BYTES)throw failure('Economy migration batch is too large');
   const item=convertEconomyRow(row,homeGuildId);if(ids.has(item.userId))throw failure('Duplicate economy account');ids.add(item.userId);return item;
  });
  return sqlite.transaction(tx=>{
+  if(requireEmptyDestination&&tx.hasAnyEconomyData())throw failure('Destination economy storage is not empty','MIGRATION_DESTINATION_CONFLICT');
   for(const {guildId,userId} of accounts){
    const keys=[`economy:${guildId}:${userId}`,`guild:${guildId}:economy:${userId}`];
    if(tx.getAccount(guildId,userId)!==null||keys.some(key=>tx.hasRawKey(key)))throw failure('Destination economy account or legacy key already exists','MIGRATION_DESTINATION_CONFLICT');
@@ -55,6 +57,7 @@ export function importEconomyBatch(sqlite,homeGuildId,rows){
    if(JSON.stringify(restored)!==JSON.stringify(account))throw failure('Economy destination verification failed','MIGRATION_VERIFY_FAILED');
    walletTotal+=BigInt(account.wallet);bankTotal+=BigInt(account.bank);
   }
+  if(expectedTotals&&(walletTotal.toString()!==expectedTotals.wallet||bankTotal.toString()!==expectedTotals.bank))throw failure('Economy totals do not match','MIGRATION_VERIFY_FAILED');
   return {accounts:accounts.length,walletTotal:walletTotal.toString(),bankTotal:bankTotal.toString()};
  });
 }
