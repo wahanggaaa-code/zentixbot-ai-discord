@@ -76,3 +76,8 @@ test('online SQLite backup includes WAL data, restores consistently, and refuses
 test('new SQLite database files are private and symlink paths are rejected',async t=>{
  const source=path(t),db=await openSQLiteStore({path:source}),{symlinkSync}=await import('node:fs');assert.equal(statSync(source).mode&0o077,0);db.set('secret','present');assert.equal(statSync(`${source}-wal`).mode&0o077,0);db.close();const alias=join(source,'..','link.db');symlinkSync(source,alias);await assert.rejects(openSQLiteStore({path:alias}),{code:'SQLITE_PATH'});const reopened=await openSQLiteStore({path:source});assert.equal(reopened.get('secret'),'present');reopened.close();
 });
+test('expiry cleanup is bounded, atomic and never deletes unexpired or non-expiring records',async t=>{
+ const file=path(t),db=await openSQLiteStore({path:file}),now=Date.now();db.transaction(tx=>{tx.set('old-ai',1,now-5);tx.set('future-ai',2,now+100000);tx.set('forever-ai',3);tx.botSet('old-bot-1',1,now-10);tx.botSet('old-bot-2',2,now-9);tx.botSet('future-bot',3,now+100000)});
+ assert.throws(()=>db.transaction(tx=>{tx.cleanupExpired(now,3);throw Error('abort')}));assert.deepEqual(db.cleanupExpired({now,limit:2}),{ai:1,bot:1,total:2});assert.deepEqual(db.cleanupExpired({now,limit:2}),{ai:0,bot:1,total:1});assert.equal(db.get('future-ai'),2);assert.equal(db.get('forever-ai'),3);assert.equal(db.botGet('future-bot'),3);assert.throws(()=>db.cleanupExpired({now,limit:1001}));db.close();
+ const {DatabaseSync}=await import('node:sqlite'),raw=new DatabaseSync(file,{readOnly:true});assert.equal(raw.prepare('SELECT count(*) AS n FROM zentix_kv').get().n,2);assert.equal(raw.prepare('SELECT count(*) AS n FROM zentix_bot_kv').get().n,1);raw.close();
+});

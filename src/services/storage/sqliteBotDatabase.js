@@ -21,6 +21,20 @@ function canonicalPrefix(prefix){if(prefix===undefined||prefix==='')return '';if
  if((m=prefix.match(/^([^:]+):leveling:users:/))&&m[1]!=='guild')return `guild:${m[1]}:leveling:users:${prefix.slice(m[0].length)}`;
  return canonicalizeKey(prefix);
 }
+// Include all known legacy prefixes which canonicalize into the requested guild prefix.
+// Unknown or partial guild prefixes deliberately scan the whole keyspace rather than
+// silently omit aliases; each query fails closed on excessive matching keys.
+function listCandidates(wanted){
+ const match=wanted.match(/^guild:([^:]+):/);if(!match)return [''];const guild=match[1],root=`guild:${guild}:`;
+ const pairs=[
+  [`${root}economy:`,`economy:${guild}:`],[`${root}leveling:users:`,`${guild}:leveling:users:`],
+  [`${root}warnings:`,`moderation:warnings:${guild}:`],[`${root}reaction_roles:`,`reaction_roles:${guild}:`],
+  [`${root}birthdays`,`birthdays:${guild}`],[`${root}birthdays:tracking`,`bday-role-tracking-${guild}`],
+  [`${root}usernotes:`,`moderation_user_notes_${guild}_`],[`${root}usernotes:list`,`moderation_user_notes_list_${guild}`],
+  [`${root}counters`,`counters:${guild}`],
+ ];
+ const prefixes=new Set([wanted]);for(const [canonical,legacy] of pairs){if(wanted.startsWith(canonical))prefixes.add(legacy+wanted.slice(canonical.length));else if(canonical.startsWith(wanted))prefixes.add(legacy)}return [...prefixes];
+}
 export function createSQLiteBotDatabase(sqlite){
  if(!sqlite||sqlite.dialect!=='sqlite'||!sqlite.isOpen())throw failure('SQLite tidak tersedia.','SQLITE_UNAVAILABLE');
  const view={get:sqlite.get,botGet:sqlite.botGet,getAccount:sqlite.getAccount};
@@ -34,7 +48,7 @@ export function createSQLiteBotDatabase(sqlite){
   async set(key,value,ttl=null){ensure();const canonical=nonEconomy(key),expires=ttlToExpiry(canonical,ttl);sqlite.transaction(tx=>tx.botSet(canonical,value??null,expires));return true},
   async delete(key){ensure();const canonical=nonEconomy(key);sqlite.transaction(tx=>{for(const k of legacyKeys(canonical,key))tx.botDelete(k)});return true},
   async exists(key){ensure();return readSQLiteBotValue(view,key,null)!==null},
-  async list(prefix=''){ensure();const wanted=canonicalPrefix(prefix),keys=new Set();for(const key of [...sqlite.botList(),...sqlite.accountKeys()]){const c=canonicalizeKey(key);if(c.startsWith(wanted))keys.add(c)}return [...keys].sort()},
+  async list(prefix=''){ensure();const wanted=canonicalPrefix(prefix),keys=new Set();for(const candidate of listCandidates(wanted))for(const key of sqlite.botList(candidate)){const c=canonicalizeKey(key);if(c.startsWith(wanted))keys.add(c);if(keys.size>10000)throw failure('Terlalu banyak key untuk didaftar.','SQLITE_LIST_LIMIT')}for(const key of sqlite.accountKeys(wanted)){keys.add(key);if(keys.size>10000)throw failure('Terlalu banyak key untuk didaftar.','SQLITE_LIST_LIMIT')}return [...keys].sort()},
   async increment(key,amount=1){return adjust(key,amount)},
   async decrement(key,amount=1){if(!Number.isSafeInteger(amount))throw failure('Nilai decrement tidak valid.');return adjust(key,-amount)},
  };

@@ -147,12 +147,13 @@ export const LEGACY_KEY_RESOLVERS = [
         toCanonical: ([, guildId, userId]) => getWarningsKey(guildId, userId),
     },
     {
-        pattern: /^moderation_user_notes_([^_]+)_([^_]+)$/,
-        toCanonical: ([, guildId, userId]) => getUserNotesKey(guildId, userId),
-    },
-    {
+        // Specific list key must precede the general two-part note pattern.
         pattern: /^moderation_user_notes_list_([^_]+)$/,
         toCanonical: ([, guildId]) => getUserNotesListKey(guildId),
+    },
+    {
+        pattern: /^moderation_user_notes_([^_]+)_([^_]+)$/,
+        toCanonical: ([, guildId, userId]) => getUserNotesKey(guildId, userId),
     },
     {
         pattern: /^reaction_roles:([^:]+):([^:]+)$/,
@@ -190,63 +191,16 @@ export function canonicalizeKey(key) {
  * Returns legacy key variants that may still hold data for a canonical key.
  */
 export function getLegacyVariantsForCanonical(canonicalKey) {
-    const variants = [];
-
-    for (const { pattern, toCanonical } of LEGACY_KEY_RESOLVERS) {
-        const sample = canonicalKey;
-        const match = sample.match(/^guild:([^:]+):economy:([^:]+)$/);
-        if (match && toCanonical(['', match[1], match[2]]) === canonicalKey) {
-            variants.push(`economy:${match[1]}:${match[2]}`);
-            continue;
-        }
-
-        const birthdaysMatch = sample.match(/^guild:([^:]+):birthdays$/);
-        if (birthdaysMatch && toCanonical(['', birthdaysMatch[1]]) === canonicalKey) {
-            variants.push(`birthdays:${birthdaysMatch[1]}`);
-            continue;
-        }
-
-        const levelMatch = sample.match(/^guild:([^:]+):leveling:users:([^:]+)$/);
-        if (levelMatch && toCanonical(['', levelMatch[1], levelMatch[2]]) === canonicalKey) {
-            variants.push(`${levelMatch[1]}:leveling:users:${levelMatch[2]}`);
-            continue;
-        }
-
-        const warningsMatch = sample.match(/^guild:([^:]+):warnings:([^:]+)$/);
-        if (warningsMatch && toCanonical(['', warningsMatch[1], warningsMatch[2]]) === canonicalKey) {
-            variants.push(`moderation:warnings:${warningsMatch[1]}:${warningsMatch[2]}`);
-            continue;
-        }
-
-        const notesMatch = sample.match(/^guild:([^:]+):usernotes:([^:]+)$/);
-        if (notesMatch && toCanonical(['', notesMatch[1], notesMatch[2]]) === canonicalKey) {
-            variants.push(`moderation_user_notes_${notesMatch[1]}_${notesMatch[2]}`);
-            continue;
-        }
-
-        const notesListMatch = sample.match(/^guild:([^:]+):usernotes:list$/);
-        if (notesListMatch && toCanonical(['', notesListMatch[1]]) === canonicalKey) {
-            variants.push(`moderation_user_notes_list_${notesListMatch[1]}`);
-            continue;
-        }
-
-        const reactionMatch = sample.match(/^guild:([^:]+):reaction_roles:([^:]+)$/);
-        if (reactionMatch && toCanonical(['', reactionMatch[1], reactionMatch[2]]) === canonicalKey) {
-            variants.push(`reaction_roles:${reactionMatch[1]}:${reactionMatch[2]}`);
-            continue;
-        }
-
-        const countersMatch = sample.match(/^guild:([^:]+):counters$/);
-        if (countersMatch && toCanonical(['', countersMatch[1]]) === canonicalKey) {
-            variants.push(`counters:${countersMatch[1]}`);
-            continue;
-        }
-
-        const trackingMatch = sample.match(/^guild:([^:]+):birthdays:tracking$/);
-        if (trackingMatch && toCanonical(['', trackingMatch[1]]) === canonicalKey) {
-            variants.push(`bday-role-tracking-${trackingMatch[1]}`);
-        }
-    }
-
-    return variants;
+    if (typeof canonicalKey !== 'string') return [];
+    let match;
+    if ((match = canonicalKey.match(/^guild:([^:]+):economy:([^:]+)$/))) return [`economy:${match[1]}:${match[2]}`];
+    if ((match = canonicalKey.match(/^guild:([^:]+):birthdays$/))) return [`birthdays:${match[1]}`];
+    if ((match = canonicalKey.match(/^guild:([^:]+):leveling:users:([^:]+)$/))) return [`${match[1]}:leveling:users:${match[2]}`];
+    if ((match = canonicalKey.match(/^guild:([^:]+):warnings:([^:]+)$/))) return [`moderation:warnings:${match[1]}:${match[2]}`];
+    if ((match = canonicalKey.match(/^guild:([^:]+):usernotes:list$/))) return [`moderation_user_notes_list_${match[1]}`, `moderation_user_notes_${match[1]}_list`];
+    if ((match = canonicalKey.match(/^guild:([^:]+):usernotes:([^:]+)$/))) return [`moderation_user_notes_${match[1]}_${match[2]}`];
+    if ((match = canonicalKey.match(/^guild:([^:]+):reaction_roles:([^:]+)$/))) return [`reaction_roles:${match[1]}:${match[2]}`];
+    if ((match = canonicalKey.match(/^guild:([^:]+):counters$/))) return [`counters:${match[1]}`];
+    if ((match = canonicalKey.match(/^guild:([^:]+):birthdays:tracking$/))) return [`bday-role-tracking-${match[1]}`];
+    return [];
 }

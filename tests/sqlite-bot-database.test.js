@@ -53,3 +53,19 @@ test('SQLite disables role purchase before touching Discord and blocks partial d
  const interaction={id:'999999999999999999',guildId:g,user:{id:u,tag:'test'},options:{getString:()=> 'premium_role',getInteger:()=>1},deferred:true,replied:false,isChatInputCommand:()=>true,member:{roles:{add:async()=>{roleCalls++}}},editReply:async value=>{wipedMessage=value}};
  await assert.rejects(buy.execute(interaction,{},c));assert.equal(roleCalls,0);await adapter.set(`guild:${g}:warnings:${u}`,[{id:1}]);await wipedataConfirmHandler.execute(interaction,c);assert.match(wipedMessage.content,/No data was deleted/);assert.deepEqual(await adapter.get(`guild:${g}:warnings:${u}`),[{id:1}]);sqlite.close();
 });
+test('scoped SQLite lists include all legacy aliases without scanning unrelated key counts',async t=>{
+ const sqlite=await openSQLiteStore({path:file(t)}),db=createSQLiteBotDatabase(sqlite),other='456789012345678901';const aliases=[
+  [`moderation:warnings:${g}:${u}`,`guild:${g}:warnings:${u}`],
+  [`reaction_roles:${g}:${u}`,`guild:${g}:reaction_roles:${u}`],
+  [`${g}:leveling:users:${u}`,`guild:${g}:leveling:users:${u}`],
+  [`birthdays:${g}`,`guild:${g}:birthdays`],
+  [`bday-role-tracking-${g}`,`guild:${g}:birthdays:tracking`],
+  [`moderation_user_notes_${g}_${u}`,`guild:${g}:usernotes:${u}`],
+  [`moderation_user_notes_list_${g}`,`guild:${g}:usernotes:list`],
+  [`counters:${g}`,`guild:${g}:counters`],
+ ];sqlite.transaction(tx=>{for(const [old] of aliases)tx.botSet(old,{v:1});for(let i=0;i<10001;i++)tx.botSet(`unrelated:${i}`,i);tx.botSet(`guild:${other}:warnings:${u}`,{v:2});});
+ const expected=aliases.map(x=>x[1]).sort();assert.deepEqual(await db.list(`guild:${g}:`),expected);assert.deepEqual(await db.list(`moderation:warnings:${g}:`),[`guild:${g}:warnings:${u}`]);assert.deepEqual(await db.get(`guild:${g}:usernotes:list`),{v:1});await assert.rejects(db.list(),{code:'SQLITE_LIST_LIMIT'});sqlite.close();
+});
+test('scoped economy listing does not fail because other guilds have over 10000 accounts',async t=>{
+ const sqlite=await openSQLiteStore({path:file(t)}),db=createSQLiteBotDatabase(sqlite),other='456789012345678901';sqlite.transaction(tx=>{tx.setAccount(g,u,{wallet:1,bank:0});for(let i=0;i<10001;i++)tx.setAccount(other,String(100000000000000000n+BigInt(i)),{wallet:0,bank:0})});assert.deepEqual(await db.list(`economy:${g}:`),[`guild:${g}:economy:${u}`]);await assert.rejects(db.list(),{code:'SQLITE_LIST_LIMIT'});sqlite.close();
+});
