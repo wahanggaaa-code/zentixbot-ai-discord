@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { checkServerIdentity } from 'node:tls';
+import pg from 'pg';
 import { assertAllowlistedIdentifier } from '../../utils/sqlIdentifiers.js';
 import { EXPECTED_SCHEMA_LABEL, EXPECTED_SCHEMA_VERSION } from './schemaVersion.js';
 
@@ -48,34 +51,55 @@ const validatedTables = Object.fromEntries(
 
 const DEFAULT_POSTGRES_URL = 'postgresql://localhost:5432/titanbot';
 
-export function resolveSslConfig() {
-    const sslEnv = process.env.POSTGRES_SSL?.toLowerCase();
-    if (sslEnv === 'false' || sslEnv === '0') {
-        return false;
+// pg parses TLS parameters in connectionString after the `ssl` option and can
+// silently replace it. Consume them here and pass a sanitized URL to pg so that
+// certificate and hostname verification cannot be overridden by URL options.
+function resolvePostgresTls() {
+    const rawUrl = (process.env.POSTGRES_URL || process.env.DATABASE_URL || '').trim();
+    const input = (process.env.POSTGRES_SSL || '').trim().toLowerCase();
+    if (input && !['true','false','1','0'].includes(input)) throw new Error('POSTGRES_SSL must be true or false.');
+    const explicit = input ? ['true','1'].includes(input) : null;
+    let url = rawUrl, mode = null, caPath = null;
+    if (rawUrl && rawUrl !== DEFAULT_POSTGRES_URL && !/^(sqlite|file):/i.test(rawUrl)) {
+        let parsed;
+        try { parsed = new URL(rawUrl); } catch { throw new Error('Invalid PostgreSQL URL.'); }
+        if (!['postgres:','postgresql:'].includes(parsed.protocol)) throw new Error('Invalid PostgreSQL URL scheme.');
+        for (const name of ['sslmode','ssl','sslrootcert','sslcert','sslkey','uselibpqcompat']) {
+            if (parsed.searchParams.getAll(name).length > 1) throw new Error('Duplicate PostgreSQL TLS parameter.');
+        }
+        if (parsed.searchParams.has('sslcert') || parsed.searchParams.has('sslkey') || parsed.searchParams.has('uselibpqcompat')) throw new Error('Unsupported PostgreSQL TLS URL options; configure trusted CA instead.');
+        const sslParameter = parsed.searchParams.get('ssl');
+        if (sslParameter !== null && !['true','1','false','0'].includes(sslParameter)) throw new Error('Unsafe PostgreSQL ssl URL parameter.');
+        const urlSsl = sslParameter === null ? null : ['true','1'].includes(sslParameter);
+        mode = parsed.searchParams.get('sslmode');
+        if (mode !== null && !['disable','require','verify-ca','verify-full'].includes(mode)) throw new Error('Unsupported PostgreSQL sslmode; use verify-full or disable explicitly.');
+        const modeSsl = mode === null ? null : mode !== 'disable';
+        if (urlSsl !== null && modeSsl !== null && urlSsl !== modeSsl) throw new Error('Conflicting PostgreSQL TLS URL settings.');
+        const requested = modeSsl ?? urlSsl;
+        if (explicit !== null && requested !== null && explicit !== requested) throw new Error('Conflicting POSTGRES_SSL and URL TLS settings.');
+        caPath = parsed.searchParams.get('sslrootcert');
+        if (caPath !== null && !caPath) throw new Error('PostgreSQL CA path must not be empty.');
+        for (const name of ['sslmode','ssl','sslrootcert']) parsed.searchParams.delete(name);
+        if (requested !== null || caPath !== null) url = parsed.toString();
+        mode = requested;
     }
-    if (sslEnv === 'true' || sslEnv === '1') {
-        return { rejectUnauthorized: false };
+    const caEnv = (process.env.POSTGRES_SSL_CA_FILE || '').trim();
+    if (caPath && caEnv && caPath !== caEnv) throw new Error('Conflicting PostgreSQL CA paths.');
+    caPath = caPath || caEnv || null;
+    const enabled = explicit ?? mode ?? Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.NODE_ENV === 'production' || caPath);
+    if (!enabled && caPath) throw new Error('PostgreSQL CA requires TLS.');
+    if (!enabled) return {url,ssl:false};
+    const ssl = {rejectUnauthorized:true};
+    if (caPath) {
+        try { ssl.ca = readFileSync(caPath,'utf8'); } catch { throw new Error('Unable to read PostgreSQL CA file.'); }
+        if (!ssl.ca.trim()) throw new Error('PostgreSQL CA file is empty.');
     }
-
-    const url = process.env.POSTGRES_URL || process.env.DATABASE_URL || '';
-    if (/sslmode=(require|verify-ca|verify-full|prefer)/i.test(url)) {
-        return { rejectUnauthorized: false };
-    }
-
-    if (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID) {
-        return { rejectUnauthorized: false };
-    }
-
-    if (process.env.NODE_ENV === 'production') {
-        return { rejectUnauthorized: false };
-    }
-
-    return false;
+    return {url,ssl};
 }
+export function resolveSslConfig() { return resolvePostgresTls().ssl; }
 
 export function resolvePostgresPoolConfig() {
-    const ssl = resolveSslConfig();
-    const url = (process.env.POSTGRES_URL || process.env.DATABASE_URL || '').trim();
+    const {ssl,url} = resolvePostgresTls();
     const sharedOptions = {
         max: parseInt(process.env.POSTGRES_MAX_CONNECTIONS) || 20,
         min: parseInt(process.env.POSTGRES_MIN_CONNECTIONS) || 2,
@@ -88,18 +112,19 @@ export function resolvePostgresPoolConfig() {
         ssl,
     };
 
-    if (url && url !== DEFAULT_POSTGRES_URL) {
-        return { connectionString: url, ...sharedOptions };
+    const config = url && url !== DEFAULT_POSTGRES_URL
+        ? { connectionString: url, ...sharedOptions }
+        : { host: process.env.POSTGRES_HOST || 'localhost', port: parseInt(process.env.POSTGRES_PORT) || 5432,
+            database: process.env.POSTGRES_DB || 'titanbot', user: process.env.POSTGRES_USER || 'postgres',
+            password: (process.env.POSTGRES_PASSWORD || '').toString(), ...sharedOptions };
+    if (ssl) {
+        // node-postgres omits SNI for IP literals; on some Node versions this
+        // otherwise makes TLS verify 'localhost' rather than the actual IP.
+        const host = new pg.Client(config).host;
+        if (typeof host !== 'string' || !host || host.startsWith('/')) throw new Error('TLS requires a PostgreSQL hostname or IP address.');
+        config.ssl = {...ssl,checkServerIdentity: (_servername,certificate) => checkServerIdentity(host,certificate)};
     }
-
-    return {
-        host: process.env.POSTGRES_HOST || 'localhost',
-        port: parseInt(process.env.POSTGRES_PORT) || 5432,
-        database: process.env.POSTGRES_DB || 'titanbot',
-        user: process.env.POSTGRES_USER || 'postgres',
-        password: (process.env.POSTGRES_PASSWORD || '').toString(),
-        ...sharedOptions,
-    };
+    return config;
 }
 
 export const pgConfig = {
