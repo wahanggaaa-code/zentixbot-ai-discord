@@ -73,6 +73,8 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  function checkKey(k){if(!validKey(k))throw error('Key SQLite tidak valid.')}
  function checkIds(g,u){if(!validId(g)||!validId(u))throw error('ID akun tidak valid.')}
  const ops={
+  // Raw existence includes expired or JSON-null values; migration must not silently overwrite them.
+  hasRawKey(key){open();checkKey(key);return Boolean(getKV.get(key)||getBot.get(key))},
   get(key){open();checkKey(key);const row=getKV.get(key);return !row||(row.expires_at!==null&&row.expires_at<=Date.now())?null:decode(row.value)},
   set(key,value,expiresAt=null){open();checkKey(key);if(expiresAt!==null&&(!Number.isSafeInteger(expiresAt)||expiresAt<0))throw error('Kedaluwarsa tidak valid.');putKV.run(key,encode(value),expiresAt)},
   delete(key){open();checkKey(key);return Number(delKV.run(key).changes)>0},

@@ -1,0 +1,2 @@
+import {openSQLiteStore} from '../../src/services/storage/sqlite.js';import {importEconomyBatch} from '../../src/services/migration/economyBatch.js';
+const [path,guild,user]=process.argv.slice(2),db=await openSQLiteStore({path,busyTimeout:5000});try{const result=importEconomyBatch(db,guild,[{guild_id:guild,user_id:user,balance_text:'42',bank_text:'1',data_text:'{}'}]);if(result.accounts!==1)throw Error('unexpected result');process.send('committed');}catch(e){if(e.code!=='MIGRATION_DESTINATION_CONFLICT')throw e;process.send('conflict');}finally{db.close()}
