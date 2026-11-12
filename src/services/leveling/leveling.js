@@ -6,6 +6,7 @@ import { getGuildConfig, setGuildConfig } from '../config/guildConfig.js';
 import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { addXp } from './xpSystem.js';
 import { getUserLevelKey } from '../../utils/database/keys.js';
+import {isSQLiteLevelBackend,readSQLiteLevel,mutateSQLiteLevel,deleteSQLiteLevel} from './sqliteLevels.js';
 
 const BASE_XP = 100;
 const XP_MULTIPLIER = 1.5;
@@ -165,6 +166,7 @@ export async function getLevelingConfig(client, guildId) {
     };
   } catch (error) {
     logger.error(`Error getting leveling config for guild ${guildId}:`, error);
+    if (isSQLiteLevelBackend(client)) throw error;
     return {
       enabled: true,
       xpPerMessage: { min: 15, max: 25 },
@@ -190,6 +192,7 @@ export async function getUserLevelData(client, guildId, userId) {
       );
     }
 
+    if (isSQLiteLevelBackend(client)) return readSQLiteLevel(client, guildId, userId);
     const key = getUserLevelKey(guildId, userId);
     const data = await client.db.get(key);
     
@@ -237,6 +240,7 @@ export async function saveUserLevelData(client, guildId, userId, data) {
       );
     }
 
+    if (isSQLiteLevelBackend(client)) throw Object.assign(new Error('Use atomic level mutations.'), {code:'LEVEL_WRITE_DISABLED'});
     const sanitizedData = {
       xp: Math.max(0, Number(data.xp) || 0),
       level: Math.max(0, Math.min(Number(data.level) || 0, MAX_LEVEL)),
@@ -319,6 +323,12 @@ export async function addLevels(client, guildId, userId, levels) {
       );
     }
 
+    if (isSQLiteLevelBackend(client)) return mutateSQLiteLevel(client, guildId, userId, data => {
+      const newLevel=data.level+levels;
+      if (!Number.isSafeInteger(newLevel) || newLevel>MAX_LEVEL) throw new TitanBotError('Maximum level exceeded',ErrorTypes.VALIDATION,`Maximum level is ${MAX_LEVEL}.`);
+      data.level=newLevel;data.xp=0;data.totalXp=calculateTotalXp(newLevel,0);
+      return {result:{...data}};
+    });
     const userData = await getUserLevelData(client, guildId, userId);
     const newLevel = userData.level + levels;
 
@@ -371,6 +381,10 @@ export async function removeLevels(client, guildId, userId, levels) {
       );
     }
 
+    if (isSQLiteLevelBackend(client)) return mutateSQLiteLevel(client, guildId, userId, data => {
+      const newLevel=Math.max(MIN_LEVEL,data.level-levels);data.level=newLevel;data.xp=0;data.totalXp=calculateTotalXp(newLevel,0);
+      return {result:{...data}};
+    });
     const userData = await getUserLevelData(client, guildId, userId);
     const newLevel = Math.max(MIN_LEVEL, userData.level - levels);
 
@@ -415,6 +429,9 @@ export async function setUserLevel(client, guildId, userId, level) {
       );
     }
 
+    if (isSQLiteLevelBackend(client)) return mutateSQLiteLevel(client, guildId, userId, data => {
+      data.level=level;data.xp=0;data.totalXp=calculateTotalXp(level,0);return {result:{...data}};
+    });
     const userData = await getUserLevelData(client, guildId, userId);
     
     const newXp = 0;
@@ -448,12 +465,14 @@ export async function deleteUserLevelData(client, guildId, userId) {
       );
     }
 
+    if (isSQLiteLevelBackend(client)) return deleteSQLiteLevel(client,guildId,userId);
     const key = getUserLevelKey(guildId, userId);
     await client.db.delete(key);
     
     logger.debug(`Deleted level data for user ${userId} in guild ${guildId}`);
   } catch (error) {
     logger.error(`Error deleting level data for user ${userId}:`, error);
+    if (isSQLiteLevelBackend(client)) throw error;
     if (error instanceof TitanBotError) throw error;
     logger.warn(`Could not delete level data for user ${userId} in guild ${guildId}`);
   }

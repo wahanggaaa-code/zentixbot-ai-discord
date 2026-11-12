@@ -55,6 +55,8 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  const getKV=database.prepare('SELECT value,expires_at FROM zentix_kv WHERE key=?');
  const putKV=database.prepare('INSERT INTO zentix_kv(key,value,expires_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,expires_at=excluded.expires_at');
  const delKV=database.prepare('DELETE FROM zentix_kv WHERE key=?');
+ const anyLevelAI=database.prepare("SELECT 1 AS found FROM zentix_kv WHERE key GLOB '*:leveling:users:*' LIMIT 1");
+ const anyLevelBot=database.prepare("SELECT 1 AS found FROM zentix_bot_kv WHERE key GLOB '*:leveling:users:*' LIMIT 1");
  const anyAI=database.prepare("SELECT 1 AS found FROM zentix_kv WHERE substr(key,1,3)='ai:' LIMIT 1");
  const anyBotAI=database.prepare("SELECT 1 AS found FROM zentix_bot_kv WHERE substr(key,1,3)='ai:' LIMIT 1");
  const anyEconomyAccount=database.prepare('SELECT 1 AS found FROM zentix_economy LIMIT 1');
@@ -84,6 +86,7 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
   botGetRaw(key){open();checkKey(key);const row=getBot.get(key);return row?{value:decode(row.value),expiresAt:row.expires_at}:null},
   hasAnyEconomyData(){open();return Boolean(anyEconomyAccount.get()||anyLegacyAI.get()||anyLegacyBot.get())},
   hasAnyAIData(){open();return Boolean(anyAI.get()||anyBotAI.get())},
+  hasAnyLevelData(){open();return Boolean(anyLevelAI.get()||anyLevelBot.get())},
   get(key){open();checkKey(key);const row=getKV.get(key);return !row||(row.expires_at!==null&&row.expires_at<=Date.now())?null:decode(row.value)},
   set(key,value,expiresAt=null){open();checkKey(key);if(expiresAt!==null&&(!Number.isSafeInteger(expiresAt)||expiresAt<0))throw error('Kedaluwarsa tidak valid.');putKV.run(key,encode(value),expiresAt)},
   delete(key){open();checkKey(key);return Number(delKV.run(key).changes)>0},

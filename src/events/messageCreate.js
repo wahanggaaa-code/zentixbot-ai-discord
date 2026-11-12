@@ -2,6 +2,7 @@ import { Events } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { getLevelingConfig, getUserLevelData } from '../services/leveling/leveling.js';
 import { addXp } from '../services/leveling/xpSystem.js';
+import {isSQLiteLevelBackend} from '../services/leveling/sqliteLevels.js';
 import { checkRateLimit } from '../utils/rateLimiter.js';
 import { parsePrefixCommand } from '../utils/prefixParser.js';
 import { supportsPrefixExecution, executePrefixCommand, resolvePrefixAccessKey } from '../utils/messageAdapter.js';
@@ -217,14 +218,11 @@ async function handleLeveling(message, client) {
       return;
     }
 
-    const userData = await getUserLevelData(client, message.guild.id, message.author.id);
-
     const cooldownTime = levelingConfig.xpCooldown || 60;
-    const now = Date.now();
-    const timeSinceLastMessage = now - (userData.lastMessage || 0);
-
-    if (timeSinceLastMessage < cooldownTime * 1000) {
-      return;
+    // SQLite performs the authoritative cooldown check together with the award.
+    if (!isSQLiteLevelBackend(client)) {
+      const userData = await getUserLevelData(client, message.guild.id, message.author.id);
+      if (Date.now() - (userData.lastMessage || 0) < cooldownTime * 1000) return;
     }
 
     const minXP = levelingConfig.xpRange?.min || levelingConfig.xpPerMessage?.min || 15;
@@ -240,7 +238,7 @@ async function handleLeveling(message, client) {
       finalXP = Math.floor(finalXP * levelingConfig.xpMultiplier);
     }
 
-    const result = await addXp(client, message.guild, message.member, finalXP);
+    const result = await addXp(client, message.guild, message.member, finalXP, {cooldownMs: cooldownTime * 1000});
 
     if (result?.leveledUp) {
       logger.info(

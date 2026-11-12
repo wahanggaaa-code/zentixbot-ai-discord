@@ -3,6 +3,7 @@ import {ChannelType, PermissionFlagsBits} from 'discord.js';
 import { pgConfig } from '../config/database/postgres.js';
 import { sqliteBackend } from '../services/storage/sqlite.js';
 import { readSQLiteBotValue } from '../services/storage/sqliteBotDatabase.js';
+import {mutateLevelInTransaction} from '../services/leveling/sqliteLevels.js';
 import { getGuildMusicData } from '../services/music/playerStore.js';
 import {getPlayer,applyPause,applyResume,destroyPlayerSession,playQuery} from '../services/music/musicActions.js';
 import {ModerationService} from '../services/moderation/moderationService.js';
@@ -89,7 +90,7 @@ export function createOperationsApi(client,{auth,csrf}) {
   const member=await req.guild.members.fetch({user:req.params.id,force:true}).catch(()=>null);if(!member)throw bad('Anggota tidak ditemukan.',404);
   const sqlite=sqliteBackend(client);if(sqlite){if(client.homeGuildId&&client.homeGuildId!==req.guild.id)throw bad('Server tidak valid.',403);sqlite.transaction(tx=>{
    if(b.type==='wallet'||b.type==='bank'){const data=readSQLiteBotValue(tx,`guild:${req.guild.id}:economy:${member.id}`);if(!data)throw bad('Data ekonomi belum tersedia.',404);if(!Number.isSafeInteger(data.wallet)||data.wallet<0||!Number.isSafeInteger(data.bank)||data.bank<0)throw bad('Saldo ekonomi tidak valid.',503);if(data[b.type]!==b.expected)throw bad('Saldo berubah; muat ulang sebelum menyimpan.',409);if(b.type==='bank'&&b.value>getMaxBankCapacity(data))throw bad('Saldo melebihi kapasitas bank anggota.');data[b.type]=b.value;tx.setAccount(req.guild.id,member.id,data);}
-   else{const key=`guild:${req.guild.id}:leveling:users:${member.id}`,data=readSQLiteBotValue(tx,key);if(!data)throw bad('Data leveling belum tersedia.',404);if(!Number.isSafeInteger(data.level)||data.level<0)throw bad('Data leveling tidak valid.',503);if(data.level!==b.expected)throw bad('Level berubah; muat ulang sebelum menyimpan.',409);tx.botSet(key,{...data,level:b.value,xp:0,totalXp:calculateTotalXp(b.value,0)});}
+   else{mutateLevelInTransaction(tx,req.guild.id,member.id,(data,exists)=>{if(!exists)throw bad('Data leveling belum tersedia.',404);if(data.level!==b.expected)throw bad('Level berubah; muat ulang sebelum menyimpan.',409);data.level=b.value;data.xp=0;data.totalXp=calculateTotalXp(b.value,0);return {result:true}});}
   });console.info(`[dashboard] member update guild=${req.guild.id} moderator=${req.member.id} member=${member.id} type=${b.type}`);return res.json({ok:true});}
   const db=pool(client);await Mutex.runExclusive(`dashboard-member:${req.guild.id}:${member.id}`,async()=>{
    const c=await db.connect();try{await c.query('BEGIN');
