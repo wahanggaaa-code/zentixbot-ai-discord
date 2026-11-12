@@ -86,9 +86,9 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  const anyAudit=database.prepare('SELECT 1 AS found FROM zentix_verification_audit LIMIT 1');
  const auditById=database.prepare('SELECT id,guild_id,user_id,action,source,moderator_id,metadata,created_at FROM zentix_verification_audit WHERE id=?');
  const readAudit=database.prepare('SELECT id,guild_id,user_id,action,source,moderator_id,metadata,created_at FROM zentix_verification_audit WHERE guild_id=? ORDER BY id DESC LIMIT ?');
- // Preserve suspicious warning and AFK expiry records for explicit reconciliation;
+ // Preserve suspicious warning, AFK and application expiry records for review;
  // deleting them here would conceal possible structured data conflicts.
- const cleanupFilter="expires_at IS NOT NULL AND expires_at<=? AND key NOT GLOB 'guild:*:warnings:*' AND key NOT GLOB 'moderation:warnings:*' AND key NOT GLOB 'guild:*:warning-sequence:*' AND key NOT GLOB 'guild:*:afk:*'";
+ const cleanupFilter="expires_at IS NOT NULL AND expires_at<=? AND key NOT GLOB 'guild:*:warnings:*' AND key NOT GLOB 'moderation:warnings:*' AND key NOT GLOB 'guild:*:warning-sequence:*' AND key NOT GLOB 'guild:*:afk:*' AND key NOT GLOB 'guild:*:applications:*'";
  const pruneAI=database.prepare(`DELETE FROM zentix_kv WHERE key IN (SELECT key FROM zentix_kv WHERE ${cleanupFilter} ORDER BY expires_at,key LIMIT ?)`);
  const pruneBot=database.prepare(`DELETE FROM zentix_bot_kv WHERE key IN (SELECT key FROM zentix_bot_kv WHERE ${cleanupFilter} ORDER BY expires_at,key LIMIT ?)`);
  const day=database.prepare("SELECT strftime('%Y-%m-%d','now') AS day");

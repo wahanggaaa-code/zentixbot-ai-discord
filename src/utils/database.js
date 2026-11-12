@@ -611,7 +611,17 @@ rank: 0
     }
 }
 
+// These operations touch multiple application keys and may trigger cleanup or
+// Discord side effects. Keep the entire SQLite feature closed until its indexed
+// writes, legacy data, and recovery paths have been reconciled.
+function requireApplicationBackend(client) {
+    if (client?.db?.db?.sqlite?.dialect === 'sqlite') {
+        throw Object.assign(new Error('Applications are unavailable during SQLite migration.'), { code: 'APPLICATION_SQLITE_INCOMPLETE' });
+    }
+}
+
 export async function getApplicationRoles(client, guildId) {
+    requireApplicationBackend(client);
     try {
         if (!client.db || typeof client.db.get !== "function") {
             logger.error("Database client is not available for getApplicationRoles.");
@@ -629,6 +639,7 @@ export async function getApplicationRoles(client, guildId) {
 }
 
 export async function saveApplicationRoles(client, guildId, roles) {
+    requireApplicationBackend(client);
     try {
         if (!client.db || typeof client.db.set !== "function") {
             logger.error("Database client is not available for saveApplicationRoles.");
@@ -670,6 +681,7 @@ function buildApplicationSettingsDefaults() {
 }
 
 export async function getApplicationSettings(client, guildId) {
+    requireApplicationBackend(client);
     if (!client.db) {
         logger.warn('Database not available for getApplicationSettings');
         return buildApplicationSettingsDefaults();
@@ -726,6 +738,7 @@ function isApplicationExpired(application, retentionDays, now = Date.now()) {
 }
 
 export async function deleteApplication(client, guildId, applicationId, userIdHint = null) {
+    requireApplicationBackend(client);
     const key = getApplicationKey(guildId, applicationId);
 
     try {
@@ -751,6 +764,7 @@ export async function deleteApplication(client, guildId, applicationId, userIdHi
 }
 
 export async function cleanupExpiredApplications(client, guildId) {
+    requireApplicationBackend(client);
     try {
         if (!client.db || typeof client.db.list !== 'function') {
             return { removed: 0, scanned: 0 };
@@ -797,6 +811,7 @@ export async function cleanupExpiredApplications(client, guildId) {
 }
 
 export async function saveApplicationSettings(client, guildId, settings) {
+    requireApplicationBackend(client);
     const key = getApplicationSettingsKey(guildId);
     try {
         const existingSettings = await getApplicationSettings(client, guildId);
@@ -815,6 +830,7 @@ function getApplicationRoleSettingsKey(guildId, roleId) {
 }
 
 export async function getApplicationRoleSettings(client, guildId, roleId) {
+    requireApplicationBackend(client);
     try {
         if (!client.db || typeof client.db.get !== "function") {
             return { questions: null, logChannelId: null };
@@ -830,6 +846,7 @@ export async function getApplicationRoleSettings(client, guildId, roleId) {
 }
 
 export async function saveApplicationRoleSettings(client, guildId, roleId, settings) {
+    requireApplicationBackend(client);
     try {
         if (!client.db || typeof client.db.set !== "function") {
             logger.error("Database client is not available for saveApplicationRoleSettings.");
@@ -846,6 +863,7 @@ export async function saveApplicationRoleSettings(client, guildId, roleId, setti
 }
 
 export async function deleteApplicationRoleSettings(client, guildId, roleId) {
+    requireApplicationBackend(client);
     try {
         if (!client.db || typeof client.db.delete !== "function") {
             logger.error("Database client is not available for deleteApplicationRoleSettings.");
@@ -862,6 +880,7 @@ export async function deleteApplicationRoleSettings(client, guildId, roleId) {
 }
 
 export async function createApplication(client, application) {
+    requireApplicationBackend(client);
     const { guildId, userId } = application;
     const applicationId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const key = getApplicationKey(guildId, applicationId);
@@ -905,6 +924,7 @@ status: 'pending',
 }
 
 export async function getApplication(client, guildId, applicationId) {
+    requireApplicationBackend(client);
     const key = getApplicationKey(guildId, applicationId);
     try {
         await cleanupExpiredApplications(client, guildId);
@@ -917,6 +937,7 @@ export async function getApplication(client, guildId, applicationId) {
 }
 
 export async function updateApplication(client, guildId, applicationId, updates) {
+    requireApplicationBackend(client);
     const key = getApplicationKey(guildId, applicationId);
     try {
         const existingApplication = await getApplication(client, guildId, applicationId);
@@ -939,6 +960,7 @@ export async function updateApplication(client, guildId, applicationId, updates)
 }
 
 export async function getUserApplications(client, guildId, userId) {
+    requireApplicationBackend(client);
     const userKey = getUserApplicationsKey(guildId, userId);
     try {
         if (!client.db || typeof client.db.get !== "function") {
@@ -966,6 +988,7 @@ export async function getUserApplications(client, guildId, userId) {
 }
 
 export async function getApplications(client, guildId, filters = {}) {
+    requireApplicationBackend(client);
     const {
         status,
         userId,

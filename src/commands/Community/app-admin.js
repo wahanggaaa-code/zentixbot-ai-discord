@@ -13,8 +13,7 @@ import {
     getApplicationRoles,
     saveApplicationRoles,
     getApplicationRoleSettings,
-    saveApplicationRoleSettings,
-    deleteApplication
+    saveApplicationRoleSettings
 } from '../../utils/database.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import appDashboard from './modules/app_dashboard.js';
@@ -499,21 +498,8 @@ async function handleList(interaction) {
         filters,
     );
 
-    if (!user) {
-        applications = await Promise.all(
-            applications.map(async (app) => {
-                try {
-                    await interaction.guild.members.fetch(app.userId);
-                    return app; 
-                } catch {
-                    
-                    await deleteApplication(interaction.client, interaction.guild.id, app.id, app.userId);
-                    return null; 
-                }
-            })
-        ).then(results => results.filter(Boolean)); 
-    }
-
+    // A Discord lookup failure is not proof that an applicant left. Listing
+    // must not delete applications merely because Discord is unavailable.
     if (user) {
         applications = applications.filter((app) => app.userId === user.id);
     }
