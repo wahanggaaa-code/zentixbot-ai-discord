@@ -1,4 +1,5 @@
-import { SlashCommandBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { SlashCommandBuilder, MessageFlags } from 'discord.js';
+import { dmPrompt } from '../../services/ai/dmPanel.js';
 import { runChat, createChatStore, clearChatMemory, viewChatMemory } from '../../services/ai/chat.js';
 export default {
  data:new SlashCommandBuilder().setName('aichat').setDescription('Ask AI in the configured channel; content is sent to an external provider.')
@@ -19,7 +20,7 @@ export default {
   if(mode==='dm'){
    await interaction.deferReply({flags:MessageFlags.Ephemeral});
    try{const cfg=await createChatStore(client).read(interaction.guildId);if(!cfg.dmEnabled)return interaction.editReply('Chat AI DM belum diaktifkan.');
-    await interaction.user.send({content:'Chat AI DM: isi pertanyaan hanya jika kamu setuju mengirimnya ke provider eksternal. Jangan kirim data sensitif. Provider mungkin menyimpan data sesuai kebijakannya. Tombol hanya untukmu.',components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`ai_dm_compose:${interaction.guildId}:${interaction.user.id}`).setLabel('Setuju dan tulis pertanyaan').setStyle(ButtonStyle.Primary))],allowedMentions:{parse:[]}});
+    await interaction.user.send(dmPrompt(interaction.guildId,interaction.user.id));
     return interaction.editReply('Periksa DM untuk membaca persetujuan dan memulai chat.');
    }catch{return interaction.editReply('Tidak dapat membuka DM atau memuat pengaturan.');}
   }

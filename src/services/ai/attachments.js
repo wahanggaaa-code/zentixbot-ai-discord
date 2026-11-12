@@ -4,7 +4,7 @@ let active=0;
 export async function readDiscordAttachment(attachment,maxBytes,fetchImpl=globalThis.fetch){
  if(!attachment||typeof attachment.url!=='string'||!Number.isSafeInteger(attachment.size)||attachment.size<1||attachment.size>maxBytes)throw error('Ukuran lampiran tidak valid.');
  let url;try{url=new URL(attachment.url)}catch{throw error('URL lampiran tidak valid.')}
- if(url.protocol!=='https:'||url.hostname!=='cdn.discordapp.com'||url.port||url.username||url.password||url.hash||!/^\/attachments\/\d{17,20}\/\d{17,20}\//.test(url.pathname))throw error('Hanya lampiran Discord yang didukung.');
+ if(url.protocol!=='https:'||url.hostname!=='cdn.discordapp.com'||url.port||url.username||url.password||url.hash||!/^\/(?:attachments|ephemeral-attachments)\/\d{17,20}\/\d{17,20}\//.test(url.pathname))throw error('Hanya lampiran Discord yang didukung.');
  if(active>=2)throw error('Pemrosesan lampiran sedang sibuk.',429);active++;
  try{
   const response=await fetchImpl(url.toString(),{redirect:'error',signal:AbortSignal.timeout(10000)});if(!response.ok||!response.body)throw error('Lampiran tidak dapat diunduh.');

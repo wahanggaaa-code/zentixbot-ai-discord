@@ -32,7 +32,7 @@ test('DM entry only accepts bot messages for target user and rechecks guild memb
  const dmButton={user:{id:userId},customId:`ai_dm_compose:${guildId}:${userId}`,message:{author:{id:botId}},isButton:()=>true,showModal:async()=>{shown=true},reply:async x=>{reply=x}};
  assert.equal(mayDispatchEvent(client,'interactionCreate',[dmButton]),true);assert.equal(mayDispatchEvent(client,'interactionCreate',[{...dmButton,user:{id:botId}}]),false);assert.equal(mayDispatchEvent(client,'interactionCreate',[{...dmButton,message:{author:{id:userId}}}]),false);
  member=false;await button.execute(dmButton,client,[guildId,userId]);assert.equal(shown,false);assert.match(reply.content,/anggota/);member=true;await button.execute(dmButton,client,[guildId,userId]);assert.equal(shown,true);
- const dmModal={user:{id:userId},customId:`ai_dm_form:${guildId}:${userId}`,isModalSubmit:()=>true,deferReply:async()=>{},fields:{getTextInputValue:()=> 'pertanyaan pribadi'},editReply:async x=>{reply=x}};
+ const dmModal={user:{id:userId},customId:`ai_dm_form:${guildId}:${userId}`,isModalSubmit:()=>true,deferReply:async()=>{},fields:{getTextInputValue:()=> 'pertanyaan pribadi',getCheckbox:()=>false,getUploadedFiles:()=>null},editReply:async x=>{reply=x}};
  assert.equal(mayDispatchEvent(client,'interactionCreate',[dmModal]),true);member=false;await modal.execute(dmModal,client,[guildId,userId]);assert.equal(called,0);member=true;await modal.execute(dmModal,client,[guildId,userId]);assert.equal(called,1);assert.equal(reply.content,'DM answer');assert.deepEqual(reply.allowedMentions,{parse:[]});
 });
 

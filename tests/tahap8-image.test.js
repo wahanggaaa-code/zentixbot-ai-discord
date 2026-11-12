@@ -20,3 +20,10 @@ test('image UI requires confirmation before sending prompt and renders PNG',asyn
  w.fetch=async(u,o={})=>({ok:true,json:async()=>String(u).endsWith('/me')?{user:{username:'Owner'},guild:{name:'Guild'},csrf:'x'}:(called++,{imageBase64:sample,mime:'image/png'})});
  for(const x of ['session.js','live.js','modules-live.js','operations-live.js','features.js','ai-foundation.js','ai-welcome.js','ai-activities.js','ai-chat.js','ai-knowledge.js','ai-tools-live.js','ai-images-live.js','ai-builder-live.js','ai-studio.js','app.js'])w.eval(fs.readFileSync('dashboard-preview/'+x,'utf8'));await new Promise(r=>setTimeout(r,35));const f=w.document.querySelector('#aiImageForm');f.elements.prompt.value='bird';f.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));assert.equal(called,0);agree=true;f.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,15));assert.equal(called,1);assert.equal(w.document.querySelector('#aiImageResult').hidden,false);
 });
+
+test('image options use supported sizes and style hints, and reject arbitrary input',async()=>{
+ let requests=[],reserved=0;const client={homeGuildId:guild},foundation={store:{read:async()=>({enabled:true,providerDataConsent:true}),reserve:async()=>{reserved++}}};const image=createImageService({client,foundation,env:{AI_IMAGE_API_KEY:'x',AI_IMAGE_MODEL:'model'},fetchImpl:async(u,o)=>{requests.push(o);return new Response(JSON.stringify({data:[{b64_json:sample}]}))}});const q={guildId:guild,userId:owner,prompt:'bird',mode:'create',imageBase64:null,consent:true};
+ await assert.rejects(image.generate({...q,size:'5000x5000'}),{status:400});await assert.rejects(image.generate({...q,style:'custom'}),{status:400});assert.equal(reserved,0);
+ await image.generate({...q,size:'1536x1024',style:'pixel'});const body=JSON.parse(requests[0].body);assert.equal(body.size,'1536x1024');assert.match(body.prompt,/Pixel art style/);
+ await image.generate({...q,mode:'edit',imageBase64:sample,size:'1024x1536',style:'photo'});assert.equal(requests[1].body.get('size'),'1024x1536');assert.match(requests[1].body.get('prompt'),/Photorealistic/);
+});
