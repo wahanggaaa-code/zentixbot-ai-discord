@@ -427,6 +427,8 @@ class PostgreSQLDatabase {
     }
 
     async set(key, value, ttl = null) {
+        const warningKey=canonicalizeKey(key);
+        if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
             if (!this.isAvailable()) {
                 logger.warn('PostgreSQL not available, cannot set value');
@@ -466,6 +468,8 @@ class PostgreSQLDatabase {
     }
 
     async delete(key) {
+        const warningKey=canonicalizeKey(key);
+        if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
             if (!this.isAvailable()) {
                 logger.warn('PostgreSQL not available, cannot delete key');

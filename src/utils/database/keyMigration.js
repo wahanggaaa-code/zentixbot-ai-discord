@@ -142,15 +142,19 @@ async function migrateCountersFromTemp(client, legacyKey, value) {
 }
 
 async function migrateTempKeyRename(client, legacyKey, canonicalKey) {
-    await client.query(
-        `INSERT INTO ${pgConfig.tables.temp_data} (key, value, expires_at, created_at)
-         SELECT $1, value, expires_at, created_at
-         FROM ${pgConfig.tables.temp_data}
-         WHERE key = $2
-         ON CONFLICT (key) DO NOTHING`,
+    // Only remove the legacy row if this statement actually inserted it. A
+    // conflicting canonical row must never make legacy data disappear.
+    const result = await client.query(
+        `WITH inserted AS (
+            INSERT INTO ${pgConfig.tables.temp_data} (key, value, expires_at, created_at)
+            SELECT $1, value, expires_at, created_at FROM ${pgConfig.tables.temp_data} WHERE key = $2
+            ON CONFLICT (key) DO NOTHING RETURNING key
+         )
+         DELETE FROM ${pgConfig.tables.temp_data} WHERE key = $2 AND EXISTS (SELECT 1 FROM inserted)
+         RETURNING key`,
         [canonicalKey, legacyKey],
     );
-    await client.query(`DELETE FROM ${pgConfig.tables.temp_data} WHERE key = $1`, [legacyKey]);
+    return result.rows.length > 0;
 }
 
 async function hasCompletedMarker(client) {
@@ -210,12 +214,7 @@ export async function runKeyMigration({ pool, dryRun = false, force = false, log
                 if (await keyExists(client, canonicalKey)) {
                     logger.info(`Skip ${legacyKey} -> ${canonicalKey} (canonical already exists)`);
                     summary.skipped += 1;
-                    if (!dryRun) {
-                        await client.query(
-                            `DELETE FROM ${pgConfig.tables.temp_data} WHERE key = $1`,
-                            [legacyKey],
-                        );
-                    }
+                    // Keep both versions for explicit human reconciliation.
                     continue;
                 }
 
@@ -242,7 +241,10 @@ export async function runKeyMigration({ pool, dryRun = false, force = false, log
                             [legacyKey],
                         );
                     } else {
-                        await migrateTempKeyRename(client, legacyKey, canonicalKey);
+                        if (!await migrateTempKeyRename(client, legacyKey, canonicalKey)) {
+                            summary.skipped += 1;
+                            continue;
+                        }
                     }
                 }
 
