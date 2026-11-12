@@ -59,3 +59,8 @@ test('OCR UI requires review and separate save; provider text is never inserted 
  form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));assert.equal(ocr,1);assert.equal(saved,0);assert.equal(w.document.querySelector('#ocrReview').hidden,false);assert.equal(w.document.querySelector('#ocrReview img'),null);assert.match(w.document.querySelector('#ocrReview textarea').value,/<img/);
  w.document.querySelector('#ocrSave').click();await new Promise(r=>setTimeout(r,20));assert.equal(saved,1);
 });
+
+test('lexical retrieval matches whole Unicode words, handles chunk boundaries and favors diverse sources',()=>{
+ const docs=[{name:'a.txt',content:'bicara lain '+ 'x'.repeat(580)+' topikKomunitas komunitas aman'}, {name:'b.txt',content:'Komunitas aman dan ramah'}, {name:'c.txt',content:'Panduan komunitas untuk semua'}];
+ assert.equal(selectExcerpts(docs,'cara').length,0);assert.equal(selectExcerpts([{name:'edge.txt',content:'x'.repeat(595)+' cara'+'sudah'}],'cara').length,0);const hits=selectExcerpts(docs,'komunitas aman');assert.equal(hits.length,3);assert.equal(new Set(hits.map(h=>h.name)).size,3);assert.ok(hits.some(h=>h.name==='a.txt'&&h.text.includes('komunitas aman')));assert.equal(selectExcerpts([{name:'a.txt',content:'Halo 世界 dan éclair'}],'世界 éclair').length,1);
+});

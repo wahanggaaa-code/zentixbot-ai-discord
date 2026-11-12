@@ -12,9 +12,28 @@ export function createKnowledgeStore(client){
 }
 // Simple lexical retrieval, not a semantic search or a trustworthy defense against injected instructions.
 export function selectExcerpts(docs,question){
- const words=[...new Set(question.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu)||[])].slice(0,24);const chunks=[];
- for(const d of docs){if(!d||!validName(d.name)||typeof d.content!=='string')continue;for(let i=0;i<d.content.length;i+=600){const text=d.content.slice(i,i+600);const low=text.toLowerCase();const score=words.filter(w=>low.includes(w)).length;if(score)chunks.push({name:d.name,text,score});}}
- return chunks.sort((a,b)=>b.score-a.score).slice(0,3);
+ const words=[...new Set(question.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu)||[])].slice(0,24), chunks=[];
+ for(const [documentIndex,d] of docs.entries()){
+  if(!d||!validName(d.name)||typeof d.content!=='string')continue;
+  // Overlap reduces lost words at hard chunk boundaries; matches use whole
+  // Unicode words, not misleading substrings inside unrelated words.
+  for(let i=0;i<d.content.length;i+=500){
+   const text=d.content.slice(i,i+600),tokens=new Set(),wordChar=/[\p{L}\p{N}]/u;
+   for(const match of text.toLowerCase().matchAll(/[\p{L}\p{N}]+/gu)){
+    const end=match.index+match[0].length;
+    if(match.index===0&&i>0&&wordChar.test(d.content[i-1]))continue;
+    if(end===text.length&&i+end<d.content.length&&wordChar.test(d.content[i+end]))continue;
+    tokens.add(match[0]);
+   }
+   const score=words.filter(w=>tokens.has(w)).length;
+   if(score)chunks.push({name:d.name,text,score,documentIndex,offset:i});
+  }
+ }
+ chunks.sort((a,b)=>b.score-a.score||a.documentIndex-b.documentIndex||a.offset-b.offset);
+ // Overlapping chunks from one source should not crowd out other matching docs.
+ const selected=[],usedDocs=new Set();for(const chunk of chunks)if(!usedDocs.has(chunk.documentIndex)&&selected.length<3){selected.push(chunk);usedDocs.add(chunk.documentIndex)}
+ for(const chunk of chunks)if(selected.length<3&&!selected.includes(chunk)&&!selected.some(x=>x.documentIndex===chunk.documentIndex&&Math.abs(x.offset-chunk.offset)<600))selected.push(chunk);
+ return selected.map(({name,text,score})=>({name,text,score}));
 }
 export async function askKnowledge({client,guildId,userId,question,consent,store=createKnowledgeStore(client),foundation=client.aiFoundation}){
  if(guildId!==client.homeGuildId||consent!==true)throw err('Akses atau persetujuan tidak valid.',403);
