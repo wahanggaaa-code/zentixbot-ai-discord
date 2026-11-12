@@ -18,8 +18,8 @@ test('SQLite bot key-value CRUD, TTL and AI namespace isolation persist after re
  s.close();assert.equal(db.isAvailable(),false);await assert.rejects(db.get('test'),{code:'SQLITE_UNAVAILABLE'});s=await openSQLiteStore({path});db=createSQLiteBotDatabase(s);assert.deepEqual(await db.get('ai:foundation:config:test'),{bot:true});assert.deepEqual(s.get('ai:foundation:config:test'),{ai:true});s.close();
 });
 test('legacy aliases read, list and delete consistently; canonical values take priority',async t=>{
- const s=await openSQLiteStore({path:file(t)}),db=createSQLiteBotDatabase(s),canonical=`guild:${g}:warnings:${u}`,legacy=`moderation:warnings:${g}:${u}`;
- s.transaction(tx=>tx.botSet(legacy,[{id:1}]));assert.deepEqual(await db.get(canonical),[{id:1}]);assert.deepEqual(await db.list(`guild:${g}:warnings:`),[canonical]);assert.deepEqual(await db.list(`moderation:warnings:${g}:`),[canonical]);
+ const s=await openSQLiteStore({path:file(t)}),db=createSQLiteBotDatabase(s),canonical=`guild:${g}:reaction_roles:${u}`,legacy=`reaction_roles:${g}:${u}`;
+ s.transaction(tx=>tx.botSet(legacy,[{id:1}]));assert.deepEqual(await db.get(canonical),[{id:1}]);assert.deepEqual(await db.list(`guild:${g}:reaction_roles:`),[canonical]);assert.deepEqual(await db.list(`reaction_roles:${g}:`),[canonical]);
  await db.set(canonical,[{id:2}]);assert.deepEqual(await db.get(legacy),[{id:2}]);await db.delete(canonical);assert.equal(await db.get(legacy),null);assert.deepEqual(await db.list(`guild:${g}:`),[]);s.close();
 });
 test('economy keys resolve to transaction accounts and block stale and legacy writes',async t=>{
@@ -51,7 +51,7 @@ test('SQLite ticket counter allocation is atomic through the bot wrapper',async 
 test('SQLite disables role purchase before touching Discord and blocks partial data wipe',async t=>{
  const sqlite=await openSQLiteStore({path:file(t)}),adapter=createSQLiteBotDatabase(sqlite),c=client(adapter),{default:buy}=await import('../src/commands/Economy/buy.js'),{wipedataConfirmHandler}=await import('../src/handlers/wipedataButtons.js');let roleCalls=0,wipedMessage;
  const interaction={id:'999999999999999999',guildId:g,user:{id:u,tag:'test'},options:{getString:()=> 'premium_role',getInteger:()=>1},deferred:true,replied:false,isChatInputCommand:()=>true,member:{roles:{add:async()=>{roleCalls++}}},editReply:async value=>{wipedMessage=value}};
- await assert.rejects(buy.execute(interaction,{},c));assert.equal(roleCalls,0);await adapter.set(`guild:${g}:warnings:${u}`,[{id:1}]);await wipedataConfirmHandler.execute(interaction,c);assert.match(wipedMessage.content,/No data was deleted/);assert.deepEqual(await adapter.get(`guild:${g}:warnings:${u}`),[{id:1}]);sqlite.close();
+ await assert.rejects(buy.execute(interaction,{},c));assert.equal(roleCalls,0);sqlite.transaction(tx=>tx.botSet(`guild:${g}:warnings:${u}`,[{id:1}]));await wipedataConfirmHandler.execute(interaction,c);assert.match(wipedMessage.content,/No data was deleted/);assert.deepEqual(await adapter.get(`guild:${g}:warnings:${u}`),[{id:1}]);sqlite.close();
 });
 test('scoped SQLite lists include all legacy aliases without scanning unrelated key counts',async t=>{
  const sqlite=await openSQLiteStore({path:file(t)}),db=createSQLiteBotDatabase(sqlite),other='456789012345678901';const aliases=[

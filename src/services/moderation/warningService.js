@@ -3,6 +3,7 @@
 import { db, getFromDb, setInDb, getWarningsKey, getWarningsPrefix } from '../../utils/database.js';
 import { logger } from '../../utils/logger.js';
 import { createError, ErrorTypes, wrapServiceClassMethods } from '../../utils/errorHandler.js';
+import {isSQLiteWarningBackend,readSQLiteWarnings,addSQLiteWarning,removeSQLiteWarning,clearSQLiteWarnings,listSQLiteWarningUsers} from '../storage/sqliteWarnings.js';
 
 class WarningService {
 
@@ -13,6 +14,8 @@ class WarningService {
     reason,
     timestamp = Date.now()
   }) {
+    if (!db.initialized) await db.initialize();
+    if (isSQLiteWarningBackend(db)) return addSQLiteWarning(db,{guildId,userId,moderatorId,reason,timestamp});
     const key = getWarningsKey(guildId, userId);
     const warnings = await getFromDb(key, []);
 
@@ -51,6 +54,8 @@ class WarningService {
   }
 
   static async getWarnings(guildId, userId) {
+    if (!db.initialized) await db.initialize();
+    if (isSQLiteWarningBackend(db)) return readSQLiteWarnings(db,guildId,userId).filter(w=>w.status!=='deleted');
     const key = getWarningsKey(guildId, userId);
     const warnings = await getFromDb(key, []);
 
@@ -65,6 +70,11 @@ class WarningService {
   }
 
   static async removeWarning(guildId, userId, warningId) {
+    if (!db.initialized) await db.initialize();
+    if (isSQLiteWarningBackend(db)) {
+      if (!removeSQLiteWarning(db,guildId,userId,warningId)) throw createError('Warning not found',ErrorTypes.USER_INPUT,'That warning could not be found. It may have already been removed.',{guildId,userId,warningId});
+      return {removed:true};
+    }
     const key = getWarningsKey(guildId, userId);
     const warnings = await getFromDb(key, []);
 
@@ -86,6 +96,8 @@ class WarningService {
   }
 
   static async clearWarnings(guildId, userId) {
+    if (!db.initialized) await db.initialize();
+    if (isSQLiteWarningBackend(db)) return clearSQLiteWarnings(db,guildId,userId);
     const key = getWarningsKey(guildId, userId);
     const warnings = await getFromDb(key, []);
     const count = warnings.length;
@@ -98,6 +110,14 @@ class WarningService {
 
   static async getGuildWarnings(guildId, filters = {}) {
     const { moderatorId, limit = 100 } = filters;
+    if (!db.initialized) await db.initialize();
+    if (isSQLiteWarningBackend(db)) {
+      const all=[];
+      for (const userId of listSQLiteWarningUsers(db,guildId)) for(const warning of readSQLiteWarnings(db,guildId,userId)) {
+        if(warning.status!=='deleted'&&(!moderatorId||warning.moderatorId===moderatorId))all.push(warning);
+      }
+      all.sort((a,b)=>(b.timestamp||0)-(a.timestamp||0));return all.slice(0,limit);
+    }
     const prefix = getWarningsPrefix(guildId);
 
     const keys = await db.list(prefix);

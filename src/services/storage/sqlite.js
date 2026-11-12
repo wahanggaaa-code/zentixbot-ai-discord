@@ -74,6 +74,7 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  const delBot=database.prepare('DELETE FROM zentix_bot_kv WHERE key=?');
  const listBot=database.prepare('SELECT key FROM zentix_bot_kv WHERE substr(key,1,length(?))=? AND (expires_at IS NULL OR expires_at>?) ORDER BY key LIMIT 10001');
  const listLevels=database.prepare('SELECT key,value FROM zentix_bot_kv WHERE (substr(key,1,length(?))=? OR substr(key,1,length(?))=?) AND (expires_at IS NULL OR expires_at>?) ORDER BY key LIMIT 10001');
+ const listWarningKeysRaw=database.prepare("SELECT key FROM (SELECT key FROM zentix_bot_kv WHERE substr(key,1,length(?))=? OR substr(key,1,length(?))=? UNION ALL SELECT key FROM zentix_kv WHERE substr(key,1,length(?))=? OR substr(key,1,length(?))=?) ORDER BY key LIMIT 10001");
  const listTicketKeysRaw=database.prepare("SELECT key FROM zentix_bot_kv WHERE substr(key,1,length(?))=? AND key<>? ORDER BY key LIMIT 10001");
  const anyTicketKeyAI=database.prepare("SELECT 1 AS found FROM zentix_kv WHERE substr(key,1,length(?))=? AND key<>? LIMIT 1");
  const listTickets=database.prepare("SELECT key,value,updated_at FROM zentix_bot_kv WHERE substr(key,1,length(?))=? AND length(substr(key,length(?)+1)) BETWEEN 17 AND 20 AND substr(key,length(?)+1) NOT GLOB '*[^0-9]*' AND (expires_at IS NULL OR expires_at>?) ORDER BY updated_at DESC,key ASC LIMIT ?");
@@ -83,8 +84,11 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  const anyAudit=database.prepare('SELECT 1 AS found FROM zentix_verification_audit LIMIT 1');
  const auditById=database.prepare('SELECT id,guild_id,user_id,action,source,moderator_id,metadata,created_at FROM zentix_verification_audit WHERE id=?');
  const readAudit=database.prepare('SELECT id,guild_id,user_id,action,source,moderator_id,metadata,created_at FROM zentix_verification_audit WHERE guild_id=? ORDER BY id DESC LIMIT ?');
- const pruneAI=database.prepare('DELETE FROM zentix_kv WHERE key IN (SELECT key FROM zentix_kv WHERE expires_at IS NOT NULL AND expires_at<=? ORDER BY expires_at,key LIMIT ?)');
- const pruneBot=database.prepare('DELETE FROM zentix_bot_kv WHERE key IN (SELECT key FROM zentix_bot_kv WHERE expires_at IS NOT NULL AND expires_at<=? ORDER BY expires_at,key LIMIT ?)');
+ // Preserve suspicious expiring warning records for explicit reconciliation;
+ // deleting them here would make corruption appear to be an empty warning list.
+ const cleanupFilter="expires_at IS NOT NULL AND expires_at<=? AND key NOT GLOB 'guild:*:warnings:*' AND key NOT GLOB 'moderation:warnings:*' AND key NOT GLOB 'guild:*:warning-sequence:*'";
+ const pruneAI=database.prepare(`DELETE FROM zentix_kv WHERE key IN (SELECT key FROM zentix_kv WHERE ${cleanupFilter} ORDER BY expires_at,key LIMIT ?)`);
+ const pruneBot=database.prepare(`DELETE FROM zentix_bot_kv WHERE key IN (SELECT key FROM zentix_bot_kv WHERE ${cleanupFilter} ORDER BY expires_at,key LIMIT ?)`);
  const day=database.prepare("SELECT strftime('%Y-%m-%d','now') AS day");
  function open(){if(closed)throw error('SQLite sudah ditutup.','SQLITE_CLOSED')}
  function checkKey(k){if(!validKey(k))throw error('Key SQLite tidak valid.')}
@@ -110,6 +114,7 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
   botDelete(key){open();checkKey(key);return Number(delBot.run(key).changes)>0},
   botList(prefix=''){open();if(typeof prefix!=='string'||prefix.length>255||/[\u0000-\u001f]/.test(prefix))throw error('Prefix tidak valid.');const rows=listBot.all(prefix,prefix,Date.now());if(rows.length>10000)throw error('Terlalu banyak key untuk didaftar.','SQLITE_LIST_LIMIT');return rows.map(row=>row.key)},
   botLevels(guild){open();if(!validId(guild))throw error('Guild tidak valid.');const canonical=`guild:${guild}:leveling:users:`,legacy=`${guild}:leveling:users:`,rows=listLevels.all(canonical,canonical,legacy,legacy,Date.now());if(rows.length>10000)throw error('Terlalu banyak akun level.','SQLITE_LIST_LIMIT');const found=new Map();for(const row of rows){const isCanonical=row.key.startsWith(canonical),user=row.key.slice((isCanonical?canonical:legacy).length);if(!validId(user))continue;const value=decode(row.value);if(value!==null&&(!found.has(user)||isCanonical))found.set(user,value);}return [...found].map(([userId,data])=>({userId,data}))},
+  warningKeysRaw(guild){open();if(!validId(guild))throw error('Guild tidak valid.');const canonical=`guild:${guild}:warnings:`,legacy=`moderation:warnings:${guild}:`;const rows=listWarningKeysRaw.all(canonical,canonical,legacy,legacy,canonical,canonical,legacy,legacy);if(rows.length>10000)throw error('Terlalu banyak key peringatan.','SQLITE_LIST_LIMIT');return rows.map(row=>row.key)},
   ticketKeysRaw(guild){open();if(!validId(guild))throw error('Guild tidak valid.');const prefix=`guild:${guild}:ticket:`,counter=`${prefix}counter`;if(anyTicketKeyAI.get(prefix,prefix,counter))throw error('Data tiket legacy perlu direkonsiliasi.','TICKET_LEGACY_CONFLICT');const rows=listTicketKeysRaw.all(prefix,prefix,counter);if(rows.length>10000)throw error('Terlalu banyak tiket.','SQLITE_LIST_LIMIT');return rows.map(row=>row.key)},
   botTickets(guild,limit){open();if(!validId(guild)||!Number.isInteger(limit)||limit<1||limit>1000)throw error('Batas atau guild tidak valid.');const prefix=`guild:${guild}:ticket:`;return listTickets.all(prefix,prefix,prefix,prefix,Date.now(),limit).map(row=>({key:row.key,value:decode(row.value),updatedAt:row.updated_at}))},
   accountKeys(prefix=''){open();if(typeof prefix!=='string'||prefix.length>255||/[\u0000-\u001f]/.test(prefix))throw error('Prefix tidak valid.');const rows=listAccounts.all(prefix,prefix);if(rows.length>10000)throw error('Terlalu banyak akun untuk didaftar.','SQLITE_LIST_LIMIT');return rows.map(row=>row.key)},
@@ -133,6 +138,7 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
   botList(prefix=''){return ops.botList(prefix)},
   botTickets(guild,limit){return ops.botTickets(guild,limit)},
   ticketKeysRaw(guild){return ops.ticketKeysRaw(guild)},
+  warningKeysRaw(guild){return ops.warningKeysRaw(guild)},
   botLevels(guild){return ops.botLevels(guild)},
   accountKeys(prefix=''){return ops.accountKeys(prefix)},
   set(key,value,expiresAt=null){return this.transaction(tx=>tx.set(key,value,expiresAt))},

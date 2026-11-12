@@ -1,6 +1,7 @@
 import {parseMigrationJSON} from './safeJson.js';
 import {canonicalizeKey,getLegacyVariantsForCanonical} from '../../utils/database/keys.js';
 import {parseKey,isTempBackedType} from '../../utils/database/keyParser.js';
+import {validateSQLiteWarningArray} from '../storage/sqliteWarnings.js';
 // Experimental bounded subset only; writers must be stopped and backups verified
 // externally. It rejects unrecognized keys rather than silently dropping them.
 const fail=(message,code='MIGRATION_SOURCE_INVALID')=>Object.assign(new Error(message),{code});
@@ -49,7 +50,12 @@ export async function importPostgresBotKvSnapshot(conn,sqlite,guildId){
     if(typeof row.key!=='string'||row.key<=last)throw fail('Invalid key order');last=row.key;
     const key=canonicalBotKey(source,row.key,guildId);if(seen.has(key))throw fail('Multiple legacy or canonical keys conflict','MIGRATION_SOURCE_LEGACY');seen.add(key);
     const value=parseMigrationJSON(row.value_text,262144);if(value===null)throw fail('JSON null key needs review');
-    bytes+=Buffer.byteLength(row.value_text);if(bytes>2097152)throw fail('Bot KV source exceeds batch limits');entries.push({key,value,expiresAt:expiry(row)});
+    const expiresAt=expiry(row),parsed=parseKey(key);
+    if(parsed.type==='warnings'){
+     if(expiresAt!==null)throw fail('Expiring warning data requires review');
+     try{validateSQLiteWarningArray(value,guildId,parsed.userId)}catch{throw fail('Warning records require review');}
+    }
+    bytes+=Buffer.byteLength(row.value_text);if(bytes>2097152)throw fail('Bot KV source exceeds batch limits');entries.push({key,value,expiresAt});
    }
   }
   await conn.query('COMMIT');began=false;
