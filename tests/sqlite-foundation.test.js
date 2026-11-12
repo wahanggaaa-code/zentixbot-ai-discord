@@ -73,3 +73,6 @@ test('online SQLite backup includes WAL data, restores consistently, and refuses
  const pending=db.backupTo(backup);assert.throws(()=>db.close(),{code:'SQLITE_BUSY'});const result=await pending;assert.equal(result.path,backup);assert.equal(statSync(backup).mode&0o077,0);await worker;await assert.rejects(db.backupTo(backup),{code:'EEXIST'});await assert.rejects(db.backupTo(source));
  const restored=await openSQLiteStore({path:backup});assert.deepEqual(restored.get('committed'),{value:'wal-data'});assert.equal(restored.get('backup:left'),restored.get('backup:right'));restored.close();db.close();
 });
+test('new SQLite database files are private and symlink paths are rejected',async t=>{
+ const source=path(t),db=await openSQLiteStore({path:source}),{symlinkSync}=await import('node:fs');assert.equal(statSync(source).mode&0o077,0);db.set('secret','present');assert.equal(statSync(`${source}-wal`).mode&0o077,0);db.close();const alias=join(source,'..','link.db');symlinkSync(source,alias);await assert.rejects(openSQLiteStore({path:alias}),{code:'SQLITE_PATH'});const reopened=await openSQLiteStore({path:source});assert.equal(reopened.get('secret'),'present');reopened.close();
+});

@@ -1,4 +1,4 @@
-import {mkdirSync,openSync,closeSync,unlinkSync} from 'node:fs';
+import {mkdirSync,openSync,closeSync,unlinkSync,lstatSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
 
 // Experimental building block: NOT wired into application startup yet.
@@ -11,7 +11,14 @@ function decode(value){try{return JSON.parse(value)}catch{throw error('Data SQLi
 export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  if(typeof path!=='string'||!path||path.includes('\0')||!Number.isInteger(busyTimeout)||busyTimeout<0||busyTimeout>5000)throw error('Konfigurasi SQLite tidak valid.');
  let DatabaseSync,backupSQLite;try{({DatabaseSync,backup:backupSQLite}=await import('node:sqlite'))}catch{throw error('SQLite memerlukan Node.js 22.5 atau lebih baru.','SQLITE_RUNTIME')}
- const file=path===':memory:'?path:resolve(path);if(file!==':memory:')mkdirSync(dirname(file),{recursive:true});
+ const file=path===':memory:'?path:resolve(path);
+ if(file!==':memory:'){
+  // A trusted, private parent directory is still required. New files are private;
+  // existing file permissions are not silently changed. Reject symlink final paths.
+  mkdirSync(dirname(file),{recursive:true,mode:0o700});
+  try{const fd=openSync(file,'wx',0o600);closeSync(fd)}catch(e){if(e.code!=='EEXIST')throw e}
+  const st=lstatSync(file);if(!st.isFile()||st.isSymbolicLink())throw error('File SQLite harus berupa file biasa, bukan symlink.','SQLITE_PATH');
+ }
  const database=new DatabaseSync(file);let closed=false,inTransaction=false,backupInProgress=false;
  try{database.exec(`PRAGMA busy_timeout=${busyTimeout}; PRAGMA foreign_keys=ON;`);
   // Do not alter the journal mode or create Zentix tables in an unrelated SQLite file.
