@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import {pgConfig} from '../../config/database/postgres.js';
 const err=(message,status=400)=>Object.assign(new Error(message),{status});
 const validName=name=>typeof name==='string'&&name.trim().length>0&&name.length<=100&&!/[\u0000-\u001f]/.test(name);
-export function validateDocument(name,content){if(!validName(name)||!(/\.(txt|md|csv|json)$/i.test(name)))throw err('Hanya nama file TXT, Markdown, CSV, atau JSON yang valid.');if(typeof content!=='string'||!content.trim()||content.length>12000||content.includes('\u0000'))throw err('Dokumen harus teks 1–12000 karakter.');return {name:name.trim(),content};}
+export function validateDocument(name,content){if(!validName(name)||!(/\.(txt|md|csv|json|pdf|docx)$/i.test(name)))throw err('Nama file dokumen tidak valid.');if(typeof content!=='string'||!content.trim()||content.length>12000||content.includes('\u0000'))throw err('Dokumen harus teks 1–12000 karakter.');return {name:name.trim(),content};}
 export function createKnowledgeStore(client){
  const table=pgConfig.tables.cache_data,key=id=>`ai:knowledge:docs:${id}`;const pool=()=>{const d=client.db;if(!d||d.getStatus?.().isDegraded||!d.isAvailable?.()||!d.db?.isAvailable?.()||!d.db.pool)throw err('Database persisten tidak tersedia.',503);return d.db.pool;};
  async function read(id){const r=await pool().query(`SELECT value FROM ${table} WHERE key=$1`,[key(id)]);const docs=r.rows[0]?.value??[];if(!Array.isArray(docs))throw err('Penyimpanan dokumen tidak valid.',503);return docs;}

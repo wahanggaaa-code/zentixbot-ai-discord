@@ -6,6 +6,7 @@ import { createDashboardRouter } from './dashboard/router.js';
 import { createAIFoundation } from './services/ai/foundation.js';
 import { createImageService } from './services/ai/images.js';
 import { createSearchService } from './services/ai/search.js';
+import { runProactiveAgent } from './services/ai/chat.js';
 import { runScheduledActivity } from './services/ai/activities.js';
 import { requireHomeGuildId, isHomeGuild } from './utils/singleGuild.js';
 import cron from 'node-cron';
@@ -265,6 +266,7 @@ class TitanBot extends Client {
     cron.schedule('0 6 * * *', runSafeTask('birthday_check', () => checkBirthdays(this)));
     cron.schedule('* * * * *', runSafeTask('giveaway_check', () => checkGiveaways(this)));
     cron.schedule('* * * * *', runSafeTask('ai_activity', () => runScheduledActivity(this)));
+    cron.schedule('* * * * *', runSafeTask('ai_proactive', () => runProactiveAgent(this)));
     cron.schedule('*/15 * * * *', runSafeTask('counter_update', () => this.updateAllCounters()));
   }
 

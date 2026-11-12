@@ -58,3 +58,10 @@ test('disabled AI, quota exhaustion and concurrency stop requests before provide
  await s.save(guild,{...settings,guildDaily:3});for(let i=0;i<3;i++)await f.generate({guildId:guild,userId:user,prompt:'hi',consent:true});await assert.rejects(f.generate({guildId:guild,userId:user,prompt:'hi',consent:true}),{code:'LIMIT_REACHED'});assert.equal(calls,3);
  let release;const waiting=new Promise(r=>{release=r});const busy=createAIFoundation({client,store:{read:async()=>settings,reserve:async()=>({})},env,fetchImpl:async()=>{await waiting;return good('ok')}});const request=()=>busy.generate({guildId:guild,userId:user,prompt:'hi',consent:true});const pending=[request(),request(),request(),request()];await assert.rejects(request(),{code:'BUSY'});release();await Promise.all(pending);
 });
+
+test('vision image is sent in compatible OpenAI chat format only on explicit consent',async()=>{
+ let payload;const f=createAIFoundation({client,store:store(),env,fetchImpl:async(_,o)=>{payload=JSON.parse(o.body);return good('gambar')}});const image={mime:'image/png',base64:Buffer.from('image').toString('base64')};
+ await assert.rejects(f.generate({guildId:guild,userId:user,prompt:'apa?',image,consent:false}),{code:'CONSENT_REQUIRED'});assert.equal(payload,undefined);
+ await f.generate({guildId:guild,userId:user,prompt:'apa?',image,consent:true});assert.equal(payload.messages[0].content[1].image_url.url,`data:image/png;base64,${image.base64}`);
+ await assert.rejects(f.generate({guildId:guild,userId:user,prompt:'apa?',consent:true,image:{mime:'text/html',base64:'eA=='}}),{code:'INVALID_INPUT'});
+});

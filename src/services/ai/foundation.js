@@ -55,10 +55,11 @@ export function createAIFoundation({client,store=createAIStore(client),env=proce
  return {
   store,
   credentials(){return Object.fromEntries(Object.entries(PROVIDERS).map(([id,p])=>[id,Boolean(env[p.key]?.trim())]));},
-  async generate({guildId,userId,prompt,consent}){
+  async generate({guildId,userId,prompt,consent,image=null}){
    if(!snowflake.test(guildId||'')||guildId!==client?.homeGuildId||!snowflake.test(userId||''))throw error('FORBIDDEN','Identitas server atau anggota tidak valid.',403);
    if(consent!==true)throw error('CONSENT_REQUIRED','Persetujuan pemrosesan data diperlukan.',403);
    if(typeof prompt!=='string'||!prompt.trim()||prompt.length>4000)throw error('INVALID_INPUT','Input harus 1–4000 karakter.');
+   if(image!==null&&(!image||!['image/png','image/jpeg'].includes(image.mime)||typeof image.base64!=='string'||!image.base64.length||image.base64.length>1398104||! /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(image.base64)))throw error('INVALID_INPUT','Gambar tidak valid.');
    if(active>=4)throw error('BUSY','Terlalu banyak permintaan AI yang berjalan.',429);
    active++;
    try{
@@ -68,7 +69,7 @@ export function createAIFoundation({client,store=createAIStore(client),env=proce
     const usage=await store.reserve(guildId,userId,cfg);let attempted=0;
     for(const [id,model] of chain){const provider=PROVIDERS[id],key=env[provider.key]?.trim();if(!key)continue;attempted++;
      try{
-      const response=await fetchImpl(provider.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${key}`},body:JSON.stringify({model,messages:[{role:'user',content:prompt}],max_tokens:cfg.maxOutputTokens,stream:false}),redirect:'error',signal:AbortSignal.timeout(cfg.timeoutSeconds*1000)});
+      const response=await fetchImpl(provider.url,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${key}`},body:JSON.stringify({model,messages:[{role:'user',content:image?[{type:'text',text:prompt},{type:'image_url',image_url:{url:`data:${image.mime};base64,${image.base64}`}}]:prompt}],max_tokens:cfg.maxOutputTokens,stream:false}),redirect:'error',signal:AbortSignal.timeout(cfg.timeoutSeconds*1000)});
       if(!response.ok){if([401,403,404,408,429].includes(response.status)||response.status>=500)continue;throw error('REQUEST_REJECTED','Provider menolak permintaan.',502);}
       const data=await boundedJSON(response);const choice=data?.choices?.[0];
       if(choice?.finish_reason==='content_filter'||choice?.message?.refusal)throw error('FILTERED','Respons diblokir oleh kebijakan provider.',422);

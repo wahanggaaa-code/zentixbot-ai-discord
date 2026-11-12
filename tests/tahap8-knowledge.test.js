@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import expr
 import {validateDocument,selectExcerpts,askKnowledge} from '../src/services/ai/knowledge.js';import {createAIApi} from '../src/dashboard/aiApi.js';
 const guild='123456789012345678',owner='234567890123456789',other='345678901234567890';const doc={id:'abcdef123456abcdef123456',name:'aturan.md',content:'Aturan komunitas: hormati anggota dan dilarang spam.',createdAt:'2026-11-12'};
 test('document validation and retrieval avoid unsupported file types and irrelevant excerpts',()=>{
- assert.equal(validateDocument('aturan.md',doc.content).name,'aturan.md');for(const x of [['x.pdf','secret'],['x.txt',''],['x.md','a'.repeat(12001)],['x.txt','a\0b']])assert.throws(()=>validateDocument(...x));
+ assert.equal(validateDocument('aturan.md',doc.content).name,'aturan.md');for(const x of [['x.exe','secret'],['x.txt',''],['x.md','a'.repeat(12001)],['x.txt','a\0b']])assert.throws(()=>validateDocument(...x));
  assert.equal(selectExcerpts([doc],'aturan komunitas').length,1);assert.equal(selectExcerpts([doc],'astronomi planet').length,0);
 });
 test('knowledge sends selected excerpt only with explicit consent',async()=>{
@@ -15,6 +15,7 @@ test('knowledge API owner and CSRF gates uploads, deletion and queries',async t=
  const app=express();app.use('/ai',createAIApi(client,{auth,csrf,env:{OWNER_IDS:owner},foundation,knowledgeStore}));const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>server.close());
  const req=(p,method='GET',body,extra={})=>fetch(`http://127.0.0.1:${server.address().port}/ai${p}`,{method,headers:{auth:'yes',who:owner,csrf:'yes','content-type':'application/json',...extra},...(body?{body:JSON.stringify(body)}:{})});
  assert.equal((await req('/knowledge','GET',null,{who:other})).status,403);const list=await (await req('/knowledge')).json();assert.ok(!JSON.stringify(list).includes(doc.content));
+ assert.equal((await req('/knowledge/upload','POST',{name:'a.pdf',base64:'eA==',confirmed:true},{who:other})).status,403);assert.equal((await req('/knowledge/upload','POST',{name:'a.pdf',base64:'eA==',confirmed:true},{csrf:'no'})).status,403);assert.equal((await req('/knowledge/upload','POST',{name:'a.pdf',base64:'eA==',confirmed:false})).status,400);assert.equal((await req('/knowledge/upload','POST',{name:'a.pdf',base64:'eA==',confirmed:true})).status,400);
  assert.equal((await req('/knowledge','POST',{name:'x.md',content:'text',confirmed:true},{csrf:'no'})).status,403);assert.equal((await req('/knowledge/ask','POST',{question:'aturan komunitas',confirmed:false})).status,400);assert.equal(count,0);
  assert.equal((await req('/knowledge/ask','POST',{question:'aturan komunitas',confirmed:true})).status,200);assert.equal((await req('/knowledge/'+doc.id,'DELETE',{confirmed:true})).status,200);assert.equal(count,2);
 });
@@ -30,4 +31,14 @@ test('knowledge documents use row-locked persistence and support deletion',async
  const q=async(sql,args=[])=>{commands.push(sql);if(sql.startsWith('INSERT INTO')){if(!values.has(args[0]))values.set(args[0],[]);return {rows:[]}}if(sql.startsWith('SELECT value'))return {rows:values.has(args[0])?[{value:structuredClone(values.get(args[0]))}]:[]};if(sql.startsWith('UPDATE'))values.set(args[0],JSON.parse(args[1]));return {rows:[]}};
  const pool={query:q,connect:async()=>({query:q,release(){}})},client={db:{getStatus:()=>({isDegraded:false}),isAvailable:()=>true,db:{isAvailable:()=>true,pool}}};const store=createKnowledgeStore(client);
  const entry=await store.add(guild,'rules.txt','Important rules');assert.equal((await store.read(guild)).length,1);assert.ok(commands.some(x=>x.includes('FOR UPDATE')));await store.remove(guild,entry.id);assert.equal((await store.read(guild)).length,0);await assert.rejects(store.remove(guild,entry.id),{status:404});
+});
+
+test('PDF and DOCX extraction is bounded and rejects malformed files',async()=>{
+ const {extractDocument}=await import('../src/services/ai/documentExtract.js');const JSZip=(await import('jszip')).default;
+ const zip=new JSZip();zip.file('[Content_Types].xml','<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');zip.file('_rels/.rels','<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');zip.file('word/document.xml','<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Halo komunitas</w:t></w:r></w:p></w:body></w:document>');
+ const base64=await zip.generateAsync({type:'base64'});assert.match(await extractDocument('panduan.docx',base64),/Halo komunitas/);
+ const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Kids [3 0 R] /Count 1 >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>','<< /Length 47 >>\nstream\nBT /F1 12 Tf 20 200 Td (Halo PDF) Tj ET\nendstream','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
+ let pdf='%PDF-1.4\n',offsets=[0];for(let i=0;i<objects.length;i++){offsets.push(Buffer.byteLength(pdf));pdf+=`${i+1} 0 obj\n${objects[i]}\nendobj\n`;}const xref=Buffer.byteLength(pdf);pdf+=`xref\n0 ${offsets.length}\n0000000000 65535 f \n`+offsets.slice(1).map(x=>`${String(x).padStart(10,'0')} 00000 n \n`).join('')+`trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+ assert.match(await extractDocument('sample.pdf',Buffer.from(pdf).toString('base64')),/Halo PDF/);
+ await assert.rejects(extractDocument('bad.pdf',Buffer.from('bad file').toString('base64')),{status:400});await assert.rejects(extractDocument('bad.exe',base64),{status:400});await assert.rejects(extractDocument('bad.docx','$$$$'),{status:400});
 });

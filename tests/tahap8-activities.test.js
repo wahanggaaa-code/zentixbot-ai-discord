@@ -63,3 +63,12 @@ test('scheduled activities respect weekday, Indonesian time zones and claim once
 test('scheduled activity claim is persisted with a lock',async()=>{
  const f=fixture();f.client.db=memoryDb();const store=createActivityStore(f.client);assert.equal(await store.claimSchedule(gid,'2026-11-12'),true);assert.equal(await store.claimSchedule(gid,'2026-11-12'),false);assert.equal(await store.claimSchedule(gid,'2026-11-13'),true);
 });
+
+test('winner receives bounded activity points once, independently of bot economy',async()=>{
+ const f=fixture();f.client.db=memoryDb();const store=createActivityStore(f.client);await store.save(gid,{...cfg,rewardPoints:25});
+ await startActivity({client:f.client,guild:f.guild,actorId:owner,store,foundation:{generate:async()=>({text:JSON.stringify(quiz)})}});
+ const id=f.sent[0].components[0].components[0].data.custom_id.split(':')[1];assert.equal(await store.points(gid,other),0);
+ const won=await store.answer(gid,id,msg,other,1,Date.now());assert.equal(won.status,'correct');assert.equal(won.reward,25);assert.equal(won.points,25);assert.equal(await store.points(gid,other),25);
+ assert.equal((await store.answer(gid,id,msg,other,1,Date.now())).status,'closed');assert.equal(await store.points(gid,other),25);assert.throws(()=>validateActivity({...cfg,rewardPoints:1001}));
+ const {default:points}=await import('../src/interactions/buttons/ai/points.js');let reply;await points.execute({guildId:gid,user:{id:other,bot:false},deferReply:async()=>{},editReply:async x=>{reply=x}},f.client,['view']);assert.match(reply.content,/25/);
+});

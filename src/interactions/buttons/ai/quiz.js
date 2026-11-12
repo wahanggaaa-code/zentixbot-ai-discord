@@ -8,7 +8,7 @@ export default {
   await interaction.deferReply({flags:MessageFlags.Ephemeral});
   try{const result=await createActivityStore(client).answer(interaction.guildId,id,interaction.message.id,interaction.user.id,Number(choice),Date.now());
    const text={closed:'Ronde sudah ditutup atau tidak tersedia.',expired:'Waktu sudah habis.',full:'Ronde penuh.',answered:'Kamu sudah menjawab ronde ini.',wrong:'Belum tepat. Terima kasih sudah bermain!',correct:'Benar! Kamu memenangkan ronde ini.'}[result.status]||'Ronde tidak tersedia.';
-   await interaction.editReply({content:text,allowedMentions:{parse:[]}});
+   await interaction.editReply({content:text+(result.status==='correct'&&result.reward?` Hadiah: ${result.reward} poin Activities; saldo: ${result.points}.`:''),allowedMentions:{parse:[]}});
    if(result.status==='correct'||result.status==='expired')await interaction.message.edit(quizPayload(result.question,id,{ended:result.status==='correct'?'Ronde selesai.':'Waktu habis.'})).catch(()=>{});
   }catch{await interaction.editReply({content:'Tidak dapat memproses jawaban. Coba lagi.',allowedMentions:{parse:[]}}).catch(()=>{});}
  }
