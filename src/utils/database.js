@@ -275,6 +275,13 @@ export async function getEndedGiveaways(client) {
             return [];
         }
 
+        if (wrapper.db?.sqlite?.dialect === 'sqlite') {
+            const {readSQLiteGiveaways}=await import('../services/storage/sqliteGiveaways.js');
+            const guildId=client.homeGuildId,now=Date.now(),items=readSQLiteGiveaways(client,guildId),due=[];
+            for(const data of items){if(data.ended||data.isEnded)continue;const raw=data.endsAt??data.endTime;let time=typeof raw==='number'?raw:(typeof raw==='string'&&raw.trim()?(Number.isFinite(Number(raw))?Number(raw):Date.parse(raw)):NaN);if(!Number.isFinite(time)||Number.isNaN(new Date(time).getTime())||time>now)continue;due.push({id:data.id||data.messageId,guild_id:guildId,message_id:data.messageId,data,ends_at:new Date(time)});}
+            return due.sort((a,b)=>a.ends_at-b.ends_at);
+        }
+
         if (isPostgresSqlReady(wrapper)) {
             const { pgConfig } = await import('../config/database/postgres.js');
 
@@ -296,6 +303,7 @@ export async function getEndedGiveaways(client) {
         return await getEndedGiveawaysFromKv(client);
     } catch (error) {
         logger.error('Error getting ended giveaways:', error);
+        if(client?.db?.db?.sqlite?.dialect==='sqlite')throw error;
         try {
             return await getEndedGiveawaysFromKv(client);
         } catch {

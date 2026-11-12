@@ -90,7 +90,7 @@ export default {
             throw new TitanBotError(
                 `Channel not found: ${updatedGiveaway.channelId}`,
                 ErrorTypes.VALIDATION,
-                "Could not find the channel where the giveaway was hosted. The giveaway state has been updated.",
+                "Could not find the channel where the giveaway was hosted. No new state was saved.",
                 { channelId: updatedGiveaway.channelId, messageId }
             );
         }
@@ -106,7 +106,7 @@ export default {
             throw new TitanBotError(
                 `Message not found: ${messageId}`,
                 ErrorTypes.VALIDATION,
-                "Could not find the giveaway message. The giveaway state has been updated.",
+                "Could not find the giveaway message. No new state was saved.",
                 { messageId, channelId: updatedGiveaway.channelId }
             );
         }

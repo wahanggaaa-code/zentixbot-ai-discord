@@ -2,7 +2,7 @@ import { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } from 'discord.
 import { errorEmbed, successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
-import { getGuildGiveaways, saveGiveaway } from '../../utils/giveaways.js';
+import { getGuildGiveaways, saveGiveaway, transferGiveawaySnapshot } from '../../utils/giveaways.js';
 import { 
     selectWinners,
     createGiveawayEmbed, 
@@ -102,6 +102,8 @@ export default {
             rerolledAt: new Date().toISOString(),
             rerolledBy: interaction.user.id
         };
+
+        transferGiveawaySnapshot(giveaway,updatedGiveaway);
 
         const channel = await interaction.client.channels.fetch(
             giveaway.channelId,

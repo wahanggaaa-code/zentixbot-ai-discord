@@ -8,6 +8,7 @@ import {
     isGiveawayEnded 
 } from '../utils/giveaways.js';
 import { Mutex } from '../utils/mutex.js';
+import {isSQLiteGiveawayBackend,joinSQLiteGiveaway} from '../services/storage/sqliteGiveaways.js';
 import { 
     selectWinners,
     isUserRateLimited,
@@ -30,46 +31,28 @@ export const giveawayJoinHandler = {
 
             const lockKey = `giveaway:${interaction.message.id}`;
             await Mutex.runExclusive(lockKey, async () => {
-                const guildGiveaways = await getGuildGiveaways(client, interaction.guildId);
-                const giveaway = guildGiveaways.find(g => g.messageId === interaction.message.id);
-
-                if (!giveaway) {
-                    throw new TitanBotError(
-                        'Giveaway not found in database',
-                        ErrorTypes.VALIDATION,
-                        'This giveaway is no longer active.',
-                        { messageId: interaction.message.id, guildId: interaction.guildId }
-                    );
+                let giveaway,participants;
+                if(isSQLiteGiveawayBackend(client)){
+                    const joined=joinSQLiteGiveaway(client,interaction.guildId,interaction.message.id,interaction.user.id);
+                    if(joined.status==='missing')throw new TitanBotError('Giveaway not found',ErrorTypes.VALIDATION,'This giveaway is no longer active.');
+                    if(joined.status==='ended')return replyUserError(interaction,{type:ErrorTypes.UNKNOWN,message:'This giveaway has already ended.'});
+                    if(joined.status==='already')return replyUserError(interaction,{type:ErrorTypes.UNKNOWN,message:'You have already entered this giveaway! 🎉'});
+                    giveaway=joined.giveaway;participants=giveaway.participants;
+                }else{
+                    const guildGiveaways=await getGuildGiveaways(client,interaction.guildId);giveaway=guildGiveaways.find(g=>g.messageId===interaction.message.id);
+                    if(!giveaway)throw new TitanBotError('Giveaway not found in database',ErrorTypes.VALIDATION,'This giveaway is no longer active.',{messageId:interaction.message.id,guildId:interaction.guildId});
+                    if(isGiveawayEnded(giveaway)||giveaway.ended||giveaway.isEnded)return replyUserError(interaction,{type:ErrorTypes.UNKNOWN,message:'This giveaway has already ended.'});
+                    participants=giveaway.participants||[];if(participants.includes(interaction.user.id))return replyUserError(interaction,{type:ErrorTypes.UNKNOWN,message:'You have already entered this giveaway! 🎉'});
+                    participants.push(interaction.user.id);giveaway.participants=participants;await saveGiveaway(client,interaction.guildId,giveaway);
                 }
-
-                const endedByTime = isGiveawayEnded(giveaway);
-                const endedByFlag = giveaway.ended || giveaway.isEnded;
-
-                if (endedByTime || endedByFlag) {
-                    return replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'This giveaway has already ended.' });
-                }
-
-                const participants = giveaway.participants || [];
-                const userId = interaction.user.id;
-
-                if (participants.includes(userId)) {
-                    return replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'You have already entered this giveaway! 🎉' });
-                }
-
-                participants.push(userId);
-                giveaway.participants = participants;
-
-                await saveGiveaway(client, interaction.guildId, giveaway);
 
                 logger.debug(`User ${interaction.user.tag} joined giveaway ${interaction.message.id}`);
 
                 const updatedEmbed = createGiveawayEmbed(giveaway, 'active');
                 const updatedRow = createGiveawayButtons(false);
 
-                await interaction.message.edit({
-                    embeds: [updatedEmbed],
-                    components: [updatedRow]
-                });
+                try { await interaction.message.edit({embeds:[updatedEmbed],components:[updatedRow]}); }
+                catch(error){if(!isSQLiteGiveawayBackend(client))throw error;logger.warn('Giveaway entry saved but Discord message could not be refreshed:',error.message);}
 
                 await interaction.reply({
                     embeds: [

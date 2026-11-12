@@ -6,6 +6,7 @@ import { logger } from '../utils/logger.js';
 import { TitanBotError, ErrorTypes } from '../utils/errorHandler.js';
 import { getColor, botConfig } from '../config/bot.js';
 import { getEndedGiveaways, markGiveawayEnded } from '../utils/database.js';
+import {transferGiveawaySnapshot} from './storage/giveawaySnapshots.js';
 import { checkRateLimit, getRateLimitStatus } from '../utils/rateLimiter.js';
 import { logEvent, EVENT_TYPES } from './loggingService.js';
 
@@ -303,6 +304,7 @@ export async function endGiveaway(client, giveaway, guildId, endedBy) {
             participantCount: participants.length
         };
 
+        transferGiveawaySnapshot(giveaway,updatedGiveaway);
         logger.info(`Ending giveaway ${giveaway.messageId}: selected ${winners.length} winners from ${participants.length} entries`);
 
         return {
@@ -371,21 +373,19 @@ export async function checkGiveaways(client) {
           ? winners.map(id => `<@${id}>`).join(', ')
           : 'No valid entries!';
 
+        const sqliteMode=client.db?.db?.sqlite?.dialect==='sqlite';
+        if(sqliteMode){
+          // Persist the winner once before any Discord write. A competing update
+          // causes the snapshot comparison to fail, so it cannot announce stale winners.
+          giveaway.guildId ||= guildId;giveaway.ended=true;giveaway.isEnded=true;giveaway.winnerIds=winners;giveaway.endedAt=new Date().toISOString();giveaway.deliveryStatus='pending';
+          if(!await markGiveawayEnded(client,giveawayId,giveaway)){logger.warn(`Could not claim giveaway ${messageId}; Discord was not modified`);continue;}
+        }
         const endedEmbed = createGiveawayEmbed(giveaway, 'ended', winners);
-
-        await message.edit({
-          embeds: [endedEmbed],
-          components: [createGiveawayButtons(true)]
-        });
-
-        giveaway.ended = true;
-        giveaway.isEnded = true;
-        giveaway.winnerIds = winners;
-        giveaway.endedAt = new Date().toISOString();
-
-        const markedSuccess = await markGiveawayEnded(client, giveawayId, giveaway);
-        if (!markedSuccess) {
-          logger.warn(`Failed to mark giveaway ${messageId} as ended in database`);
+        await message.edit({embeds:[endedEmbed],components:[createGiveawayButtons(true)]});
+        if(!sqliteMode){
+          giveaway.ended=true;giveaway.isEnded=true;giveaway.winnerIds=winners;giveaway.endedAt=new Date().toISOString();
+          const markedSuccess=await markGiveawayEnded(client,giveawayId,giveaway);
+          if(!markedSuccess)logger.warn(`Failed to mark giveaway ${messageId} as ended in database`);
         }
 
         if (winners.length > 0) {
@@ -428,6 +428,7 @@ export async function checkGiveaways(client) {
           await channel.send({ content: `The giveaway for **${giveaway.prize}** has ended with no valid entries.` });
         }
 
+        if(sqliteMode){giveaway.deliveryStatus='delivered';if(!await markGiveawayEnded(client,giveawayId,giveaway))logger.warn(`Giveaway ${messageId} was sent but delivery status could not be saved; inspect before retrying`);}
         logger.info(`Ended giveaway ${messageId} in guild ${guildId}`);
       } catch (error) {
         logger.error(`Error processing giveaway:`, error);

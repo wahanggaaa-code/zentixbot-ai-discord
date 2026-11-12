@@ -122,14 +122,17 @@ export default {
         });
 
         initialGiveawayData.messageId = giveawayMessage.id;
-        const saved = await saveGiveaway(
-            interaction.client,
-            interaction.guildId,
-            initialGiveawayData,
-        );
+        let saved;
+        try {
+            saved = await saveGiveaway(interaction.client, interaction.guildId, initialGiveawayData);
+        } catch (error) {
+            logger.warn(`Giveaway message ${giveawayMessage.id} was sent but storage failed:`,error.message);
+            throw new TitanBotError('Giveaway message sent but database save failed',ErrorTypes.DATABASE,'The message was sent but the giveaway could not be saved. Inspect the channel before retrying.');
+        }
 
         if (!saved) {
             logger.warn(`Failed to save giveaway to database: ${giveawayMessage.id}`);
+            throw new TitanBotError('Giveaway message sent but database save failed',ErrorTypes.DATABASE,'The message was sent but the giveaway could not be saved. Inspect the channel before retrying.');
         }
 
         try {

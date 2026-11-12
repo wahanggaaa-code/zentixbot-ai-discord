@@ -4,6 +4,9 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { logger } from './logger.js';
 import { TitanBotError, ErrorTypes } from './errorHandler.js';
 import { unwrapReplitData } from './database.js';
+import {isSQLiteGiveawayBackend,readSQLiteGiveaways,saveSQLiteGiveaway,deleteSQLiteGiveaway} from '../services/storage/sqliteGiveaways.js';
+import {transferGiveawaySnapshot} from '../services/storage/giveawaySnapshots.js';
+export {transferGiveawaySnapshot};
 import { 
     createGiveawayEmbed as createGiveawayEmbedService,
     createGiveawayButtons as createGiveawayButtonsService,
@@ -33,6 +36,7 @@ export async function getGuildGiveaways(client, guildId) {
             return [];
         }
 
+        if(isSQLiteGiveawayBackend(client))return readSQLiteGiveaways(client,guildId);
         const key = giveawayKey(guildId);
         const giveaways = await client.db.get(key, {});
         const unwrappedGiveaways = unwrapReplitData(giveaways);
@@ -43,6 +47,7 @@ export async function getGuildGiveaways(client, guildId) {
         return Array.isArray(unwrappedGiveaways) ? unwrappedGiveaways : [];
     } catch (error) {
         logger.error(`Error getting giveaways for guild ${guildId}:`, error);
+        if(isSQLiteGiveawayBackend(client))throw error instanceof TitanBotError?error:new TitanBotError('SQLite giveaway read failed',ErrorTypes.DATABASE,'Could not read giveaway data.');
         return [];
     }
 }
@@ -63,6 +68,7 @@ export async function saveGiveaway(client, guildId, giveawayData) {
             );
         }
 
+        if(isSQLiteGiveawayBackend(client)){saveSQLiteGiveaway(client,guildId,giveawayData);return true;}
         const key = giveawayKey(guildId);
         const giveaways = await getGuildGiveaways(client, guildId);
 
@@ -78,6 +84,7 @@ export async function saveGiveaway(client, guildId, giveawayData) {
         if (error instanceof TitanBotError) {
             throw error;
         }
+        if(isSQLiteGiveawayBackend(client))throw new TitanBotError('SQLite giveaway write failed',ErrorTypes.DATABASE,'Could not save giveaway data.');
         return false;
     }
 }
@@ -98,6 +105,7 @@ export async function deleteGiveaway(client, guildId, messageId) {
             );
         }
 
+        if(isSQLiteGiveawayBackend(client))return deleteSQLiteGiveaway(client,guildId,messageId);
         const key = giveawayKey(guildId);
         const giveaways = await getGuildGiveaways(client, guildId);
 
@@ -118,6 +126,7 @@ export async function deleteGiveaway(client, guildId, messageId) {
         if (error instanceof TitanBotError) {
             throw error;
         }
+        if(isSQLiteGiveawayBackend(client))throw new TitanBotError('SQLite giveaway write failed',ErrorTypes.DATABASE,'Could not save giveaway data.');
         return false;
     }
 }
@@ -133,8 +142,10 @@ export function createGiveawayEmbed(giveaway, status, winners = []) {
 
 export function isGiveawayEnded(giveaway) {
     if (!giveaway) return true;
-    const endTime = giveaway.endsAt || giveaway.endTime;
-    return Date.now() > endTime;
+    const endTime = giveaway.endsAt ?? giveaway.endTime;
+    const time=typeof endTime==='number'?endTime:(typeof endTime==='string'&&endTime.trim()?(Number.isFinite(Number(endTime))?Number(endTime):Date.parse(endTime)):NaN);
+    // An invalid timestamp must not allow new entries indefinitely.
+    return !Number.isFinite(time) || Date.now() >= time;
 }
 
 export function pickWinners(entrants, count) {
