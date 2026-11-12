@@ -8,7 +8,9 @@ export default {
   .addBooleanOption(o=>o.setName('consent').setDescription('Agree to send question and selected context to AI providers.'))
   .addBooleanOption(o=>o.setName('memory').setDescription('Opt in: use and store short temporary channel history.'))
   .addBooleanOption(o=>o.setName('knowledge').setDescription('Use public server documents if owner enabled access.'))
-  .addAttachmentOption(o=>o.setName('image').setDescription('Optional PNG/JPEG up to 1 MB; sent to AI providers.')),
+  .addAttachmentOption(o=>o.setName('image').setDescription('Optional PNG/JPEG up to 1 MB; sent to AI providers.'))
+  .addAttachmentOption(o=>o.setName('audio').setDescription('Optional audio up to 2 MB; sent to OpenAI for transcription.'))
+  .addAttachmentOption(o=>o.setName('file').setDescription('Optional TXT, MD, CSV or JSON; file text is sent to AI.')),
  async execute(interaction,guildConfig,client){
   if(interaction.guildId!==client.homeGuildId||!interaction.inGuild()||interaction.user.bot)return interaction.reply({content:'Command hanya tersedia untuk anggota server.',flags:MessageFlags.Ephemeral});
   const mode=interaction.options.getString('mode')||'channel';
@@ -24,7 +26,7 @@ export default {
   const consent=interaction.options.getBoolean('consent'),question=interaction.options.getString('question');
   if(consent!==true)return interaction.reply({content:'Persetujuan pengiriman ke provider diperlukan. Jangan kirim data sensitif.',flags:MessageFlags.Ephemeral});
   await interaction.deferReply({flags:MessageFlags.Ephemeral});
-  try{const result=await runChat({client,guildId:interaction.guildId,channelId:interaction.channelId,userId:interaction.user.id,question,consent,memory:interaction.options.getBoolean('memory')===true,useKnowledge:interaction.options.getBoolean('knowledge')===true,attachment:interaction.options.getAttachment('image')});await interaction.editReply({content:(result.text+(result.sources.length?'\n\nSumber kandidat: '+result.sources.map(x=>`[${x.index}] ${x.name}`).join(', '):'')).slice(0,2000),allowedMentions:{parse:[]}});}
+  try{const result=await runChat({client,guildId:interaction.guildId,channelId:interaction.channelId,userId:interaction.user.id,question,consent,memory:interaction.options.getBoolean('memory')===true,useKnowledge:interaction.options.getBoolean('knowledge')===true,attachment:interaction.options.getAttachment('image'),audioAttachment:interaction.options.getAttachment('audio'),fileAttachment:interaction.options.getAttachment('file')});await interaction.editReply({content:(result.text+(result.sources.length?'\n\nSumber kandidat: '+result.sources.map(x=>`[${x.index}] ${x.name}`).join(', '):'')).slice(0,2000),allowedMentions:{parse:[]}});}
   catch(e){await interaction.editReply({content:e.status&&e.status<500?e.message:'Chat AI tidak tersedia. Coba lagi nanti.',allowedMentions:{parse:[]}});}
  }
 };

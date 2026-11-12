@@ -42,3 +42,20 @@ test('PDF and DOCX extraction is bounded and rejects malformed files',async()=>{
  assert.match(await extractDocument('sample.pdf',Buffer.from(pdf).toString('base64')),/Halo PDF/);
  await assert.rejects(extractDocument('bad.pdf',Buffer.from('bad file').toString('base64')),{status:400});await assert.rejects(extractDocument('bad.exe',base64),{status:400});await assert.rejects(extractDocument('bad.docx','$$$$'),{status:400});
 });
+
+test('vision OCR is owner-only and requires explicit consent before sending image',async t=>{
+ const {extractImageText}=await import('../src/services/ai/ocr.js');let calls=0,sent;const png=Buffer.from([137,80,78,71,13,10,26,10,1]).toString('base64');const client={homeGuildId:guild};const foundation={generate:async x=>{calls++;sent=x;return {text:'Teks terbaca',usedFallback:false}}};const base={client,guildId:guild,userId:owner,name:'scan.png',base64:png,consent:true,foundation};
+ await assert.rejects(extractImageText({...base,consent:false}),{status:403});await assert.rejects(extractImageText({...base,name:'scan.exe'}),{status:400});assert.equal(calls,0);const result=await extractImageText(base);assert.equal(result.name,'scan.png.txt');assert.equal(result.text,'Teks terbaca');assert.equal(sent.image.mime,'image/png');
+ const auth=(req,res,next)=>{req.session={user:{id:req.get('who')}};req.guild={id:guild};next()},csrf=(req,res,next)=>req.get('csrf')==='yes'?next():res.sendStatus(403);const app=express();app.use('/ai',createAIApi(client,{auth,csrf,env:{OWNER_IDS:owner},foundation}));const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>server.close());
+ const send=(who,csrfValue,confirmed)=>fetch(`http://127.0.0.1:${server.address().port}/ai/knowledge/ocr`,{method:'POST',headers:{'content-type':'application/json',who,csrf:csrfValue},body:JSON.stringify({name:'scan.png',base64:png,confirmed})});
+ assert.equal((await send(other,'yes',true)).status,403);assert.equal((await send(owner,'no',true)).status,403);assert.equal((await send(owner,'yes',false)).status,400);assert.equal(calls,1);assert.equal((await send(owner,'yes',true)).status,200);assert.equal(calls,2);
+});
+
+test('OCR UI requires review and separate save; provider text is never inserted as HTML',async t=>{
+ const html=fs.readFileSync('dashboard-preview/index.html','utf8').replace(/<script src=".*?"><\/script>/g,'');const dom=new JSDOM(html,{url:'http://localhost/dashboard/#ai/knowledge',runScripts:'outside-only'}),w=dom.window;t.after(()=>w.close());w.scrollTo=()=>{};w.confirm=()=>true;let ocr=0,saved=0;
+ w.fetch=async(u,o={})=>({ok:true,json:async()=>{if(String(u).endsWith('/me'))return {user:{username:'Owner'},guild:{name:'Guild'},csrf:'x'};if(String(u).endsWith('/ocr')){ocr++;return {name:'scan.png.txt',text:'<img src=x> teks'}}if(o.method==='POST'){saved++;return {ok:true}}return {documents:[]}}});
+ for(const x of ['session.js','live.js','modules-live.js','operations-live.js','features.js','ai-foundation.js','ai-welcome.js','ai-activities.js','ai-chat.js','ai-knowledge.js','ai-tools-live.js','ai-studio.js','app.js'])w.eval(fs.readFileSync('dashboard-preview/'+x,'utf8'));
+ await new Promise(r=>setTimeout(r,50));const form=w.document.querySelector('#knowledgeUpload'),input=form.querySelector('input');Object.defineProperty(input,'files',{value:[{name:'scan.png',size:9,arrayBuffer:async()=>Uint8Array.from([137,80,78,71,13,10,26,10,0]).buffer}]});
+ form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,20));assert.equal(ocr,1);assert.equal(saved,0);assert.equal(w.document.querySelector('#ocrReview').hidden,false);assert.equal(w.document.querySelector('#ocrReview img'),null);assert.match(w.document.querySelector('#ocrReview textarea').value,/<img/);
+ w.document.querySelector('#ocrSave').click();await new Promise(r=>setTimeout(r,20));assert.equal(saved,1);
+});

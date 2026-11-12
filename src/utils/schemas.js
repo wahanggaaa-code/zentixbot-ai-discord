@@ -21,9 +21,9 @@ export const LoggingChannelsSchema = z
 export const LoggingConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
-    channels: LoggingChannelsSchema.optional(),
-    ignore: LogIgnoreSchema.optional(),
-    enabledEvents: z.record(z.boolean()).default({}),
+    channels: z.union([z.undefined(), LoggingChannelsSchema]),
+    ignore: z.union([z.undefined(), LogIgnoreSchema]),
+    enabledEvents: z.record(z.string(), z.boolean()).default({}),
     // legacy flat fields — accepted on parse, stripped on normalize
     channelId: z.string().nullable().optional(),
   })
@@ -70,10 +70,10 @@ export const GuildConfigSchema = z
     reportChannelId: z.string().nullable().optional(),
     birthdayChannelId: z.string().nullable().optional(),
     premiumRoleId: z.string().nullable().optional(),
-    logIgnore: LogIgnoreSchema.optional(),
-    disabledCommands: z.record(z.boolean()).optional(),
-    disabledCategories: z.record(z.boolean()).optional(),
-    logging: LoggingConfigSchema.optional(),
+    logIgnore: z.union([z.undefined(), LogIgnoreSchema]),
+    disabledCommands: z.record(z.string(), z.boolean()).optional(),
+    disabledCategories: z.record(z.string(), z.boolean()).optional(),
+    logging: z.union([z.undefined(), LoggingConfigSchema]),
     ticketLogging: TicketLoggingSchema.optional(),
     enableLogging: z.boolean().optional(),
     verification: VerificationConfigSchema
@@ -95,8 +95,8 @@ export const EconomyDataSchema = z
     lastWithdraw: z.number().int().nonnegative().default(0),
     xp: z.number().int().nonnegative().default(0),
     level: z.number().int().nonnegative().default(1),
-    inventory: z.record(z.any()).default({}),
-    cooldowns: z.record(z.number().int().nonnegative()).default({})
+    inventory: z.record(z.string(), z.any()).default({}),
+    cooldowns: z.record(z.string(), z.number().int().nonnegative()).default({})
   })
   .passthrough();
 

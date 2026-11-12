@@ -4,6 +4,7 @@ import { REST } from '@discordjs/rest';
 import express from 'express';
 import { createDashboardRouter } from './dashboard/router.js';
 import { createAIFoundation } from './services/ai/foundation.js';
+import { createAudioService } from './services/ai/audio.js';
 import { createImageService } from './services/ai/images.js';
 import { createSearchService } from './services/ai/search.js';
 import { runProactiveAgent } from './services/ai/chat.js';
@@ -48,6 +49,7 @@ class TitanBot extends Client {
     this.homeGuildId = requireHomeGuildId(process.env.GUILD_ID);
     this.aiFoundation = createAIFoundation({client:this});
     this.aiImageService = createImageService({client:this});
+    this.aiAudioService = createAudioService({client:this});
     this.aiSearchService = createSearchService({client:this});
     this.commands = new Collection();
     this.events = new Collection();
