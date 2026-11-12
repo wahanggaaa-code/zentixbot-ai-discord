@@ -10,6 +10,8 @@ import {
 } from '../../services/giveawayService.js';
 import { logEvent, EVENT_TYPES } from '../../services/loggingService.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+import {isSQLiteGiveawayBackend} from '../../services/storage/sqliteGiveaways.js';
+import {prepareGiveawayDelivery,completeGiveawayDelivery} from '../../services/storage/giveawayDelivery.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -104,6 +106,7 @@ export default {
         };
 
         transferGiveawaySnapshot(giveaway,updatedGiveaway);
+        prepareGiveawayDelivery(interaction.client,updatedGiveaway,'manual_reroll');
 
         const channel = await interaction.client.channels.fetch(
             giveaway.channelId,
@@ -125,8 +128,8 @@ export default {
             return InteractionHelper.safeReply(interaction, {
                 embeds: [
                     successEmbed(
-                        "Reroll Complete",
-                        "The new winners have been selected and saved to the database. Could not find channel to announce.",
+                        isSQLiteGiveawayBackend(interaction.client) ? "Reroll saved; delivery pending" : "Reroll Complete",
+                        "The new winners were saved, but the channel could not be reached. Inspect Discord before retrying.",
                     ),
                 ],
                 flags: MessageFlags.Ephemeral,
@@ -148,12 +151,18 @@ export default {
                 updatedGiveaway,
             );
 
+            if (isSQLiteGiveawayBackend(interaction.client)) {
+                return InteractionHelper.safeReply(interaction, {
+                    embeds:[successEmbed("Reroll saved; delivery pending","The original message could not be reached. Inspect Discord before retrying.")],
+                    flags:MessageFlags.Ephemeral,
+                });
+            }
             const winnerMentions = newWinners
                 .map((id) => `<@${id}>`)
                 .join(",");
 
             const existingPingMsg = giveaway.winnerPingMessageId
-                ? await channel.messages.fetch(giveaway.winnerPingMessageId).catch(() => null)
+                ? await channel.messages.fetch(giveaway.winnerPingMessageId).catch(error => {if(isSQLiteGiveawayBackend(interaction.client))throw error;return null})
                 : null;
             if (existingPingMsg) {
                 await existingPingMsg.edit({
@@ -231,8 +240,11 @@ export default {
             .join(",");
 
         const existingPingMsg = giveaway.winnerPingMessageId
-            ? await channel.messages.fetch(giveaway.winnerPingMessageId).catch(() => null)
+            ? await channel.messages.fetch(giveaway.winnerPingMessageId).catch(error => {if(isSQLiteGiveawayBackend(interaction.client))throw error;return null})
             : null;
+        if (isSQLiteGiveawayBackend(interaction.client) && giveaway.winnerPingMessageId && !existingPingMsg) {
+            throw new TitanBotError('Winner message lookup uncertain',ErrorTypes.DATABASE,'Could not confirm the existing winner message. Delivery remains pending; inspect Discord before retrying.');
+        }
         if (existingPingMsg) {
             await existingPingMsg.edit({
                 content: `🔄 **REROLL WINNERS** 🔄 CONGRATULATIONS ${winnerMentions}! You are the new winner(s) for the **${giveaway.prize}** giveaway! Please contact the host <@${giveaway.hostId}> to claim your prize.`,
@@ -244,6 +256,7 @@ export default {
             updatedGiveaway.winnerPingMessageId = newPingMsg.id;
         }
 
+        await completeGiveawayDelivery(interaction.client,interaction.guildId,updatedGiveaway);
         logger.info(`Giveaway successfully rerolled: ${messageId} with ${newWinners.length} new winners`);
 
         try {

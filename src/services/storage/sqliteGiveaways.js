@@ -18,7 +18,7 @@ export function saveSQLiteGiveaway(client,guildId,data){const sqlite=storeFor(cl
   map[data.messageId]=data;tx.botSet(key,map);return data;
  });trackGiveawaySnapshot(data,sqlite,guildId);return saved;
 }
-export function deleteSQLiteGiveaway(client,guildId,messageId){const sqlite=storeFor(client,guildId);if(!sqlite||!validId(messageId))throw invalid();return sqlite.transaction(tx=>{const key=keyFor(guildId),map=mapFor(tx,key,guildId);if(!Object.hasOwn(map,messageId))return false;delete map[messageId];tx.botSet(key,map);return true});}
+export function deleteSQLiteGiveaway(client,guildId,messageId){const sqlite=storeFor(client,guildId);if(!sqlite||!validId(messageId))throw invalid();return sqlite.transaction(tx=>{const key=keyFor(guildId),map=mapFor(tx,key,guildId);if(!Object.hasOwn(map,messageId))return false;if(map[messageId].deliveryStatus==='pending')throw fail('Giveaway delivery unresolved','Inspect and reconcile pending delivery before deleting this giveaway.');delete map[messageId];tx.botSet(key,map);return true});}
 export function joinSQLiteGiveaway(client,guildId,messageId,userId,now=Date.now()){
  const sqlite=storeFor(client,guildId);if(!sqlite||!validId(messageId)||!validId(userId)||!Number.isSafeInteger(now))throw invalid();
  return sqlite.transaction(tx=>{const key=keyFor(guildId),map=mapFor(tx,key,guildId),data=map[messageId];if(!data)return {status:'missing'};const ends=timestamp(data.endsAt??data.endTime);if(!Number.isFinite(ends))throw invalid();if(data.ended||data.isEnded||ends<=now)return {status:'ended'};

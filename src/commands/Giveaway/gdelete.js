@@ -6,6 +6,7 @@ import { getGuildGiveaways, deleteGiveaway } from '../../utils/giveaways.js';
 import { logEvent, EVENT_TYPES } from '../../services/loggingService.js';
 
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+import {isSQLiteGiveawayBackend} from '../../services/storage/sqliteGiveaways.js';
 export default {
     data: new SlashCommandBuilder()
         .setName("gdelete")
@@ -38,6 +39,10 @@ export default {
                 { userId: interaction.user.id, guildId: interaction.guildId }
             );
         }
+
+        // Message deletion and storage deletion cannot currently be coordinated.
+        // Refuse before either side effect until a recoverable protocol exists.
+        if (isSQLiteGiveawayBackend(interaction.client)) throw new TitanBotError('SQLite giveaway deletion unavailable',ErrorTypes.DATABASE,'Giveaway deletion is temporarily unavailable. No message or data was deleted.');
 
         logger.info(`Giveaway deletion started by ${interaction.user.tag} in guild ${interaction.guildId}`);
 

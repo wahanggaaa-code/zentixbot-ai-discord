@@ -10,6 +10,8 @@ import {
 } from '../../services/giveawayService.js';
 import { logEvent, EVENT_TYPES } from '../../services/loggingService.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+import {prepareGiveawayDelivery,completeGiveawayDelivery} from '../../services/storage/giveawayDelivery.js';
+import {isSQLiteGiveawayBackend} from '../../services/storage/sqliteGiveaways.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -111,6 +113,7 @@ export default {
             );
         }
 
+        prepareGiveawayDelivery(interaction.client,updatedGiveaway,'manual_end');
         await saveGiveaway(
             interaction.client,
             interaction.guildId,
@@ -134,7 +137,7 @@ export default {
                 content: `🎉 CONGRATULATIONS ${winnerMentions}! You won the **${updatedGiveaway.prize}** giveaway! Please contact the host <@${updatedGiveaway.hostId}> to claim your prize.`,
             });
             updatedGiveaway.winnerPingMessageId = winnerPingMsg.id;
-            await saveGiveaway(interaction.client, interaction.guildId, updatedGiveaway);
+            if (!isSQLiteGiveawayBackend(interaction.client)) await saveGiveaway(interaction.client, interaction.guildId, updatedGiveaway);
 
             logger.info(`Giveaway ended with ${winners.length} winner(s): ${messageId}`);
 
@@ -176,6 +179,7 @@ export default {
             logger.info(`Giveaway ended with no winners: ${messageId}`);
         }
 
+        await completeGiveawayDelivery(interaction.client,interaction.guildId,updatedGiveaway);
         logger.info(`Giveaway successfully ended by ${interaction.user.tag}: ${messageId}`);
 
         return InteractionHelper.safeReply(interaction, {

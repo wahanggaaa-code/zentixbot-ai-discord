@@ -9,6 +9,7 @@ import {
 } from '../utils/giveaways.js';
 import { Mutex } from '../utils/mutex.js';
 import {isSQLiteGiveawayBackend,joinSQLiteGiveaway} from '../services/storage/sqliteGiveaways.js';
+import {prepareGiveawayDelivery,completeGiveawayDelivery} from '../services/storage/giveawayDelivery.js';
 import { 
     selectWinners,
     isUserRateLimited,
@@ -122,6 +123,7 @@ export const giveawayEndHandler = {
             giveaway.winnerIds = winners;
             giveaway.endedAt = new Date().toISOString();
             giveaway.endedBy = interaction.user.id;
+            prepareGiveawayDelivery(client,giveaway,'button_end');
 
             await saveGiveaway(client, interaction.guildId, giveaway);
 
@@ -135,6 +137,7 @@ export const giveawayEndHandler = {
                 embeds: [updatedEmbed],
                 components: [updatedRow]
             });
+            await completeGiveawayDelivery(client,interaction.guildId,giveaway);
 
             try {
                 await logEvent({
@@ -246,6 +249,7 @@ export const giveawayRerollHandler = {
             giveaway.winnerIds = newWinners;
             giveaway.rerolledAt = new Date().toISOString();
             giveaway.rerolledBy = interaction.user.id;
+            prepareGiveawayDelivery(client,giveaway,'button_reroll');
 
             await saveGiveaway(client, interaction.guildId, giveaway);
 
@@ -259,6 +263,7 @@ export const giveawayRerollHandler = {
                 embeds: [updatedEmbed],
                 components: [updatedRow]
             });
+            await completeGiveawayDelivery(client,interaction.guildId,giveaway);
 
             try {
                 await logEvent({
