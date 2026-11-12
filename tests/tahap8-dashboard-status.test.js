@@ -1,0 +1,2 @@
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import {JSDOM} from 'jsdom';
+test('AI foundation status distinguishes connected features from remaining limitations',()=>{const dom=new JSDOM('',{runScripts:'outside-only'});dom.window.eval(fs.readFileSync('dashboard-preview/ai-foundation.js','utf8'));const html=dom.window.ZentixAIFoundation.render();assert.match(html,/PERIKSA STATUS DAN BATAS TIAP FITUR/);assert.doesNotMatch(html,/FITUR AI LAIN MASIH SIMULASI/);dom.window.close()});
