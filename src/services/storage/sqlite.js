@@ -72,6 +72,9 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  const listTickets=database.prepare("SELECT key,value,updated_at FROM zentix_bot_kv WHERE substr(key,1,length(?))=? AND length(substr(key,length(?)+1)) BETWEEN 17 AND 20 AND substr(key,length(?)+1) NOT GLOB '*[^0-9]*' AND (expires_at IS NULL OR expires_at>?) ORDER BY updated_at DESC,key ASC LIMIT ?");
  const listAccounts=database.prepare("SELECT 'guild:'||guild_id||':economy:'||user_id AS key FROM zentix_economy WHERE substr('guild:'||guild_id||':economy:'||user_id,1,length(?))=? ORDER BY guild_id,user_id LIMIT 10001");
  const addAudit=database.prepare('INSERT INTO zentix_verification_audit(guild_id,user_id,action,source,moderator_id,metadata,created_at) VALUES(?,?,?,?,?,?,?)');
+ const importAudit=database.prepare('INSERT INTO zentix_verification_audit(id,guild_id,user_id,action,source,moderator_id,metadata,created_at) VALUES(?,?,?,?,?,?,?,?)');
+ const anyAudit=database.prepare('SELECT 1 AS found FROM zentix_verification_audit LIMIT 1');
+ const auditById=database.prepare('SELECT id,guild_id,user_id,action,source,moderator_id,metadata,created_at FROM zentix_verification_audit WHERE id=?');
  const readAudit=database.prepare('SELECT id,guild_id,user_id,action,source,moderator_id,metadata,created_at FROM zentix_verification_audit WHERE guild_id=? ORDER BY id DESC LIMIT ?');
  const pruneAI=database.prepare('DELETE FROM zentix_kv WHERE key IN (SELECT key FROM zentix_kv WHERE expires_at IS NOT NULL AND expires_at<=? ORDER BY expires_at,key LIMIT ?)');
  const pruneBot=database.prepare('DELETE FROM zentix_bot_kv WHERE key IN (SELECT key FROM zentix_bot_kv WHERE expires_at IS NOT NULL AND expires_at<=? ORDER BY expires_at,key LIMIT ?)');
@@ -79,6 +82,8 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  function open(){if(closed)throw error('SQLite sudah ditutup.','SQLITE_CLOSED')}
  function checkKey(k){if(!validKey(k))throw error('Key SQLite tidak valid.')}
  function checkIds(g,u){if(!validId(g)||!validId(u))throw error('ID akun tidak valid.')}
+ function auditArgs(record){if(!record||!validId(record.guildId)||!validId(record.userId)||typeof record.action!=='string'||!record.action||record.action.length>50||(record.source!=null&&(typeof record.source!=='string'||record.source.length>50))||(record.moderatorId!=null&&!validId(record.moderatorId)))throw error('Audit verifikasi tidak valid.');const created=new Date(record.createdAt??Date.now());if(Number.isNaN(created.getTime()))throw error('Waktu audit tidak valid.');const metadata=encode(record.metadata??{});if(Buffer.byteLength(metadata)>65536)throw error('Metadata audit terlalu besar.');return [record.guildId,record.userId,record.action,record.source??null,record.moderatorId??null,metadata,created.toISOString()]}
+ function auditRow(row){return {id:row.id,guildId:row.guild_id,userId:row.user_id,action:row.action,source:row.source,moderatorId:row.moderator_id,metadata:decode(row.metadata),createdAt:row.created_at}}
  const ops={
   // Raw existence includes expired or JSON-null values; migration must not silently overwrite them.
   hasRawKey(key){open();checkKey(key);return Boolean(getKV.get(key)||getBot.get(key))},
@@ -99,8 +104,11 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
   accountKeys(prefix=''){open();if(typeof prefix!=='string'||prefix.length>255||/[\u0000-\u001f]/.test(prefix))throw error('Prefix tidak valid.');const rows=listAccounts.all(prefix,prefix);if(rows.length>10000)throw error('Terlalu banyak akun untuk didaftar.','SQLITE_LIST_LIMIT');return rows.map(row=>row.key)},
   getAccount(g,u){open();checkIds(g,u);const row=getAccount.get(g,u);return row?decode(row.data):null},
   setAccount(g,u,value){open();checkIds(g,u);if(!value||typeof value!=='object'||Array.isArray(value))throw error('Akun tidak valid.');putAccount.run(g,u,encode(value))},
-  addVerificationAudit(record){open();if(!record||!validId(record.guildId)||!validId(record.userId)||typeof record.action!=='string'||!record.action||record.action.length>50||(record.source!=null&&(typeof record.source!=='string'||record.source.length>50))||(record.moderatorId!=null&&!validId(record.moderatorId)))throw error('Audit verifikasi tidak valid.');const created=new Date(record.createdAt??Date.now());if(Number.isNaN(created.getTime()))throw error('Waktu audit tidak valid.');const metadata=encode(record.metadata??{});if(Buffer.byteLength(metadata)>65536)throw error('Metadata audit terlalu besar.');addAudit.run(record.guildId,record.userId,record.action,record.source??null,record.moderatorId??null,metadata,created.toISOString());},
-  verificationAudit(guild,limit=100){open();if(!validId(guild)||!Number.isInteger(limit)||limit<1||limit>1000)throw error('Permintaan audit tidak valid.');return readAudit.all(guild,limit).map(row=>({id:row.id,guildId:row.guild_id,userId:row.user_id,action:row.action,source:row.source,moderatorId:row.moderator_id,metadata:decode(row.metadata),createdAt:row.created_at}))},
+  addVerificationAudit(record){open();addAudit.run(...auditArgs(record))},
+  hasAnyVerificationAudit(){open();return Boolean(anyAudit.get())},
+  importVerificationAudit(record){open();if(!Number.isSafeInteger(record?.id)||record.id<1||record.id>2147483647)throw error('ID audit tidak valid.');importAudit.run(record.id,...auditArgs(record))},
+  verificationAuditById(id){open();if(!Number.isSafeInteger(id)||id<1)throw error('ID audit tidak valid.');const row=auditById.get(id);return row?auditRow(row):null},
+  verificationAudit(guild,limit=100){open();if(!validId(guild)||!Number.isInteger(limit)||limit<1||limit>1000)throw error('Permintaan audit tidak valid.');return readAudit.all(guild,limit).map(auditRow)},
   cleanupExpired(now,limit){open();if(!Number.isSafeInteger(now)||now<0||!Number.isInteger(limit)||limit<1||limit>1000)throw error('Batas pembersihan tidak valid.');const ai=Number(pruneAI.run(now,limit).changes),bot=Number(pruneBot.run(now,limit-ai).changes);return {ai,bot,total:ai+bot}},
   utcDay(){open();return day.get().day},
  };
