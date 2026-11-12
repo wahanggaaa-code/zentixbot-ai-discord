@@ -14,7 +14,7 @@ test('SQLite bot key-value CRUD, TTL and AI namespace isolation persist after re
  const path=file(t);let s=await openSQLiteStore({path}),db=createSQLiteBotDatabase(s);s.set('ai:foundation:config:test',{ai:true});await db.set('ai:foundation:config:test',{bot:true});assert.deepEqual(s.get('ai:foundation:config:test'),{ai:true});assert.deepEqual(await db.get('ai:foundation:config:test'),{bot:true});
  assert.equal(await db.get('absent','default'),'default');assert.equal(await db.set('cache:test','value',0.002),true);await new Promise(r=>setTimeout(r,10));assert.equal(await db.get('cache:test'),null);assert.equal(await db.exists('cache:test'),false);
  // Structured PostgreSQL rows do not expire based on the generic TTL argument.
- await db.set(`guild:${g}:ticket:${u}`,{status:'open'},0.001);await new Promise(r=>setTimeout(r,8));assert.deepEqual(await db.get(`guild:${g}:ticket:${u}`),{status:'open'});await assert.rejects(db.set('test','value',-1));
+ await assert.rejects(db.set(`guild:${g}:ticket:${u}`,{status:'open'},0.001),{code:'TICKET_WRITE_DISABLED'});await assert.rejects(db.set('test','value',-1));
  s.close();assert.equal(db.isAvailable(),false);await assert.rejects(db.get('test'),{code:'SQLITE_UNAVAILABLE'});s=await openSQLiteStore({path});db=createSQLiteBotDatabase(s);assert.deepEqual(await db.get('ai:foundation:config:test'),{bot:true});assert.deepEqual(s.get('ai:foundation:config:test'),{ai:true});s.close();
 });
 test('legacy aliases read, list and delete consistently; canonical values take priority',async t=>{

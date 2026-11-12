@@ -1,6 +1,7 @@
 import { logger } from '../logger.js';
 import { db, getFromDb } from './wrapper.js';
 import { getTicketCounterKey, getTicketKey } from './keys.js';
+import {isSQLiteTicketBackend,readSQLiteTicket,saveSQLiteTicket,listSQLiteTicketKeys} from '../../services/storage/sqliteTickets.js';
 
 export { getTicketKey, getTicketCounterKey } from './keys.js';
 
@@ -9,6 +10,7 @@ export async function getTicketData(guildId, channelId) {
         await db.initialize();
     }
 
+    if (isSQLiteTicketBackend(db)) return readSQLiteTicket(db,guildId,channelId);
     const key = getTicketKey(guildId, channelId);
     return await db.get(key);
 }
@@ -33,12 +35,12 @@ export async function getOpenTicketCountForUser(guildId, userId) {
         }
 
         if (typeof db.list === 'function') {
-            const ticketKeys = await db.list(`guild:${guildId}:ticket:`);
+            const ticketKeys = isSQLiteTicketBackend(db) ? listSQLiteTicketKeys(db,guildId) : await db.list(`guild:${guildId}:ticket:`);
             let count = 0;
 
             for (const key of ticketKeys) {
                 if (key.endsWith(':counter')) continue;
-                const ticket = await getFromDb(key, null);
+                const ticket = isSQLiteTicketBackend(db) ? await getTicketData(guildId,key.slice(`guild:${guildId}:ticket:`.length)) : await getFromDb(key, null);
                 if (ticket && ticket.userId === userId && ticket.status === 'open') {
                     count += 1;
                 }
@@ -50,6 +52,7 @@ export async function getOpenTicketCountForUser(guildId, userId) {
         return 0;
     } catch (error) {
         logger.error(`Error counting open tickets for user ${userId} in guild ${guildId}:`, error);
+        if (isSQLiteTicketBackend(db)) throw error;
         return 0;
     }
 }
@@ -59,6 +62,7 @@ export async function saveTicketData(guildId, channelId, data) {
         await db.initialize();
     }
 
+    if (isSQLiteTicketBackend(db)) {saveSQLiteTicket(db,guildId,channelId,data);return;}
     const key = getTicketKey(guildId, channelId);
     if (!await db.set(key, data)) throw new Error('Ticket data could not be saved');
 }
@@ -68,6 +72,7 @@ export async function deleteTicketData(guildId, channelId) {
         await db.initialize();
     }
 
+    if (isSQLiteTicketBackend(db)) throw Object.assign(new Error('SQLite ticket deletion is disabled pending safe Discord coordination'),{code:'TICKET_DELETE_DISABLED'});
     const key = getTicketKey(guildId, channelId);
     await db.delete(key);
 }
@@ -118,12 +123,12 @@ async function listGuildTickets(guildId) {
         return [];
     }
 
-    const ticketKeys = await db.list(`guild:${guildId}:ticket:`);
+    const ticketKeys = isSQLiteTicketBackend(db) ? listSQLiteTicketKeys(db,guildId) : await db.list(`guild:${guildId}:ticket:`);
     const tickets = [];
 
     for (const key of ticketKeys) {
         if (key.endsWith(':counter')) continue;
-        const ticket = await getFromDb(key, null);
+        const ticket = isSQLiteTicketBackend(db) ? await getTicketData(guildId,key.slice(`guild:${guildId}:ticket:`.length)) : await getFromDb(key, null);
         if (ticket) tickets.push(ticket);
     }
 
@@ -170,6 +175,7 @@ export async function getGuildTicketStats(guildId) {
         };
     } catch (error) {
         logger.error(`Error computing ticket stats for guild ${guildId}:`, error);
+        if (isSQLiteTicketBackend(db)) throw error;
         return {
             openCount: 0,
             closedCount: 0,
