@@ -70,3 +70,11 @@ test('image chat accepts only bounded Discord CDN PNG/JPEG and transmits only af
  let sent;const base={client:{homeGuildId:guildId},guildId,channelId,userId,question:'Apa ini?',consent:true,attachment:a,store:{read:async()=>settings},fetchImage:async()=>image,foundation:{generate:async x=>{sent=x;return {text:'gambar'}}}};
  await assert.rejects(runChat({...base,consent:false}),{status:403});assert.equal(sent,undefined);await runChat(base);assert.deepEqual(sent.image,image);
 });
+
+test('concurrent memory requests for same user and scope are rejected before provider or attachment work',async()=>{
+ const {clearChatMemory,viewChatMemory}=await import('../src/services/ai/chat.js');let release,calls=0,downloads=0;const wait=new Promise(r=>{release=r});const base={client:{homeGuildId:guildId},guildId,channelId,userId,question:'pertanyaan pertama',consent:true,memory:true,store:{read:async()=>settings},foundation:{generate:async()=>{calls++;await wait;return {text:'jawaban'}}}};
+ clearChatMemory(guildId,userId);const first=runChat(base);await new Promise(r=>setImmediate(r));await assert.rejects(runChat({...base,question:'pertanyaan kedua',attachment:{},fetchImage:async()=>{downloads++}}),{status:429});assert.equal(calls,1);assert.equal(downloads,0);
+ // DM memory has a different scope; stateless requests also remain independent.
+ await runChat({...base,dm:true,store:{read:async()=>({...settings,dmEnabled:true})},foundation:{generate:async()=>({text:'DM'})}});await runChat({...base,memory:false,foundation:{generate:async()=>({text:'tanpa memori'})}});
+ clearChatMemory(guildId,userId);release();await first;assert.deepEqual(viewChatMemory(guildId,userId),[]);await runChat({...base,foundation:{generate:async()=>({text:'lanjut'})}});assert.equal(viewChatMemory(guildId,userId).length,1);clearChatMemory(guildId,userId);clearChatMemory(guildId,userId,'dm');
+});

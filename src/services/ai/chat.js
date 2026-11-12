@@ -34,7 +34,7 @@ export async function runChat({client,guildId,channelId,userId,question,consent,
  if(typeof question!=='string'||!question.trim()||question.length>1500)throw err('Pertanyaan harus 1–1500 karakter.');
  if(typeof memory!=='boolean'||typeof useKnowledge!=='boolean')throw err('Pilihan chat tidak valid.');
  const scope=dm?'dm':'channel',key=memoryKey(guildId,userId,scope);
- const token={cancelled:false};if(memory){if(!pending.has(key))pending.set(key,new Set());pending.get(key).add(token);}
+ const token={cancelled:false};if(memory){if(pending.get(key)?.size)throw err('Permintaan dengan memori masih diproses. Tunggu sampai selesai.',429);pending.set(key,new Set([token]));}
  try{
  const cfg=await store.read(guildId);if(dm?!cfg.dmEnabled:(!cfg.enabled||cfg.channelId!==channelId))throw err('Chat AI tidak aktif pada tempat ini.',403);
  if(audioAttachment&&!cfg.audioEnabled)throw err('Transkripsi audio belum diaktifkan owner.',403);
