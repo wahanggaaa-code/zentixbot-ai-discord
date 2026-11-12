@@ -945,6 +945,13 @@ async function handleDeleteSystem(btnInteraction, rootInteraction, guildConfig, 
 
     await submitted.deferUpdate();
 
+    // The PostgreSQL-only deletion below does not remove SQLite ticket records.
+    // Refuse before touching the Discord panel or config until that path is migrated.
+    if (client.db?.db?.sqlite?.dialect === 'sqlite') {
+        await submitted.followUp({content:'Ticket system deletion is temporarily unavailable during the SQLite migration. Nothing was deleted.',flags:MessageFlags.Ephemeral});
+        return;
+    }
+
     const keysToDelete = [
         'ticketPanelChannelId',
         'ticketPanelMessageId',

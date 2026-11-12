@@ -19,7 +19,7 @@ export async function withEconomyTransaction(client,guildId,userIds,mutate){
  const sqlite=sqliteBackend(client);
  if(sqlite)return sqlite.transaction(tx=>{
   const ordered=[...userIds].sort(),accounts=new Map();
-  for(const userId of ordered){const raw=tx.getAccount(guildId,userId);if(raw===null&&(tx.get(`economy:${guildId}:${userId}`)!==null||tx.get(`guild:${guildId}:economy:${userId}`)!==null))throw err('Legacy economy data requires migration before use.','ECONOMY_LEGACY');const data=normalizeEconomyData(raw||{},{...DEFAULT_ECONOMY_DATA,wallet:botConfig.economy?.startingBalance??DEFAULT_ECONOMY_DATA.wallet});validBalance(data);accounts.set(userId,data);}
+  for(const userId of ordered){const raw=tx.getAccount(guildId,userId);if(raw===null&&(tx.get(`economy:${guildId}:${userId}`)!==null||tx.get(`guild:${guildId}:economy:${userId}`)!==null||tx.botGet(`economy:${guildId}:${userId}`)!==null||tx.botGet(`guild:${guildId}:economy:${userId}`)!==null))throw err('Legacy economy data requires migration before use.','ECONOMY_LEGACY');const data=normalizeEconomyData(raw||{},{...DEFAULT_ECONOMY_DATA,wallet:botConfig.economy?.startingBalance??DEFAULT_ECONOMY_DATA.wallet});validBalance(data);accounts.set(userId,data);}
   const result=mutate(accounts);if(result&&typeof result.then==='function')throw err('Economy mutation must be synchronous.','ECONOMY_INVALID');
   for(const userId of ordered){const data=accounts.get(userId);validBalance(data);const json=JSON.stringify(data);if(!json||Buffer.byteLength(json)>65536)throw err('Economy data is too large.','ECONOMY_INVALID');tx.setAccount(guildId,userId,data);}
   return result;

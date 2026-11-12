@@ -77,6 +77,13 @@ export default {
                 return;
             }
 
+            // Role delivery crosses Discord and storage; the legacy writer is unsafe on SQLite.
+            // Refuse before any role assignment rather than granting an unpaid role.
+            if (client?.db?.db?.sqlite?.dialect === 'sqlite') {
+                throw createError('Role purchase unavailable on SQLite', ErrorTypes.CONFIGURATION,
+                    'Premium role purchases are temporarily disabled while database transactions are being migrated.');
+            }
+
             const guildConfig = await getGuildConfig(client, guildId);
             const PREMIUM_ROLE_ID = guildConfig.premiumRoleId;
 

@@ -23,6 +23,13 @@ const wipedataConfirmHandler = {
       const userId = interaction.user.id;
       const guildId = interaction.guildId;
 
+      // SQLite economy deletion is intentionally disabled until all per-user data can
+      // be wiped consistently. Never report a partial wipe as complete.
+      if (client?.db?.db?.sqlite?.dialect === 'sqlite') {
+        await interaction.editReply({content:'Data wipe is temporarily unavailable while SQLite migration is incomplete. No data was deleted.',components:[]});
+        return;
+      }
+
       const dataKeyPatterns = [
         getEconomyKey(guildId, userId),
         getUserLevelKey(guildId, userId),

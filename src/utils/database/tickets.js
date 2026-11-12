@@ -88,6 +88,10 @@ export async function incrementTicketCounter(guildId) {
     }
 
     const key = getTicketCounterKey(guildId);
+    if (db.db?.sqlite?.dialect === 'sqlite') {
+        const nextCounter = await db.increment(key, 1);
+        return nextCounter.toString().padStart(3, '0');
+    }
     const currentCounter = await getTicketCounter(guildId);
     const nextCounter = currentCounter + 1;
 

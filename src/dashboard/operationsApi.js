@@ -1,6 +1,8 @@
 import express from 'express';
 import {ChannelType, PermissionFlagsBits} from 'discord.js';
 import { pgConfig } from '../config/database/postgres.js';
+import { sqliteBackend } from '../services/storage/sqlite.js';
+import { readSQLiteBotValue } from '../services/storage/sqliteBotDatabase.js';
 import { getGuildMusicData } from '../services/music/playerStore.js';
 import {getPlayer,applyPause,applyResume,destroyPlayerSession,playQuery} from '../services/music/musicActions.js';
 import {ModerationService} from '../services/moderation/moderationService.js';
@@ -26,16 +28,21 @@ function safeMusicQuery(value){
 
 const bad=(message,status=400)=>Object.assign(new Error(message),{status});
 function pool(client){const d=client.db;if(!d||d.getStatus?.().isDegraded||!d.isAvailable?.()||!d.db?.isAvailable?.()||!d.db.pool)throw bad('Database persisten tidak tersedia.',503);return d.db.pool;}
+function requireStorage(client){const sqlite=sqliteBackend(client);if(sqlite)return sqlite;return pool(client)}
 function fail(res,e){if(!e.status)console.error('[dashboard operations]',e.message);res.status(e.status||503).json({error:e.status?e.message:'Operasi gagal; periksa izin bot dan log server. Bila tindakan Discord sudah terjadi, periksa sebelum mencoba lagi.'});}
+function sqliteLeaderboard(sqlite,guildId){return sqlite.botLevels(guildId).map(({userId,data})=>{
+ if(!data||typeof data!=='object'||Array.isArray(data))throw bad('Data leveling tidak valid.',503);
+ const level=Number(data.level??0),totalXp=Number(data.totalXp??0);if(!Number.isSafeInteger(level)||level<0||!Number.isSafeInteger(totalXp)||totalXp<0)throw bad('Data leveling tidak valid.',503);return {userId,level,totalXp};
+}).filter(x=>x.totalXp>0).sort((a,b)=>b.totalXp-a.totalXp||a.userId.localeCompare(b.userId)).slice(0,50)}
 const track=t=>t?{title:String(t.info?.title||'Unknown').slice(0,300),author:String(t.info?.author||'Unknown').slice(0,200),uri:t.info?.uri||null,length:t.info?.length||null}:null;
 export function createOperationsApi(client,{auth,csrf}) {
  const router=express.Router();router.use(express.json({limit:'16kb'}));
- router.get('/cases',auth,async(req,res)=>{try{const row=await pool(client).query(`SELECT value FROM ${tables.temp_data} WHERE key=$1 AND (expires_at IS NULL OR expires_at>NOW())`,[`moderation_cases_list_${req.guild.id}`]);const cases=row.rows[0]?.value||[];res.json({cases:Array.isArray(cases)?cases.slice(-100).reverse():[]});}catch(e){fail(res,e)}});
+ router.get('/cases',auth,async(req,res)=>{try{const sqlite=sqliteBackend(client);let cases;if(sqlite)cases=sqlite.botGet(`moderation_cases_list_${req.guild.id}`)||[];else{const row=await pool(client).query(`SELECT value FROM ${tables.temp_data} WHERE key=$1 AND (expires_at IS NULL OR expires_at>NOW())`,[`moderation_cases_list_${req.guild.id}`]);cases=row.rows[0]?.value||[]}res.json({cases:Array.isArray(cases)?cases.slice(-100).reverse():[]});}catch(e){fail(res,e)}});
  router.post('/moderation',auth,csrf,async(req,res)=>{try{
   const b=req.body;if(!b||Object.keys(b).some(k=>!['action','userId','reason','minutes','confirmed'].includes(k))||b.confirmed!==true||!['warn','timeout','kick','ban'].includes(b.action)||!idRe.test(b.userId||'')||typeof b.reason!=='string'||!b.reason.trim()||b.reason.length>400)throw bad('Tindakan, anggota, alasan, atau konfirmasi tidak valid.');
   if(b.userId===req.member.id || b.userId===client.user.id || b.userId===req.guild.ownerId)throw bad('Tidak dapat menindak diri sendiri, bot, atau owner server.');
   if(b.action==='timeout' && (!Number.isInteger(b.minutes)||b.minutes<1||b.minutes>40320))throw bad('Timeout harus 1–40320 menit.');
-  pool(client);const target=await req.guild.members.fetch({user:b.userId,force:true}).catch(()=>null);if(!target)throw bad('Anggota tidak ditemukan di server.');
+  requireStorage(client);const target=await req.guild.members.fetch({user:b.userId,force:true}).catch(()=>null);if(!target)throw bad('Anggota tidak ditemukan di server.');
   const required={warn:PermissionFlagsBits.ModerateMembers,timeout:PermissionFlagsBits.ModerateMembers,kick:PermissionFlagsBits.KickMembers,ban:PermissionFlagsBits.BanMembers};
   if(!req.guild.members.me?.permissions.has(required[b.action]))throw bad('Bot tidak memiliki izin untuk tindakan ini.',403);
   ModerationService.assertModerationHierarchy(req.member,target,b.action);
@@ -48,8 +55,8 @@ export function createOperationsApi(client,{auth,csrf}) {
   else result=await ModerationService.banUser({guild:req.guild,user:target.user,moderator:req.member,reason:b.reason});
   res.json({ok:true,caseId:result?.caseId||null});
  }catch(e){fail(res,e)}});
- router.get('/tickets',auth,async(req,res)=>{try{const r=await pool(client).query(`SELECT channel_id,data FROM ${tables.tickets} WHERE guild_id=$1 ORDER BY updated_at DESC LIMIT 100`,[req.guild.id]);res.json({tickets:r.rows.map(x=>({channelId:x.channel_id,userId:x.data?.userId,status:x.data?.status,createdAt:x.data?.createdAt,claimedBy:x.data?.claimedBy}))});}catch(e){fail(res,e)}});
- async function ticket(client,guild,id){if(!idRe.test(id))throw bad('ID tiket tidak valid.');const r=await pool(client).query(`SELECT data FROM ${tables.tickets} WHERE guild_id=$1 AND channel_id=$2`,[guild.id,id]);if(!r.rows[0])throw bad('Tiket tidak ditemukan.',404);return r.rows[0].data;}
+ router.get('/tickets',auth,async(req,res)=>{try{const sqlite=sqliteBackend(client);let rows;if(sqlite){const prefix=`guild:${req.guild.id}:ticket:`;rows=sqlite.botTickets(req.guild.id,100).map(x=>({channel_id:x.key.slice(prefix.length),data:x.value}));}else rows=(await pool(client).query(`SELECT channel_id,data FROM ${tables.tickets} WHERE guild_id=$1 ORDER BY updated_at DESC LIMIT 100`,[req.guild.id])).rows;res.json({tickets:rows.map(x=>({channelId:x.channel_id,userId:x.data?.userId,status:x.data?.status,createdAt:x.data?.createdAt,claimedBy:x.data?.claimedBy}))});}catch(e){fail(res,e)}});
+ async function ticket(client,guild,id){if(!idRe.test(id))throw bad('ID tiket tidak valid.');const sqlite=sqliteBackend(client);if(sqlite){const data=sqlite.botGet(`guild:${guild.id}:ticket:${id}`);if(data===null)throw bad('Tiket tidak ditemukan.',404);return data;}const r=await pool(client).query(`SELECT data FROM ${tables.tickets} WHERE guild_id=$1 AND channel_id=$2`,[guild.id,id]);if(!r.rows[0])throw bad('Tiket tidak ditemukan.',404);return r.rows[0].data;}
  router.get('/tickets/:id',auth,async(req,res)=>{try{const data=await ticket(client,req.guild,req.params.id);res.json({ticket:data});}catch(e){fail(res,e)}});
  router.get('/tickets/:id/transcript',auth,async(req,res)=>{try{
   await ticket(client,req.guild,req.params.id);const c=req.guild.channels.cache.get(req.params.id);if(!c?.messages)throw bad('Channel tiket tidak tersedia; transcript tersimpan tidak tersedia.',404);
@@ -64,14 +71,15 @@ export function createOperationsApi(client,{auth,csrf}) {
  }catch(e){fail(res,e)}});
  router.get('/public/leaderboard',async(req,res)=>{try{
   if(!client.isReady?.()||!client.guilds.cache.has(client.homeGuildId))throw bad('Server tidak tersedia.',503);
-  const db=pool(client), config=await db.query(`SELECT config FROM ${tables.guilds} WHERE id=$1`,[client.homeGuildId]);
-  if(config.rows[0]?.config?.publicLeaderboard!==true)throw bad('Leaderboard publik tidak diaktifkan.',404);
-  const rows=await db.query(`SELECT user_id,level,total_xp FROM ${tables.user_levels} WHERE guild_id=$1 AND total_xp>0 ORDER BY total_xp DESC LIMIT 50`,[client.homeGuildId]);
-  res.json({guild:client.guilds.cache.get(client.homeGuildId).name,leaderboard:rows.rows.map(x=>({userId:x.user_id,level:x.level,totalXp:Number(x.total_xp)}))});
+  const sqlite=sqliteBackend(client);let leaderboard;
+  if(sqlite){if(sqlite.botGet(`guild:${client.homeGuildId}:config`)?.publicLeaderboard!==true)throw bad('Leaderboard publik tidak diaktifkan.',404);leaderboard=sqliteLeaderboard(sqlite,client.homeGuildId);}
+  else{const db=pool(client),config=await db.query(`SELECT config FROM ${tables.guilds} WHERE id=$1`,[client.homeGuildId]);if(config.rows[0]?.config?.publicLeaderboard!==true)throw bad('Leaderboard publik tidak diaktifkan.',404);const rows=await db.query(`SELECT user_id,level,total_xp FROM ${tables.user_levels} WHERE guild_id=$1 AND total_xp>0 ORDER BY total_xp DESC LIMIT 50`,[client.homeGuildId]);leaderboard=rows.rows.map(x=>({userId:x.user_id,level:x.level,totalXp:Number(x.total_xp)}));}
+  res.json({guild:client.guilds.cache.get(client.homeGuildId).name,leaderboard});
  }catch(e){fail(res,e)}});
- router.get('/leaderboard',auth,async(req,res)=>{try{const r=await pool(client).query(`SELECT user_id,level,total_xp FROM ${tables.user_levels} WHERE guild_id=$1 AND total_xp>0 ORDER BY total_xp DESC LIMIT 50`,[req.guild.id]);res.json({leaderboard:r.rows.map(x=>({userId:x.user_id,level:x.level,totalXp:Number(x.total_xp)}))});}catch(e){fail(res,e)}});
+ router.get('/leaderboard',auth,async(req,res)=>{try{const sqlite=sqliteBackend(client);if(sqlite)return res.json({leaderboard:sqliteLeaderboard(sqlite,req.guild.id)});const r=await pool(client).query(`SELECT user_id,level,total_xp FROM ${tables.user_levels} WHERE guild_id=$1 AND total_xp>0 ORDER BY total_xp DESC LIMIT 50`,[req.guild.id]);res.json({leaderboard:r.rows.map(x=>({userId:x.user_id,level:x.level,totalXp:Number(x.total_xp)}))});}catch(e){fail(res,e)}});
  router.get('/members/:id',auth,async(req,res)=>{try{
   if(!idRe.test(req.params.id))throw bad('ID anggota tidak valid.');const member=await req.guild.members.fetch({user:req.params.id,force:true}).catch(()=>null);if(!member)throw bad('Anggota tidak ditemukan.',404);
+  const sqlite=sqliteBackend(client);if(sqlite){const view={botGet:sqlite.botGet,get:sqlite.get,getAccount:sqlite.getAccount},eco=readSQLiteBotValue(view,`guild:${req.guild.id}:economy:${member.id}`),lvl=readSQLiteBotValue(view,`guild:${req.guild.id}:leveling:users:${member.id}`);return res.json({member:{id:member.id,name:member.user.tag},economy:eco?{wallet:Number(eco.wallet??eco.balance??0),bank:Number(eco.bank??0),bankCapacity:getMaxBankCapacity(eco)}:null,level:lvl?{level:lvl.level??0,xp:Number(lvl.xp??0),totalXp:Number(lvl.totalXp??0)}:null});}
   const db=pool(client);const [eco,lvl]=await Promise.all([db.query(`SELECT balance,bank,data FROM ${tables.economy} WHERE guild_id=$1 AND user_id=$2`,[req.guild.id,member.id]),db.query(`SELECT xp,level,total_xp FROM ${tables.user_levels} WHERE guild_id=$1 AND user_id=$2`,[req.guild.id,member.id])]);
   const row=eco.rows[0];res.json({member:{id:member.id,name:member.user.tag},economy:row?{wallet:Number(row.data?.wallet??row.balance),bank:Number(row.data?.bank??row.bank),bankCapacity:getMaxBankCapacity(row.data||{})}:null,level:lvl.rows[0]?{level:lvl.rows[0].level,xp:Number(lvl.rows[0].xp),totalXp:Number(lvl.rows[0].total_xp)}:null});
  }catch(e){fail(res,e)}});
@@ -79,6 +87,10 @@ export function createOperationsApi(client,{auth,csrf}) {
   const b=req.body;if(!idRe.test(req.params.id)||!b||b.confirmed!==true||!['wallet','bank','level'].includes(b.type)||!Number.isSafeInteger(b.value)||b.value<0||!Number.isSafeInteger(b.expected)||b.expected<0||Object.keys(b).some(k=>!['type','value','expected','confirmed'].includes(k)))throw bad('Data atau konfirmasi tidak valid.');
   if((b.type==='level'&&b.value>1000)||(['wallet','bank'].includes(b.type)&&b.value>1000000000000))throw bad('Nilai di luar batas.');
   const member=await req.guild.members.fetch({user:req.params.id,force:true}).catch(()=>null);if(!member)throw bad('Anggota tidak ditemukan.',404);
+  const sqlite=sqliteBackend(client);if(sqlite){if(client.homeGuildId&&client.homeGuildId!==req.guild.id)throw bad('Server tidak valid.',403);sqlite.transaction(tx=>{
+   if(b.type==='wallet'||b.type==='bank'){const data=readSQLiteBotValue(tx,`guild:${req.guild.id}:economy:${member.id}`);if(!data)throw bad('Data ekonomi belum tersedia.',404);if(!Number.isSafeInteger(data.wallet)||data.wallet<0||!Number.isSafeInteger(data.bank)||data.bank<0)throw bad('Saldo ekonomi tidak valid.',503);if(data[b.type]!==b.expected)throw bad('Saldo berubah; muat ulang sebelum menyimpan.',409);if(b.type==='bank'&&b.value>getMaxBankCapacity(data))throw bad('Saldo melebihi kapasitas bank anggota.');data[b.type]=b.value;tx.setAccount(req.guild.id,member.id,data);}
+   else{const key=`guild:${req.guild.id}:leveling:users:${member.id}`,data=readSQLiteBotValue(tx,key);if(!data)throw bad('Data leveling belum tersedia.',404);if(!Number.isSafeInteger(data.level)||data.level<0)throw bad('Data leveling tidak valid.',503);if(data.level!==b.expected)throw bad('Level berubah; muat ulang sebelum menyimpan.',409);tx.botSet(key,{...data,level:b.value,xp:0,totalXp:calculateTotalXp(b.value,0)});}
+  });console.info(`[dashboard] member update guild=${req.guild.id} moderator=${req.member.id} member=${member.id} type=${b.type}`);return res.json({ok:true});}
   const db=pool(client);await Mutex.runExclusive(`dashboard-member:${req.guild.id}:${member.id}`,async()=>{
    const c=await db.connect();try{await c.query('BEGIN');
     if(b.type==='wallet'||b.type==='bank'){
@@ -95,7 +107,7 @@ export function createOperationsApi(client,{auth,csrf}) {
   });res.json({ok:true});
  }catch(e){fail(res,e)}});
  router.get('/logs',auth,async(req,res)=>{try{
-  const row=await pool(client).query(`SELECT config FROM ${tables.guilds} WHERE id=$1`,[req.guild.id]);const id=row.rows[0]?.config?.logging?.channels?.audit;
+  const sqlite=sqliteBackend(client);const config=sqlite?sqlite.botGet(`guild:${req.guild.id}:config`):(await pool(client).query(`SELECT config FROM ${tables.guilds} WHERE id=$1`,[req.guild.id])).rows[0]?.config;const id=config?.logging?.channels?.audit;
   if(!id)throw bad('Channel audit logging belum dikonfigurasi.',404);const channel=req.guild.channels.cache.get(id);if(!channel?.messages||!channel.permissionsFor(req.guild.members.me)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.ReadMessageHistory]))throw bad('Bot tidak dapat membaca channel audit.',403);
   const m=await channel.messages.fetch({limit:100});res.json({logs:[...m.values()].filter(x=>x.author?.id===client.user.id).slice(0,50).map(x=>({id:x.id,at:x.createdAt,title:x.embeds?.[0]?.title||'Log',description:x.embeds?.[0]?.description||x.content||''}))});
  }catch(e){fail(res,e)}});

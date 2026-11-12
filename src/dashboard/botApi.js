@@ -1,6 +1,7 @@
 import express from 'express';
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { pgConfig } from '../config/database/postgres.js';
+import { sqliteBackend } from '../services/storage/sqlite.js';
 import { normalizeWelcomeConfig } from '../utils/database.js';
 import { unwrapReplitData } from '../utils/database/guildConfigStorage.js';
 import { buildWelcomePayload } from '../services/welcomePayload.js';
@@ -14,6 +15,7 @@ function createStore(client) {
   const t = pgConfig.tables;
   return {
     async read(id) {
+      const sqlite=sqliteBackend(client);if(sqlite)return {welcome:unwrapReplitData(sqlite.botGet(`guild:${id}:welcome`)||{}),guild:unwrapReplitData(sqlite.botGet(`guild:${id}:config`)||{})};
       const pool = persistentPool(client);
       const [welcome,guild] = await Promise.all([
         pool.query(`SELECT config FROM ${t.welcome_configs} WHERE guild_id = $1`,[id]),
@@ -22,6 +24,12 @@ function createStore(client) {
       return {welcome:unwrapReplitData(welcome.rows[0]?.config || {}), guild:unwrapReplitData(guild.rows[0]?.config || {})};
     },
     async update(id, patch) {
+      const sqlite=sqliteBackend(client);if(sqlite)return sqlite.transaction(tx=>{
+        const cfg=unwrapReplitData(tx.botGet(`guild:${id}:config`)||{});
+        if(patch.roleIds.length&&(cfg.verification?.enabled||cfg.verification?.autoVerify?.enabled)){const e=new Error('Autorole tidak dapat diaktifkan saat verification atau auto-verify aktif.');e.status=409;throw e;}
+        const raw=tx.botGet(`guild:${id}:welcome`)||{};if(raw.ok!==undefined&&raw.value!==undefined)throw new Error('Format welcome lama perlu dimigrasikan sebelum diubah.');
+        const merged={...raw,...patch,welcomeEmbed:{...(raw.welcomeEmbed||{}),...patch.welcomeEmbed}};tx.botSet(`guild:${id}:welcome`,merged);return normalizeWelcomeConfig(merged);
+      });
       const pool = persistentPool(client); const db = await pool.connect();
       try {
         await db.query('BEGIN');

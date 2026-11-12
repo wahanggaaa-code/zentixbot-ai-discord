@@ -380,6 +380,9 @@ class TitanBot extends Client {
           if (this.db.db.pool) {
             await this.db.db.pool.end();
             logger.info('✅ Database connection closed');
+          } else if (this.db.db.sqlite?.isOpen?.()) {
+            this.db.db.sqlite.close();
+            logger.info('✅ Database connection closed');
           }
         } catch (error) {
           logger.warn('Error closing database pool:', error.message);

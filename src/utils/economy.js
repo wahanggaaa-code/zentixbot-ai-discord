@@ -59,7 +59,7 @@ export function formatCurrency(amount) {
 }
 
 export async function getEconomyData(client, guildId, userId) {
-    const sqlite=sqliteBackend(client);if(sqlite){const data=sqlite.getAccount(guildId,userId);if(data===null&&(sqlite.get(`economy:${guildId}:${userId}`)!==null||sqlite.get(`guild:${guildId}:economy:${userId}`)!==null))throw Object.assign(new Error('Legacy economy data requires migration before use.'),{code:'ECONOMY_LEGACY'});return normalizeEconomyData(data||{},{...DEFAULT_ECONOMY_DATA,wallet:ECONOMY_CONFIG.startingBalance??DEFAULT_ECONOMY_DATA.wallet});}
+    const sqlite=sqliteBackend(client);if(sqlite){const data=sqlite.getAccount(guildId,userId);if(data===null&&(sqlite.get(`economy:${guildId}:${userId}`)!==null||sqlite.get(`guild:${guildId}:economy:${userId}`)!==null||sqlite.botGet(`economy:${guildId}:${userId}`)!==null||sqlite.botGet(`guild:${guildId}:economy:${userId}`)!==null))throw Object.assign(new Error('Legacy economy data requires migration before use.'),{code:'ECONOMY_LEGACY'});return normalizeEconomyData(data||{},{...DEFAULT_ECONOMY_DATA,wallet:ECONOMY_CONFIG.startingBalance??DEFAULT_ECONOMY_DATA.wallet});}
     try {
         if (!client.db || typeof client.db.get !== 'function') {
             throw new Error('Database not available');
