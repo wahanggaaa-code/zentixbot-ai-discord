@@ -76,15 +76,16 @@ export function createOperationsApi(client,{auth,csrf}) {
   const row=eco.rows[0];res.json({member:{id:member.id,name:member.user.tag},economy:row?{wallet:Number(row.data?.wallet??row.balance),bank:Number(row.data?.bank??row.bank),bankCapacity:getMaxBankCapacity(row.data||{})}:null,level:lvl.rows[0]?{level:lvl.rows[0].level,xp:Number(lvl.rows[0].xp),totalXp:Number(lvl.rows[0].total_xp)}:null});
  }catch(e){fail(res,e)}});
  router.post('/members/:id',auth,csrf,async(req,res)=>{try{
-  const b=req.body;if(!idRe.test(req.params.id)||!b||b.confirmed!==true||!['wallet','level'].includes(b.type)||!Number.isSafeInteger(b.value)||b.value<0||!Number.isSafeInteger(b.expected)||b.expected<0||Object.keys(b).some(k=>!['type','value','expected','confirmed'].includes(k)))throw bad('Data atau konfirmasi tidak valid.');
-  if((b.type==='level'&&b.value>1000)||(b.type==='wallet'&&b.value>1000000000000))throw bad('Nilai di luar batas.');
+  const b=req.body;if(!idRe.test(req.params.id)||!b||b.confirmed!==true||!['wallet','bank','level'].includes(b.type)||!Number.isSafeInteger(b.value)||b.value<0||!Number.isSafeInteger(b.expected)||b.expected<0||Object.keys(b).some(k=>!['type','value','expected','confirmed'].includes(k)))throw bad('Data atau konfirmasi tidak valid.');
+  if((b.type==='level'&&b.value>1000)||(['wallet','bank'].includes(b.type)&&b.value>1000000000000))throw bad('Nilai di luar batas.');
   const member=await req.guild.members.fetch({user:req.params.id,force:true}).catch(()=>null);if(!member)throw bad('Anggota tidak ditemukan.',404);
   const db=pool(client);await Mutex.runExclusive(`dashboard-member:${req.guild.id}:${member.id}`,async()=>{
    const c=await db.connect();try{await c.query('BEGIN');
-    if(b.type==='wallet'){
+    if(b.type==='wallet'||b.type==='bank'){
      const r=await c.query(`SELECT balance,bank,data FROM ${tables.economy} WHERE guild_id=$1 AND user_id=$2 FOR UPDATE`,[req.guild.id,member.id]);if(!r.rows[0])throw bad('Data ekonomi belum tersedia.',404);
-     const row=r.rows[0], data={...(row.data||{})};const old=Number(data.wallet??row.balance);if(old!==b.expected)throw bad('Saldo berubah; muat ulang sebelum menyimpan.',409);
-     data.wallet=b.value;const bank=Number(data.bank??row.bank);data.bank=bank;await c.query(`UPDATE ${tables.economy} SET balance=$3,bank=$4,data=$5::jsonb,updated_at=CURRENT_TIMESTAMP WHERE guild_id=$1 AND user_id=$2`,[req.guild.id,member.id,b.value,bank,JSON.stringify(data)]);
+     const row=r.rows[0], data={...(row.data||{})};let wallet=Number(data.wallet??row.balance),bank=Number(data.bank??row.bank);const old=b.type==='wallet'?wallet:bank;if(old!==b.expected)throw bad('Saldo berubah; muat ulang sebelum menyimpan.',409);
+     if(b.type==='bank'&&b.value>getMaxBankCapacity(data))throw bad('Saldo melebihi kapasitas bank anggota.');
+     if(b.type==='wallet')wallet=b.value;else bank=b.value;data.wallet=wallet;data.bank=bank;await c.query(`UPDATE ${tables.economy} SET balance=$3,bank=$4,data=$5::jsonb,updated_at=CURRENT_TIMESTAMP WHERE guild_id=$1 AND user_id=$2`,[req.guild.id,member.id,wallet,bank,JSON.stringify(data)]);
     } else {
      const r=await c.query(`SELECT level FROM ${tables.user_levels} WHERE guild_id=$1 AND user_id=$2 FOR UPDATE`,[req.guild.id,member.id]);if(!r.rows[0])throw bad('Data leveling belum tersedia.',404);if(Number(r.rows[0].level)!==b.expected)throw bad('Level berubah; muat ulang sebelum menyimpan.',409);
      await c.query(`UPDATE ${tables.user_levels} SET level=$3,xp=0,total_xp=$4,updated_at=CURRENT_TIMESTAMP WHERE guild_id=$1 AND user_id=$2`,[req.guild.id,member.id,b.value,calculateTotalXp(b.value,0)]);
@@ -98,20 +99,22 @@ export function createOperationsApi(client,{auth,csrf}) {
   if(!id)throw bad('Channel audit logging belum dikonfigurasi.',404);const channel=req.guild.channels.cache.get(id);if(!channel?.messages||!channel.permissionsFor(req.guild.members.me)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.ReadMessageHistory]))throw bad('Bot tidak dapat membaca channel audit.',403);
   const m=await channel.messages.fetch({limit:100});res.json({logs:[...m.values()].filter(x=>x.author?.id===client.user.id).slice(0,50).map(x=>({id:x.id,at:x.createdAt,title:x.embeds?.[0]?.title||'Log',description:x.embeds?.[0]?.description||x.content||''}))});
  }catch(e){fail(res,e)}});
- router.get('/music',auth,(req,res)=>{const player=getPlayer(client,req.guild.id);const channels=[...req.guild.channels.cache.values()];res.json({voiceChannels:channels.filter(c=>c.type===ChannelType.GuildVoice).map(c=>({id:c.id,name:c.name})),textChannels:channels.filter(c=>c.type===ChannelType.GuildText).map(c=>({id:c.id,name:c.name})),available:!!client.riffy?.nodeMap && [...client.riffy.nodeMap.values()].some(n=>n.connected),active:!!player,paused:!!player?.paused,voiceChannel:player?.voiceChannel||null,current:track(player?.current),queue:player?.queue?[...player.queue].slice(0,50).map(track):[],volume:player?getGuildMusicData(req.guild.id).volume:null});});
+ router.get('/music',auth,(req,res)=>{const player=getPlayer(client,req.guild.id);const channels=[...req.guild.channels.cache.values()];res.json({voiceChannels:channels.filter(c=>c.type===ChannelType.GuildVoice).map(c=>({id:c.id,name:c.name})),textChannels:channels.filter(c=>c.type===ChannelType.GuildText).map(c=>({id:c.id,name:c.name})),available:!!client.riffy?.nodeMap && [...client.riffy.nodeMap.values()].some(n=>n.connected),active:!!player,paused:!!player?.paused,voiceChannel:player?.voiceChannel||null,current:track(player?.current),queue:player?.queue?[...player.queue].slice(0,50).map(track):[],volume:player?getGuildMusicData(req.guild.id).volume:null,loop:getGuildMusicData(req.guild.id).loop,twentyFourSeven:getGuildMusicData(req.guild.id).twentyFourSeven});});
  router.post('/music/search',auth,csrf,async(req,res)=>{try{
   const b=req.body;if(!b||Object.keys(b).length!==1)throw bad('Pencarian tidak valid.');const query=safeMusicQuery(b.query);
   if(!client.riffy?.nodeMap||![...client.riffy.nodeMap.values()].some(x=>x.connected))throw bad('Lavalink tidak tersedia.',503);
   const data=await client.riffy.resolve({query,requester:req.member.user});res.json({tracks:(data.tracks||[]).slice(0,10).map(track)});
  }catch(e){fail(res,e)}});
  router.post('/music',auth,csrf,async(req,res)=>{try{
-  const b=req.body;if(!b||!['pause','resume','skip','stop','volume','play'].includes(b.action)||b.confirmed!==true||Object.keys(b).some(k=>!['action','confirmed','volume','query','voiceChannelId','textChannelId'].includes(k)))throw bad('Tindakan atau konfirmasi tidak valid.');
+  const b=req.body;if(!b||!['pause','resume','skip','stop','volume','play','loop','always'].includes(b.action)||b.confirmed!==true||Object.keys(b).some(k=>!['action','confirmed','volume','query','voiceChannelId','textChannelId','mode','enabled'].includes(k)))throw bad('Tindakan atau konfirmasi tidak valid.');
   const p=getPlayer(client,req.guild.id),g=req.guild.id;if(!p && b.action!=='play')throw bad('Belum ada player aktif.',409);
   if(b.action==='pause'){if(!await applyPause(client,g))throw bad('Tidak ada lagu yang dapat dijeda.');}
   if(b.action==='resume'){if(!await applyResume(client,g))throw bad('Tidak ada lagu yang dapat dilanjutkan.');}
   if(b.action==='skip'){if(!p.current)throw bad('Tidak ada lagu aktif.');if(p.loop==='track')p.setLoop('none');p.stop();}
   if(b.action==='stop')await destroyPlayerSession(client,g,p,getGuildMusicData(g));
   if(b.action==='volume'){if(!Number.isInteger(b.volume)||b.volume<0||b.volume>100)throw bad('Volume harus 0–100.');p.setVolume(b.volume);getGuildMusicData(g).volume=b.volume;}
+  if(b.action==='loop'){if(!['none','track','queue'].includes(b.mode))throw bad('Mode loop tidak valid.');p.setLoop(b.mode);getGuildMusicData(g).loop=b.mode;}
+  if(b.action==='always'){if(typeof b.enabled!=='boolean')throw bad('Nilai 24/7 tidak valid.');getGuildMusicData(g).twentyFourSeven=b.enabled;}
   if(b.action==='play'){
    const query=safeMusicQuery(b.query);
    const voice=req.guild.channels.cache.get(p?.voiceChannel||b.voiceChannelId),text=req.guild.channels.cache.get(p?.textChannel||b.textChannelId);

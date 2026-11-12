@@ -37,6 +37,7 @@ test('member balance update preserves bank and rejects stale edits',async t=>{
  const read=await (await fetch(root)).json();assert.equal(read.economy.wallet,100);assert.equal(read.economy.bank,40);
  assert.equal((await post({type:'wallet',value:200,expected:99,confirmed:true})).status,409);
  assert.equal((await post({type:'wallet',value:200,expected:100,confirmed:true})).status,200);assert.equal(economy.data.wallet,200);assert.equal(economy.data.bank,40);
+ assert.equal((await post({type:'bank',value:60,expected:40,confirmed:true})).status,200);assert.equal(economy.data.wallet,200);assert.equal(economy.data.bank,60);
  assert.equal((await post({type:'level',value:5,expected:3,confirmed:true})).status,200);assert.equal(level.level,5);assert.equal(level.xp,0);
 });
 
