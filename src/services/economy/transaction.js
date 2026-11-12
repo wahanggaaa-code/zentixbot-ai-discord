@@ -2,6 +2,7 @@ import {pgConfig} from '../../config/database/postgres.js';
 import {botConfig} from '../../config/bot.js';
 import {DEFAULT_ECONOMY_DATA} from '../../utils/constants.js';
 import {normalizeEconomyData} from '../../utils/schemas.js';
+import {sqliteBackend} from '../storage/sqlite.js';
 const err=(message,code='ECONOMY_UNAVAILABLE')=>Object.assign(new Error(message),{code});
 const id=x=>typeof x==='string'&&/^\d{17,20}$/.test(x);
 const t=pgConfig.tables;
@@ -15,6 +16,14 @@ function decoded(row){
  * do not route Activities rewards to the wallet until all writers have migrated. */
 export async function withEconomyTransaction(client,guildId,userIds,mutate){
  if(!id(guildId)||(client?.homeGuildId&&client.homeGuildId!==guildId)||!Array.isArray(userIds)||userIds.length<1||userIds.length>2||userIds.some(x=>!id(x))||new Set(userIds).size!==userIds.length||typeof mutate!=='function')throw err('Invalid economy transaction.','ECONOMY_INVALID');
+ const sqlite=sqliteBackend(client);
+ if(sqlite)return sqlite.transaction(tx=>{
+  const ordered=[...userIds].sort(),accounts=new Map();
+  for(const userId of ordered){const raw=tx.getAccount(guildId,userId);if(raw===null&&(tx.get(`economy:${guildId}:${userId}`)!==null||tx.get(`guild:${guildId}:economy:${userId}`)!==null))throw err('Legacy economy data requires migration before use.','ECONOMY_LEGACY');const data=normalizeEconomyData(raw||{},{...DEFAULT_ECONOMY_DATA,wallet:botConfig.economy?.startingBalance??DEFAULT_ECONOMY_DATA.wallet});validBalance(data);accounts.set(userId,data);}
+  const result=mutate(accounts);if(result&&typeof result.then==='function')throw err('Economy mutation must be synchronous.','ECONOMY_INVALID');
+  for(const userId of ordered){const data=accounts.get(userId);validBalance(data);const json=JSON.stringify(data);if(!json||Buffer.byteLength(json)>65536)throw err('Economy data is too large.','ECONOMY_INVALID');tx.setAccount(guildId,userId,data);}
+  return result;
+ });
  const db=client?.db;if(!db||db.getStatus?.().isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool)throw err('Persistent economy database unavailable.');
  const ordered=[...userIds].sort(),conn=await db.db.pool.connect();let began=false;
  try{

@@ -1,4 +1,5 @@
 import { pgConfig } from '../../config/database/postgres.js';
+import { sqliteBackend } from '../storage/sqlite.js';
 
 // Endpoints are fixed deliberately: arbitrary provider URLs would allow SSRF and secret exfiltration.
 export const PROVIDERS = Object.freeze({
@@ -28,10 +29,15 @@ const cfgKey=id=>`ai:foundation:config:${id}`;
 export function createAIStore(client){
  const table=pgConfig.tables.cache_data;
  return {
-  async read(id){const pool=persistentPool(client);const r=await pool.query(`SELECT value FROM ${table} WHERE key=$1`,[cfgKey(id)]);const v=r.rows[0]?.value;return v?validateSettings(v):{...DEFAULT_AI};},
-  async save(id,settings){const v=validateSettings(settings);await persistentPool(client).query(`INSERT INTO ${table} (key,value,expires_at) VALUES ($1,$2::jsonb,NULL) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, expires_at=NULL`,[cfgKey(id),JSON.stringify(v)]);return v;},
+  async read(id){const sqlite=sqliteBackend(client);if(sqlite){const v=sqlite.get(cfgKey(id));return v?validateSettings(v):{...DEFAULT_AI};}const pool=persistentPool(client);const r=await pool.query(`SELECT value FROM ${table} WHERE key=$1`,[cfgKey(id)]);const v=r.rows[0]?.value;return v?validateSettings(v):{...DEFAULT_AI};},
+  async save(id,settings){const v=validateSettings(settings),sqlite=sqliteBackend(client);if(sqlite){sqlite.set(cfgKey(id),v);return v;}await persistentPool(client).query(`INSERT INTO ${table} (key,value,expires_at) VALUES ($1,$2::jsonb,NULL) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, expires_at=NULL`,[cfgKey(id),JSON.stringify(v)]);return v;},
   // Lock both counters in a fixed order; reservation happens before the first external request.
   async reserve(guildId,userId,limits){
+   const sqlite=sqliteBackend(client);if(sqlite)return sqlite.transaction(tx=>{
+    const day=tx.utcDay(),keys=[`ai:foundation:usage:g:${guildId}`,`ai:foundation:usage:u:${guildId}:${userId}`],counts=keys.map(key=>{const v=tx.get(key)??{day,count:0};if(typeof v.day!=='string'||!Number.isSafeInteger(v.count)||v.count<0)throw error('STORAGE_UNAVAILABLE','Penghitung AI tidak valid.',503);return v.day===day?v.count:0;});
+    if(counts[0]>=limits.guildDaily||counts[1]>=limits.perUserDaily)throw error('LIMIT_REACHED','Batas permintaan AI harian telah tercapai.',429);
+    for(let i=0;i<2;i++)tx.set(keys[i],{day,count:counts[i]+1});return {day,guild:counts[0]+1,user:counts[1]+1};
+   });
    const pool=persistentPool(client),conn=await pool.connect();
    try{await conn.query('BEGIN');const day=(await conn.query("SELECT to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD') AS day")).rows[0].day;
     const keys=[`ai:foundation:usage:g:${guildId}`,`ai:foundation:usage:u:${guildId}:${userId}`];

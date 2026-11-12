@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits } from 'discord.js';
 import { pgConfig } from '../../config/database/postgres.js';
+import { sqliteBackend } from '../storage/sqlite.js';
+import { createSqliteActivityStore } from './sqliteActivities.js';
 const error=(message,status=400)=>Object.assign(new Error(message),{status});
 export const DEFAULT_ACTIVITY=Object.freeze({enabled:false,channelId:null,duration:60,language:'id',kind:'trivia',scheduleEnabled:false,scheduleTime:'18:00',scheduleDays:'everyday',timeZone:'WIB',rewardPoints:0});
 export function validateActivity(v,guild){
@@ -14,6 +16,7 @@ export function validateActivity(v,guild){
 }
 function dbPool(client){const db=client.db;if(!db||db.getStatus?.().isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool)throw error('Database persisten tidak tersedia.',503);return db.db.pool;}
 export function createActivityStore(client){
+ const sqlite=sqliteBackend(client);if(sqlite)return createSqliteActivityStore(sqlite,{defaults:DEFAULT_ACTIVITY,validateActivity,validateQuiz,error});
  const table=pgConfig.tables.cache_data,key=id=>`ai:activity:settings:${id}`,roundKey=id=>`ai:activity:round:${id}`;
  async function locked(guildId,fn){const conn=await dbPool(client).connect();try{await conn.query('BEGIN');await conn.query(`INSERT INTO ${table} (key,value) VALUES ($1,'{}'::jsonb) ON CONFLICT (key) DO NOTHING`,[roundKey(guildId)]);const r=await conn.query(`SELECT value FROM ${table} WHERE key=$1 FOR UPDATE`,[roundKey(guildId)]);const value=r.rows[0].value;const result=await fn(value,conn);if(result.write)await conn.query(`UPDATE ${table} SET value=$2::jsonb WHERE key=$1`,[roundKey(guildId),JSON.stringify(result.write)]);await conn.query('COMMIT');return result.result;}catch(e){await conn.query('ROLLBACK').catch(()=>{});throw e}finally{conn.release();}}
  return {

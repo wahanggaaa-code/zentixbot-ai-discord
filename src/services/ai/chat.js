@@ -5,6 +5,7 @@ import { readDiscordImage } from './attachments.js';
 import { scheduleMatches } from './activities.js';
 import { createKnowledgeStore, selectExcerpts } from './knowledge.js';
 import {pgConfig} from '../../config/database/postgres.js';
+import {sqliteBackend} from '../storage/sqlite.js';
 export const DEFAULT_CHAT=Object.freeze({enabled:false,dmEnabled:false,channelId:null,knowledgeEnabled:false,audioEnabled:false,fileEnabled:false,proactiveEnabled:false,proactiveTime:'18:00',proactiveZone:'WIB',persona:'Asisten komunitas yang ramah dan membantu.'});
 const err=(message,status=400)=>Object.assign(new Error(message),{status});
 export function validateChatSettings(v,guild){
@@ -17,7 +18,7 @@ export function validateChatSettings(v,guild){
 export function createChatStore(client){
  const key=id=>`ai:chat:settings:${id}`,table=pgConfig.tables.cache_data;
  const pool=()=>{const d=client.db;if(!d||d.getStatus?.().isDegraded||!d.isAvailable?.()||!d.db?.isAvailable?.()||!d.db.pool)throw err('Database persisten tidak tersedia.',503);return d.db.pool;};
- return {async read(id){const r=await pool().query(`SELECT value FROM ${table} WHERE key=$1`,[key(id)]);return r.rows[0]?.value?validateChatSettings({...DEFAULT_CHAT,...r.rows[0].value}):{...DEFAULT_CHAT};},async save(id,v){const s=validateChatSettings(v);await pool().query(`INSERT INTO ${table} (key,value) VALUES ($1,$2::jsonb) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,[key(id),JSON.stringify(s)]);return s;}};
+ return {async read(id){const sqlite=sqliteBackend(client);if(sqlite){const v=sqlite.get(key(id));return v?validateChatSettings({...DEFAULT_CHAT,...v}):{...DEFAULT_CHAT};}const r=await pool().query(`SELECT value FROM ${table} WHERE key=$1`,[key(id)]);return r.rows[0]?.value?validateChatSettings({...DEFAULT_CHAT,...r.rows[0].value}):{...DEFAULT_CHAT};},async save(id,v){const s=validateChatSettings(v),sqlite=sqliteBackend(client);if(sqlite){sqlite.set(key(id),s);return s;}await pool().query(`INSERT INTO ${table} (key,value) VALUES ($1,$2::jsonb) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,[key(id),JSON.stringify(s)]);return s;}};
 }
 // Volatile, deliberately small memory. Restart clears it; users opt in per question.
 const conversations=new Map(), pending=new Map();
@@ -65,9 +66,14 @@ export async function runProactiveAgent(client,{store=createChatStore(client),no
  const day=scheduleMatches({enabled:cfg.enabled,scheduleEnabled:cfg.proactiveEnabled,scheduleTime:cfg.proactiveTime,scheduleDays:'everyday',timeZone:cfg.proactiveZone},now);if(!day)return false;
  const channel=guild.channels.cache.get(cfg.channelId),me=guild.members.me;
  if(!me||!channel?.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages]))return false;
+ const sqlite=sqliteBackend(client),key=`ai:chat:proactive:${guild.id}`;
+ if(sqlite){const claimed=sqlite.transaction(tx=>{if(tx.get(key)?.day===day)return false;tx.set(key,{day});return true});if(!claimed)return false;}
+ else {
  const db=client.db;if(!db||db.getStatus?.().isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool)throw err('Database persisten tidak tersedia.',503);
- const conn=await db.db.pool.connect(),table=pgConfig.tables.cache_data,key=`ai:chat:proactive:${guild.id}`;
+ const conn=await db.db.pool.connect(),table=pgConfig.tables.cache_data;
  try{await conn.query('BEGIN');await conn.query(`INSERT INTO ${table} (key,value) VALUES ($1,'{}'::jsonb) ON CONFLICT (key) DO NOTHING`,[key]);const r=await conn.query(`SELECT value FROM ${table} WHERE key=$1 FOR UPDATE`,[key]);if(r.rows[0].value.day===day){await conn.query('COMMIT');return false;}await conn.query(`UPDATE ${table} SET value=$2::jsonb WHERE key=$1`,[key,JSON.stringify({day})]);await conn.query('COMMIT');}catch(e){await conn.query('ROLLBACK').catch(()=>{});throw e;}finally{conn.release();}
+ }
+
  const result=await foundation.generate({guildId:guild.id,userId:client.user.id,consent:true,prompt:`Buat satu pertanyaan icebreaker singkat dan ramah untuk komunitas umum, sesuai persona berikut: ${cfg.persona}. Jangan gunakan tautan, mention, informasi anggota atau instruksi tindakan.`});
  const text=result.text.trim();if(!text||text.length>600||/https?:\/\/|www\.|discord\.gg|<@|@(everyone|here)/i.test(text))throw err('Respons agent tidak aman untuk dikirim.');
  await channel.send({content:text,allowedMentions:{parse:[]}});return true;

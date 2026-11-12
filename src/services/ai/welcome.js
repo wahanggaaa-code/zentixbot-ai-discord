@@ -1,5 +1,6 @@
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { pgConfig } from '../../config/database/postgres.js';
+import { sqliteBackend } from '../storage/sqlite.js';
 import { buildWelcomePayload } from '../welcomePayload.js';
 import { formatWelcomeMessage } from '../../utils/welcome.js';
 
@@ -25,7 +26,7 @@ export function createAIWelcomeStore(client,kind='welcome'){
  const validate=v=>{const result=validateAIWelcome(v);if(kind==='goodbye' && result.toDm)throw invalid('AI Goodbye tidak mendukung DM.');return result;};
  const key=id=>`ai:${kind}:settings:${id}`,table=pgConfig.tables.cache_data;
  const pool=()=>{const db=client.db;if(!db||db.getStatus?.().isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool)throw new Error('Persistent database unavailable');return db.db.pool;};
- return {async read(id){const r=await pool().query(`SELECT value FROM ${table} WHERE key=$1`,[key(id)]);return r.rows[0]?.value?validate(r.rows[0].value):{...defaults};},async save(id,settings){const v=validate(settings);await pool().query(`INSERT INTO ${table} (key,value,expires_at) VALUES ($1,$2::jsonb,NULL) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, expires_at=NULL`,[key(id),JSON.stringify(v)]);return v;}};
+ return {async read(id){const sqlite=sqliteBackend(client);if(sqlite){const v=sqlite.get(key(id));return v?validate(v):{...defaults};}const r=await pool().query(`SELECT value FROM ${table} WHERE key=$1`,[key(id)]);return r.rows[0]?.value?validate(r.rows[0].value):{...defaults};},async save(id,settings){const v=validate(settings),sqlite=sqliteBackend(client);if(sqlite){sqlite.set(key(id),v);return v;}await pool().query(`INSERT INTO ${table} (key,value,expires_at) VALUES ($1,$2::jsonb,NULL) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, expires_at=NULL`,[key(id),JSON.stringify(v)]);return v;}};
 }
 // No guild or user data is sent to the provider; only fixed instructions and validated enum values.
 export function welcomePrompt(cfg,kind='welcome'){return `Write one short, friendly Discord server ${kind==='goodbye'?'farewell':'welcome'} in ${cfg.language==='id'?'Indonesian':'English'} with a ${cfg.tone} tone. Output only the message. Include the exact placeholders {user} and {server}; do not include URLs, mentions or other placeholders.`;}
