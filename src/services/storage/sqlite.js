@@ -80,6 +80,7 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  const ops={
   // Raw existence includes expired or JSON-null values; migration must not silently overwrite them.
   hasRawKey(key){open();checkKey(key);return Boolean(getKV.get(key)||getBot.get(key))},
+  botGetRaw(key){open();checkKey(key);const row=getBot.get(key);return row?{value:decode(row.value),expiresAt:row.expires_at}:null},
   hasAnyEconomyData(){open();return Boolean(anyEconomyAccount.get()||anyLegacyAI.get()||anyLegacyBot.get())},
   hasAnyAIData(){open();return Boolean(anyAI.get()||anyBotAI.get())},
   get(key){open();checkKey(key);const row=getKV.get(key);return !row||(row.expires_at!==null&&row.expires_at<=Date.now())?null:decode(row.value)},
