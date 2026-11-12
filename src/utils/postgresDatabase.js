@@ -438,6 +438,9 @@ class PostgreSQLDatabase {
     }
 
     async set(key, value, ttl = null) {
+        // Replacements require the configuration service's snapshot transaction.
+        // Deleting a guild row can also cascade into unrelated guild data.
+        if (typeof key === 'string' && parseKey(canonicalizeKey(key)).type === 'guild_config') return false;
         const warningKey=canonicalizeKey(key);
         if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
@@ -479,6 +482,7 @@ class PostgreSQLDatabase {
     }
 
     async delete(key) {
+        if (typeof key === 'string' && parseKey(canonicalizeKey(key)).type === 'guild_config') return false;
         const warningKey=canonicalizeKey(key);
         if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
@@ -612,6 +616,9 @@ class PostgreSQLDatabase {
     }
 
     async increment(key, amount = 1) {
+        if (typeof key === 'string' && parseKey(canonicalizeKey(key)).type === 'guild_config') {
+            throw Object.assign(new Error('Generic guild configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
+        }
         try {
             if (!this.isAvailable()) {
                 return amount;
@@ -628,6 +635,9 @@ class PostgreSQLDatabase {
     }
 
     async decrement(key, amount = 1) {
+        if (typeof key === 'string' && parseKey(canonicalizeKey(key)).type === 'guild_config') {
+            throw Object.assign(new Error('Generic guild configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
+        }
         try {
             if (!this.isAvailable()) {
                 return -amount;
@@ -757,13 +767,8 @@ class PostgreSQLDatabase {
         try {
             switch (parsedKey.type) {
                 case 'guild_config':
-                    await this.pool.query(
-                        `INSERT INTO ${pgConfig.tables.guilds} (id, config, updated_at) 
-                         VALUES ($1, $2, CURRENT_TIMESTAMP) 
-                         ON CONFLICT (id) DO UPDATE SET config = $2, updated_at = CURRENT_TIMESTAMP`,
-                        [parsedKey.guildId, value]
-                    );
-                    return true;
+                    return false; // Use the snapshot-aware guild configuration service.
+
                 
                 case 'guild_birthdays':
                     await this.pool.query(
@@ -1000,8 +1005,8 @@ class PostgreSQLDatabase {
         try {
             switch (parsedKey.type) {
                 case 'guild_config':
-                    await this.pool.query(`DELETE FROM ${pgConfig.tables.guilds} WHERE id = $1`, [parsedKey.guildId]);
-                    return true;
+                    return false; // Never cascade-delete a guild via generic KV.
+
                 
                 case 'guild_birthdays':
                     await this.pool.query(`DELETE FROM ${pgConfig.tables.birthdays} WHERE guild_id = $1`, [parsedKey.guildId]);

@@ -36,7 +36,7 @@ test('PostgreSQL config read propagates query error, never overwriting on recove
   const pool = new pg.Pool({ ...base, options: `-c search_path=${schema}` });
   t.after(async () => { await pool.end(); await admin.query(`DROP SCHEMA "${schema}" CASCADE`); await admin.end(); });
   const backend = new PostgreSQLDatabase(); backend.pool = pool; backend.isConnected = true;
-  const client = { db: { isAvailable: () => Boolean(backend.isAvailable()), get: (...args) => backend.get(...args), set: (...args) => backend.set(...args) } };
+  const client = { db: { db: backend, getStatus: () => ({connectionType:'postgresql', isDegraded:false}), isAvailable: () => Boolean(backend.isAvailable()), get: (...args) => backend.get(...args), set: (...args) => backend.set(...args) } };
   assert.equal(await backend.get(key, null), null);
   await pool.query('INSERT INTO guilds(id,config) VALUES($1,$2)', [guild, JSON.stringify({ prefix: '!', premiumRoleId: '234567890123456789' })]);
   assert.equal((await getGuildConfig(client, guild)).prefix, '!');

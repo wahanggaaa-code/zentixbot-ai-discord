@@ -118,3 +118,24 @@ test('ConfigService copies preserve PostgreSQL snapshots for supported settings'
   await ConfigService.bulkUpdate(client,guild,{prefix:'%',dmOnClose:false},'234567890123456789');
   const cfg=await getGuildConfig(client,guild);assert.equal(cfg.prefix,'%');assert.equal(cfg.dmOnClose,false);
 });
+
+test('generic PostgreSQL config writes and deletes cannot bypass snapshots or cascade-delete guild data', {skip:!enabled}, async t => {
+  const {pool,client,backend}=await setup(t);
+  await pool.query('CREATE TABLE dependent(guild_id varchar(20) REFERENCES guilds(id) ON DELETE CASCADE, value text)');
+  await updateGuildConfig(client,guild,{prefix:'!'});
+  await pool.query('INSERT INTO dependent VALUES($1,$2)',[guild,'important']);
+  const key=`guild:${guild}:config`;
+  assert.equal(await backend.set(key,{prefix:'?'}),false);
+  assert.equal(await backend.set(`${key}:anything`,{prefix:'?'}),false);
+  assert.equal(await backend.delete(key),false);
+  assert.equal(await backend.delete(`${key}:anything`),false);
+  await assert.rejects(backend.increment(key),{code:'CONFIG_WRITE_DISABLED'});
+  await assert.rejects(backend.decrement(key),{code:'CONFIG_WRITE_DISABLED'});
+  assert.equal(await backend.setStructuredData({type:'guild_config',guildId:guild,fullKey:key},{prefix:'?'},null),false);
+  assert.equal(await backend.deleteStructuredData({type:'guild_config',guildId:guild,fullKey:key}),false);
+  assert.equal((await getGuildConfig(client,guild)).prefix,'!');
+  assert.equal((await pool.query('SELECT value FROM dependent WHERE guild_id=$1',[guild])).rows[0].value,'important');
+  const config=await getGuildConfig(client,guild);config.prefix='%';await setGuildConfig(client,guild,config);
+  assert.equal((await getGuildConfig(client,guild)).prefix,'%');
+  assert.equal((await pool.query('SELECT value FROM dependent WHERE guild_id=$1',[guild])).rows[0].value,'important');
+});

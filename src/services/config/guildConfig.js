@@ -116,6 +116,7 @@ export const getGuildConfig = wrapServiceBoundary(async function getGuildConfig(
     return normalizeGuildConfig(config, GUILD_CONFIG_DEFAULTS);
 }, {
     service: 'guildConfigService',
+    type: ErrorTypes.DATABASE,
     operation: 'getGuildConfig',
     message: 'Failed to fetch guild configuration',
     userMessage: 'Failed to load server configuration. Please try again.',
@@ -131,6 +132,7 @@ export const setGuildConfig = wrapServiceBoundary(async function setGuildConfig(
     return await writeGuildConfig(client, guildId, normalized, context);
 }, {
     service: 'guildConfigService',
+    type: ErrorTypes.DATABASE,
     operation: 'setGuildConfig',
     message: 'Failed to save guild configuration',
     userMessage: 'Failed to save server configuration. Please try again.',
@@ -145,6 +147,7 @@ export const updateGuildConfig = wrapServiceBoundary(async function updateGuildC
     return await writeGuildConfig(client, guildId, normalized, context);
 }, {
     service: 'guildConfigService',
+    type: ErrorTypes.DATABASE,
     operation: 'updateGuildConfig',
     message: 'Failed to update guild configuration',
     userMessage: 'Failed to update server configuration. Please try again.',
@@ -155,6 +158,7 @@ export const getConfigValue = wrapServiceBoundary(async function getConfigValue(
     return config[key] !== undefined ? config[key] : defaultValue;
 }, {
     service: 'guildConfigService',
+    type: ErrorTypes.DATABASE,
     operation: 'getConfigValue',
     message: 'Failed to read guild configuration value',
     userMessage: 'Failed to read a server setting. Please try again.',
@@ -164,6 +168,7 @@ export const setConfigValue = wrapServiceBoundary(async function setConfigValue(
     return await updateGuildConfig(client, guildId, { [key]: value }, context);
 }, {
     service: 'guildConfigService',
+    type: ErrorTypes.DATABASE,
     operation: 'setConfigValue',
     message: 'Failed to update guild configuration value',
     userMessage: 'Failed to update a server setting. Please try again.',
@@ -191,6 +196,7 @@ export const patchGuildConfig = wrapServiceBoundary(async function patchGuildCon
     return await writeGuildConfig(client, guildId, normalized, context);
 }, {
     service: 'guildConfigService',
+    type: ErrorTypes.DATABASE,
     operation: 'patchGuildConfig',
     message: 'Failed to patch guild configuration',
     userMessage: 'Failed to update server configuration. Please try again.',
