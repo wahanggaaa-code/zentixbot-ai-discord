@@ -1,7 +1,7 @@
 import { isHomeGuild } from '../utils/singleGuild.js';
 import { logger } from '../utils/logger.js';
 import { getReactionRoleKey } from '../utils/database/keys.js';
-import { getGuildConfig, setGuildConfig, patchGuildConfig } from './config/guildConfig.js';
+import { getGuildConfig, setGuildConfig } from './config/guildConfig.js';
 import {
     getTicketPanelStatus,
     getVerificationPanelStatus,
@@ -11,9 +11,10 @@ import { getAllReactionRoleMessages } from './reactionRoleService.js';
 
 async function persistVerificationMessageId(client, guildId, config, messageId) {
     if (!messageId || config.verification?.messageId === messageId) return;
-    await patchGuildConfig(client, guildId, {
-        verification: { ...config.verification, messageId },
-    });
+    // Save against the original guild snapshot: the Discord scan can take long
+    // enough for the verification channel or other settings to change.
+    config.verification = { ...config.verification, messageId };
+    await setGuildConfig(client, guildId, config);
 }
 
 async function persistReactionRoleMessageId(client, guildId, panelData, messageId) {
@@ -46,9 +47,9 @@ export async function reconcileTicketPanels(client) {
             const panelStatus = await getTicketPanelStatus(client, guild, config);
 
             if (panelStatus.recoveredId) {
-                summary.recoveredIds += 1;
                 config.ticketPanelMessageId = panelStatus.recoveredId;
                 await setGuildConfig(client, guild.id, config);
+                summary.recoveredIds += 1;
             }
 
             if (panelStatus.exists) {
@@ -93,8 +94,8 @@ export async function reconcileVerificationPanels(client) {
             const panelStatus = await getVerificationPanelStatus(client, guild, verification);
 
             if (panelStatus.recoveredId) {
-                summary.recoveredIds += 1;
                 await persistVerificationMessageId(client, guild.id, config, panelStatus.recoveredId);
+                summary.recoveredIds += 1;
             }
 
             if (panelStatus.exists) {
