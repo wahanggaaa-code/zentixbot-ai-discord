@@ -59,6 +59,8 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  const anyGiveawayBot=database.prepare("SELECT 1 AS found FROM zentix_bot_kv WHERE key GLOB 'guild:*:giveaways' OR key GLOB 'giveaway:*' LIMIT 1");
  const anyTicketAI=database.prepare("SELECT 1 AS found FROM zentix_kv WHERE key GLOB 'guild:*:ticket:*' AND key NOT GLOB 'guild:*:ticket:counter' LIMIT 1");
  const anyTicketBot=database.prepare("SELECT 1 AS found FROM zentix_bot_kv WHERE key GLOB 'guild:*:ticket:*' AND key NOT GLOB 'guild:*:ticket:counter' LIMIT 1");
+ const anyAfkAI=database.prepare("SELECT 1 AS found FROM zentix_kv WHERE key GLOB 'guild:*:afk:*' LIMIT 1");
+ const anyAfkBot=database.prepare("SELECT 1 AS found FROM zentix_bot_kv WHERE key GLOB 'guild:*:afk:*' LIMIT 1");
  const anyLevelAI=database.prepare("SELECT 1 AS found FROM zentix_kv WHERE key GLOB '*:leveling:users:*' LIMIT 1");
  const anyLevelBot=database.prepare("SELECT 1 AS found FROM zentix_bot_kv WHERE key GLOB '*:leveling:users:*' LIMIT 1");
  const anyAI=database.prepare("SELECT 1 AS found FROM zentix_kv WHERE substr(key,1,3)='ai:' LIMIT 1");
@@ -84,9 +86,9 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  const anyAudit=database.prepare('SELECT 1 AS found FROM zentix_verification_audit LIMIT 1');
  const auditById=database.prepare('SELECT id,guild_id,user_id,action,source,moderator_id,metadata,created_at FROM zentix_verification_audit WHERE id=?');
  const readAudit=database.prepare('SELECT id,guild_id,user_id,action,source,moderator_id,metadata,created_at FROM zentix_verification_audit WHERE guild_id=? ORDER BY id DESC LIMIT ?');
- // Preserve suspicious expiring warning records for explicit reconciliation;
- // deleting them here would make corruption appear to be an empty warning list.
- const cleanupFilter="expires_at IS NOT NULL AND expires_at<=? AND key NOT GLOB 'guild:*:warnings:*' AND key NOT GLOB 'moderation:warnings:*' AND key NOT GLOB 'guild:*:warning-sequence:*'";
+ // Preserve suspicious warning and AFK expiry records for explicit reconciliation;
+ // deleting them here would conceal possible structured data conflicts.
+ const cleanupFilter="expires_at IS NOT NULL AND expires_at<=? AND key NOT GLOB 'guild:*:warnings:*' AND key NOT GLOB 'moderation:warnings:*' AND key NOT GLOB 'guild:*:warning-sequence:*' AND key NOT GLOB 'guild:*:afk:*'";
  const pruneAI=database.prepare(`DELETE FROM zentix_kv WHERE key IN (SELECT key FROM zentix_kv WHERE ${cleanupFilter} ORDER BY expires_at,key LIMIT ?)`);
  const pruneBot=database.prepare(`DELETE FROM zentix_bot_kv WHERE key IN (SELECT key FROM zentix_bot_kv WHERE ${cleanupFilter} ORDER BY expires_at,key LIMIT ?)`);
  const day=database.prepare("SELECT strftime('%Y-%m-%d','now') AS day");
@@ -102,6 +104,7 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
   botGetRaw(key){open();checkKey(key);const row=getBot.get(key);return row?{value:decode(row.value),expiresAt:row.expires_at,updatedAt:row.updated_at}:null},
   hasAnyEconomyData(){open();return Boolean(anyEconomyAccount.get()||anyLegacyAI.get()||anyLegacyBot.get())},
   hasAnyAIData(){open();return Boolean(anyAI.get()||anyBotAI.get())},
+  hasAnyAfkData(){open();return Boolean(anyAfkAI.get()||anyAfkBot.get())},
   hasAnyLevelData(){open();return Boolean(anyLevelAI.get()||anyLevelBot.get())},
   hasAnyGiveawayData(){open();return Boolean(anyGiveawayAI.get()||anyGiveawayBot.get())},
   hasAnyTicketData(){open();return Boolean(anyTicketAI.get()||anyTicketBot.get())},
