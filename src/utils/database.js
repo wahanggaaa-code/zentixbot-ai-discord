@@ -337,7 +337,7 @@ export async function markGiveawayEnded(client, giveawayId, endedData) {
     }
 }
 
-function normalizeWelcomeConfig(raw = {}) {
+export function normalizeWelcomeConfig(raw = {}) {
     const base = typeof raw === "object" && raw !== null ? raw : {};
 
     const channelId = base.channelId ?? null;

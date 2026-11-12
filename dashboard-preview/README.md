@@ -1,5 +1,5 @@
-# ZentixBot — Dashboard preview tahap 5
+# ZentixBot — Dashboard tahap 6 (integrasi awal)
 
-Preview UI editorial mencakup overview, fitur bot dan AI Studio. Seluruh formulir, data dan aksi masih **simulasi**, termasuk role preview dan angka resource; jangan memasukkan data sensitif. Integrasi bot/Wispbyte/AI menyusul.
+Saat disajikan dari proses bot pada `/dashboard/`, login Discord, overview bot dan pengaturan welcome telah dihubungkan. Semua modul lainnya masih simulasi dan tidak melakukan aksi nyata. Dokumentasi, batasan, dan panduan uji: `../DOKUMENTASI-TAHAP-5.md` dan `../DOKUMENTASI-TAHAP-6.md`.
 
-Saat dijalankan dari proses bot pada `/dashboard/`, login Discord dan akses owner/administrator server sudah tersedia. Detail konfigurasi, batasan dan pengujian di `../DOKUMENTASI-TAHAP-5.md`. Preview statis `python3 -m http.server 4174` di folder ini tidak memiliki autentikasi dan hanya untuk pengembangan; jangan gunakan sebagai dashboard produksi.
+Menjalankan `python3 -m http.server 4174` pada folder ini menghasilkan preview statis tanpa autentikasi: **semua** data dan tindakan adalah contoh. Jangan masukkan token, informasi pribadi, atau data sensitif ke preview dan jangan gunakan sebagai dashboard produksi.

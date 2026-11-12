@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PermissionFlagsBits } from 'discord.js';
 import { isHomeGuild } from '../utils/singleGuild.js';
+import { createBotApiRouter } from './botApi.js';
 
 const preview = fileURLToPath(new URL('../../dashboard-preview/', import.meta.url));
 const random = () => crypto.randomBytes(32).toString('hex');
@@ -30,7 +31,7 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
     try {
       const member = await guild.members.fetch({ user: userId, force: true });
       if (guild.ownerId !== userId && !member.permissions.has(PermissionFlagsBits.Administrator)) return { status: 403, error: 'Akses hanya untuk owner atau administrator server.' };
-      return { guild };
+      return { guild, member };
     } catch { return { status: 403, error: 'Keanggotaan atau izin server tidak dapat diverifikasi.' }; }
   }
   router.use((req,res,next) => { res.set({'Cache-Control': NO_CACHE, 'X-Content-Type-Options':'nosniff', 'Referrer-Policy':'no-referrer', 'X-Frame-Options':'DENY'}); next(); });
@@ -69,8 +70,13 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
     if (!session) return res.status(401).json({error:'Silakan login Discord.'});
     const access = await authorize(session.user.id);
     if (access.error) return res.status(access.status).json({error:access.error});
-    req.session = session; req.guild = access.guild; next();
+    req.session = session; req.guild = access.guild; req.member = access.member; next();
   }
+  const csrf = (req,res,next) => {
+    if (req.get('origin') !== origin || req.get('x-csrf-token') !== req.session.csrf) return res.status(403).json({error:'Permintaan tidak valid.'});
+    next();
+  };
+  router.use('/api/bot', createBotApiRouter(client, {auth, csrf}));
   router.get('/api/me', auth, (req,res) => res.json({user:req.session.user, guild:{id:req.guild.id,name:req.guild.name}, csrf:req.session.csrf, botReady:client.isReady()}));
   router.post('/api/logout', auth, (req,res) => {
     if (req.get('origin') !== origin || req.get('x-csrf-token') !== req.session.csrf) return res.status(403).json({error:'Permintaan tidak valid.'});
