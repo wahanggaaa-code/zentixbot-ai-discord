@@ -1,4 +1,4 @@
-import {mkdirSync} from 'node:fs';
+import {mkdirSync,openSync,closeSync,unlinkSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
 
 // Experimental building block: NOT wired into application startup yet.
@@ -10,9 +10,9 @@ function encode(value){let text;try{text=JSON.stringify(value)}catch{throw error
 function decode(value){try{return JSON.parse(value)}catch{throw error('Data SQLite rusak.','SQLITE_CORRUPT')}}
 export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  if(typeof path!=='string'||!path||path.includes('\0')||!Number.isInteger(busyTimeout)||busyTimeout<0||busyTimeout>5000)throw error('Konfigurasi SQLite tidak valid.');
- let DatabaseSync;try{({DatabaseSync}=await import('node:sqlite'))}catch{throw error('SQLite memerlukan Node.js 22.5 atau lebih baru.','SQLITE_RUNTIME')}
+ let DatabaseSync,backupSQLite;try{({DatabaseSync,backup:backupSQLite}=await import('node:sqlite'))}catch{throw error('SQLite memerlukan Node.js 22.5 atau lebih baru.','SQLITE_RUNTIME')}
  const file=path===':memory:'?path:resolve(path);if(file!==':memory:')mkdirSync(dirname(file),{recursive:true});
- const database=new DatabaseSync(file);let closed=false,inTransaction=false;
+ const database=new DatabaseSync(file);let closed=false,inTransaction=false,backupInProgress=false;
  try{database.exec(`PRAGMA busy_timeout=${busyTimeout}; PRAGMA foreign_keys=ON;`);
   // Do not alter the journal mode or create Zentix tables in an unrelated SQLite file.
   const initial=database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(x=>x.name);
@@ -83,7 +83,17 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
   set(key,value,expiresAt=null){return this.transaction(tx=>tx.set(key,value,expiresAt))},
   transaction(fn){open();if(inTransaction||typeof fn!=='function'||fn.constructor?.name==='AsyncFunction')throw error('Transaksi harus sinkron dan tidak boleh bersarang.');let alive=true;const tx=Object.fromEntries(Object.entries(ops).map(([k,v])=>[k,(...args)=>{if(!alive)throw error('Transaksi telah berakhir.');return v(...args)}]));
    inTransaction=true;try{database.exec('BEGIN IMMEDIATE');const result=fn(tx);if(result&&typeof result.then==='function')throw error('Transaksi tidak boleh async.');database.exec('COMMIT');return result}catch(e){try{database.exec('ROLLBACK')}catch{}throw e}finally{alive=false;inTransaction=false}},
-  close(){open();if(inTransaction)throw error('Transaksi masih berjalan.');database.close();closed=true},
+  async backupTo(destination){
+   open();if(typeof backupSQLite!=='function')throw error('Backup SQLite memerlukan Node.js 22.16 atau lebih baru.','SQLITE_RUNTIME');
+   if(inTransaction||backupInProgress)throw error('Transaksi atau backup masih berjalan.','SQLITE_BUSY');
+   if(typeof destination!=='string'||!destination||destination.includes('\0')||destination===':memory:')throw error('Lokasi backup tidak valid.');
+   const target=resolve(destination);if(target===file)throw error('Backup tidak boleh menimpa database sumber.');
+   // Exclusive creation prevents accidental overwrite. Backup directory must be trusted.
+   const fd=openSync(target,'wx',0o600);closeSync(fd);backupInProgress=true;
+   try{const pages=await backupSQLite(database,target);const copy=new DatabaseSync(target,{readOnly:true});try{const result=copy.prepare('PRAGMA quick_check').get();if(Object.values(result)[0]!=='ok')throw error('Verifikasi backup gagal.','SQLITE_BACKUP');}finally{copy.close()}return {path:target,pages};}
+   catch(e){try{unlinkSync(target)}catch{}throw e}finally{backupInProgress=false}
+  },
+  close(){open();if(inTransaction||backupInProgress)throw error('Transaksi atau backup masih berjalan.','SQLITE_BUSY');database.close();closed=true},
  };
 }
 // Adapter discovery is explicit; no automatic failover between separate databases.

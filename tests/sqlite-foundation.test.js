@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,rmSync,statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -65,4 +65,11 @@ test('economy commits from independent processes are serialized',async t=>{
 });
 test('corrupt AI quota fails closed without resetting the counter',async t=>{
  const db=await openSQLiteStore({path:path(t)});db.set(`ai:foundation:usage:g:${guild}`,false);await assert.rejects(createAIStore(client(db)).reserve(guild,a,{perUserDaily:2,guildDaily:3}),{code:'STORAGE_UNAVAILABLE'});assert.equal(db.get(`ai:foundation:usage:g:${guild}`),false);db.close();
+});
+test('online SQLite backup includes WAL data, restores consistently, and refuses overwrite',async t=>{
+ const source=path(t),backup=join(source,'..','snapshot.db'),db=await openSQLiteStore({path:source});db.set('committed',{value:'wal-data'});db.transaction(tx=>{tx.set('backup:left',0);tx.set('backup:right',0)});
+ const child=spawn(process.execPath,['tests/fixtures/sqlite-backup-writer.js',source],{stdio:['ignore','ignore','pipe','ipc']});t.after(()=>{if(child.exitCode===null)child.kill()});let err='';child.stderr.on('data',x=>err+=x);const worker=new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`worker ${code}: ${err}`)))});
+ await new Promise((resolve,reject)=>{child.on('error',reject);child.on('message',message=>{if(message==='ready')child.send('start');if(message==='writing')resolve()})});
+ const pending=db.backupTo(backup);assert.throws(()=>db.close(),{code:'SQLITE_BUSY'});const result=await pending;assert.equal(result.path,backup);assert.equal(statSync(backup).mode&0o077,0);await worker;await assert.rejects(db.backupTo(backup),{code:'EEXIST'});await assert.rejects(db.backupTo(source));
+ const restored=await openSQLiteStore({path:backup});assert.deepEqual(restored.get('committed'),{value:'wal-data'});assert.equal(restored.get('backup:left'),restored.get('backup:right'));restored.close();db.close();
 });
