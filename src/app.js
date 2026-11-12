@@ -4,6 +4,9 @@ import { REST } from '@discordjs/rest';
 import express from 'express';
 import { createDashboardRouter } from './dashboard/router.js';
 import { createAIFoundation } from './services/ai/foundation.js';
+import { createImageService } from './services/ai/images.js';
+import { createSearchService } from './services/ai/search.js';
+import { runScheduledActivity } from './services/ai/activities.js';
 import { requireHomeGuildId, isHomeGuild } from './utils/singleGuild.js';
 import cron from 'node-cron';
 
@@ -43,6 +46,8 @@ class TitanBot extends Client {
     this.config = config;
     this.homeGuildId = requireHomeGuildId(process.env.GUILD_ID);
     this.aiFoundation = createAIFoundation({client:this});
+    this.aiImageService = createImageService({client:this});
+    this.aiSearchService = createSearchService({client:this});
     this.commands = new Collection();
     this.events = new Collection();
     this.buttons = new Collection();
@@ -259,6 +264,7 @@ class TitanBot extends Client {
   setupCronJobs() {
     cron.schedule('0 6 * * *', runSafeTask('birthday_check', () => checkBirthdays(this)));
     cron.schedule('* * * * *', runSafeTask('giveaway_check', () => checkGiveaways(this)));
+    cron.schedule('* * * * *', runSafeTask('ai_activity', () => runScheduledActivity(this)));
     cron.schedule('*/15 * * * *', runSafeTask('counter_update', () => this.updateAllCounters()));
   }
 

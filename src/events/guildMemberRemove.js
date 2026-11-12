@@ -2,6 +2,7 @@ import { Events, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { getColor, botConfig } from '../config/bot.js';
 import { getWelcomeConfig, getUserApplications, deleteApplication } from '../utils/database.js';
 import { formatWelcomeMessage } from '../utils/welcome.js';
+import { deliverLeaveGoodbye } from '../services/ai/welcome.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { getServerCounters, updateCounter } from '../services/serverstatsService.js';
 import { getGuildBirthdays, deleteBirthday } from '../utils/database.js';
@@ -18,65 +19,9 @@ export default {
         
         const welcomeConfig = await getWelcomeConfig(member.client, guild.id);
         
-        const goodbyeChannelId = welcomeConfig?.goodbyeChannelId;
-
-        if (welcomeConfig?.goodbyeEnabled && goodbyeChannelId) {
-            const channel = guild.channels.cache.get(goodbyeChannelId);
-            if (channel?.isTextBased?.()) {
-                const me = guild.members.me;
-                const permissions = me ? channel.permissionsFor(me) : null;
-                if (!permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
-                    return;
-                }
-
-                const formatData = { user, guild, member };
-                const goodbyeMessage = formatWelcomeMessage(
-                    welcomeConfig.leaveMessage || welcomeConfig.leaveEmbed?.description || botConfig.welcome?.defaultGoodbyeMessage || '{user} has left the server.',
-                    formatData
-                );
-
-                const embedTitle = formatWelcomeMessage(
-                    welcomeConfig.leaveEmbed?.title || '👋 Goodbye',
-                    formatData
-                );
-                const embedFooter = welcomeConfig.leaveEmbed?.footer
-                    ? formatWelcomeMessage(welcomeConfig.leaveEmbed.footer, formatData)
-                    : `Goodbye from ${guild.name}!`;
-
-                const canEmbed = permissions.has(PermissionFlagsBits.EmbedLinks);
-
-                if (!canEmbed) {
-                    await channel.send({
-                        content: welcomeConfig?.goodbyePing ? `<@${user.id}> ${goodbyeMessage}` : goodbyeMessage,
-                        allowedMentions: welcomeConfig?.goodbyePing ? { users: [user.id] } : { parse: [] }
-                    });
-                } else {
-                    const embed = new EmbedBuilder()
-                        .setTitle(embedTitle)
-                        .setDescription(goodbyeMessage)
-                        .setColor(welcomeConfig.leaveEmbed?.color || getColor('error'))
-                        .setThumbnail(user.displayAvatarURL())
-                        .addFields(
-                            { name: 'User', value: `${user.tag} (${user.id})`, inline: true },
-                            { name: 'Member Count', value: guild.memberCount.toString(), inline: true }
-                        )
-                        .setTimestamp()
-                        .setFooter({ text: embedFooter });
-
-                    if (typeof welcomeConfig.leaveEmbed?.image === 'string') {
-                        embed.setImage(welcomeConfig.leaveEmbed.image);
-                    } else if (welcomeConfig.leaveEmbed?.image?.url) {
-                        embed.setImage(welcomeConfig.leaveEmbed.image.url);
-                    }
-
-                    await channel.send({
-                        content: welcomeConfig?.goodbyePing ? `<@${user.id}>` : undefined,
-                        allowedMentions: welcomeConfig?.goodbyePing ? { users: [user.id] } : { parse: [] },
-                        embeds: [embed]
-                    });
-                }
-            }
-        }
+        const goodbyeTask=deliverLeaveGoodbye(member,()=>deliverLegacyGoodbye(member,welcomeConfig)).then(result=>{
+            if(result.source==='unavailable')logger.warn('Goodbye channel unavailable.');
+        }).catch(()=>logger.warn('Goodbye delivery failed; other leave actions continue.'));
 
         try {
             await logEvent({
@@ -143,9 +88,73 @@ export default {
         } catch (error) {
             logger.debug('Error handling leveling data on member leave:', error);
         }
-        
+        await goodbyeTask;
     } catch (error) {
         logger.error('Error in guildMemberRemove event:', error);
     }
   }
 };
+
+async function deliverLegacyGoodbye(member,welcomeConfig) {
+ const {guild,user}=member;
+        const goodbyeChannelId = welcomeConfig?.goodbyeChannelId;
+
+        if (welcomeConfig?.goodbyeEnabled && goodbyeChannelId) {
+            const channel = guild.channels.cache.get(goodbyeChannelId);
+            if (channel?.isTextBased?.()) {
+                const me = guild.members.me;
+                const permissions = me ? channel.permissionsFor(me) : null;
+                if (!permissions?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages])) {
+                    return;
+                }
+
+                const formatData = { user, guild, member };
+                const goodbyeMessage = formatWelcomeMessage(
+                    welcomeConfig.leaveMessage || welcomeConfig.leaveEmbed?.description || botConfig.welcome?.defaultGoodbyeMessage || '{user} has left the server.',
+                    formatData
+                );
+
+                const embedTitle = formatWelcomeMessage(
+                    welcomeConfig.leaveEmbed?.title || '👋 Goodbye',
+                    formatData
+                );
+                const embedFooter = welcomeConfig.leaveEmbed?.footer
+                    ? formatWelcomeMessage(welcomeConfig.leaveEmbed.footer, formatData)
+                    : `Goodbye from ${guild.name}!`;
+
+                const canEmbed = permissions.has(PermissionFlagsBits.EmbedLinks);
+
+                if (!canEmbed) {
+                    await channel.send({
+                        content: welcomeConfig?.goodbyePing ? `<@${user.id}> ${goodbyeMessage}` : goodbyeMessage,
+                        allowedMentions: welcomeConfig?.goodbyePing ? { users: [user.id] } : { parse: [] }
+                    });
+                } else {
+                    const embed = new EmbedBuilder()
+                        .setTitle(embedTitle)
+                        .setDescription(goodbyeMessage)
+                        .setColor(welcomeConfig.leaveEmbed?.color || getColor('error'))
+                        .setThumbnail(user.displayAvatarURL())
+                        .addFields(
+                            { name: 'User', value: `${user.tag} (${user.id})`, inline: true },
+                            { name: 'Member Count', value: guild.memberCount.toString(), inline: true }
+                        )
+                        .setTimestamp()
+                        .setFooter({ text: embedFooter });
+
+                    if (typeof welcomeConfig.leaveEmbed?.image === 'string') {
+                        embed.setImage(welcomeConfig.leaveEmbed.image);
+                    } else if (welcomeConfig.leaveEmbed?.image?.url) {
+                        embed.setImage(welcomeConfig.leaveEmbed.image.url);
+                    }
+
+                    await channel.send({
+                        content: welcomeConfig?.goodbyePing ? `<@${user.id}>` : undefined,
+                        allowedMentions: welcomeConfig?.goodbyePing ? { users: [user.id] } : { parse: [] },
+                        embeds: [embed]
+                    });
+                }
+            }
+        }
+
+}

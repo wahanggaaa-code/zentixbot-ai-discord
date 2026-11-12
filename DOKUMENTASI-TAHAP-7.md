@@ -1,7 +1,7 @@
 # Tahap 7 — Fondasi AI dan fallback
 
 ## Cakupan
-Fondasi **teks saja**: Groq, Gemini (endpoint OpenAI-compatible), OpenRouter, dan NVIDIA NIM memakai endpoint HTTPS resmi tetap. Pilih model utama dan opsional satu provider cadangan yang berbeda di AI Studio → Provider & fallback. Ollama, gambar, audio dan tool calling belum didukung; pemilihan model tidak menjamin ketersediaan/kompatibilitas provider. AI Welcome mulai terintegrasi pada Tahap 8; Activities, Chat, dokumen, gambar dan Server Builder masih simulasi. AI Welcome tidak membaca konten pesan Discord; lihat DOKUMENTASI-TAHAP-8.md.
+Fondasi **teks saja**: Groq, Gemini (endpoint OpenAI-compatible), OpenRouter, dan NVIDIA NIM memakai endpoint HTTPS resmi tetap. Pilih model utama dan opsional satu provider cadangan yang berbeda di AI Studio → Provider & fallback. Ollama, gambar, audio dan tool calling belum didukung; pemilihan model tidak menjamin ketersediaan/kompatibilitas provider. Beberapa fitur AI Tahap 8 sudah terhubung dengan batasan; lihat DOKUMENTASI-TAHAP-8.md.
 
 Default nonaktif. Dashboard membutuhkan login Discord serta izin admin/owner server **dan** ID pengguna dalam `OWNER_IDS`; perubahan dan tes wajib CSRF/Origin. API key hanya melalui environment server, tidak melalui browser/database/repo. UI hanya menampilkan apakah masing-masing key terisi, bukan validitasnya. Atur `AI_GROQ_API_KEY`, `AI_GEMINI_API_KEY`, `AI_OPENROUTER_API_KEY`, `AI_NVIDIA_API_KEY` seperlunya; jangan commit `.env` atau membagikan key. Setting tersimpan di PostgreSQL `cache_data`; tanpa database persisten operasi gagal tertutup. Daftar model dan koneksi provider tidak divalidasi saat menyimpan.
 

@@ -49,13 +49,13 @@ test('welcome API only owner can read/save/preview, preview uses sample and fixe
  assert.equal((await req('/welcome','PATCH',{...cfg,channelId:'999999999999999999'})).status,400);assert.equal((await req('/welcome','PATCH',cfg)).status,200);assert.deepEqual(saved,cfg);
  assert.equal((await req('/welcome/preview','POST',{confirmed:true,prompt:'secret'})).status,400);const res=await req('/welcome/preview','POST',{confirmed:true});const data=await res.json();assert.equal(data.source,'ai');assert.match(data.preview,/Server Contoh/);assert.equal(f.channelSent.length,0);assert.equal(f.calls[0].userId,ownerId);assert.ok(!f.calls[0].prompt.includes('SecretGuildName'));
 });
-test('AI Welcome UI binds and renders response as text; goodbye remains simulation',async t=>{
+test('AI Welcome UI binds and renders response as text; goodbye uses separate settings',async t=>{
  const html=fs.readFileSync('dashboard-preview/index.html','utf8').replace(/<script src=".*?"><\/script>/g,'');const dom=new JSDOM(html,{url:'http://localhost/dashboard/#ai/greeting',runScripts:'outside-only'}),w=dom.window;t.after(()=>w.close());w.scrollTo=()=>{};w.confirm=()=>true;let saved;
  w.fetch=async(u,o={})=>({ok:true,json:async()=>{if(String(u).endsWith('/me'))return {user:{username:'Owner'},guild:{name:'Guild'},csrf:'csrf'};if(o.method==='PATCH'){saved=JSON.parse(o.body);return {ok:true}}if(o.method==='POST')return {source:'ai',preview:'<img src=x onerror=alert(1)>'};return {settings:cfg,channels:[{id:channelId,name:'welcome'}]}}});
  for(const x of ['session.js','live.js','modules-live.js','operations-live.js','features.js','ai-foundation.js','ai-welcome.js','ai-studio.js','app.js'])w.eval(fs.readFileSync('dashboard-preview/'+x,'utf8'));
  await new Promise(r=>setTimeout(r,35));const form=w.document.querySelector('#aiWelcomeForm');assert.ok(form);form.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,10));assert.equal(saved.channelId,channelId);
  w.document.querySelector('#aiWelcomePreview').click();await new Promise(r=>setTimeout(r,10));assert.match(w.document.querySelector('#aiWelcomeResult').textContent,/<img/);assert.equal(w.document.querySelector('#aiWelcomeResult img'),null);
- w.document.querySelector('[data-ai-tab="goodbye"]').click();assert.match(w.document.querySelector('.f-demo-warning').textContent,/SIMULASI/);assert.equal(w.document.querySelector('#aiWelcomeForm'),null);
+ w.document.querySelector('[data-ai-tab="goodbye"]').click();assert.match(w.document.querySelector('.f-demo-warning').textContent,/GOODBYE TERHUBUNG/);await new Promise(r=>setTimeout(r,10));assert.ok(w.document.querySelector('#aiWelcomeForm'));
 });
 
 test('real join handler assigns autorole without waiting for AI network',async()=>{
@@ -66,4 +66,16 @@ test('real join handler assigns autorole without waiting for AI network',async()
  f.client.aiFoundation={generate:async()=>{await wait;return {text:'Hi {user}, welcome to {server}'}}};
  const running=joinEvent.execute(f.member);try{await new Promise(r=>setTimeout(r,40));assert.equal(assigned,true);assert.equal(f.channelSent.length,0);}finally{release();await running;}
  assert.equal(f.channelSent.length,1);
+});
+
+test('AI goodbye uses generic prompt, does not ping, and replaces legacy only when enabled',async()=>{
+ const {deliverLeaveGoodbye,DEFAULT_AI_GOODBYE}=await import('../src/services/ai/welcome.js');const f=fixture();let legacy=0;const settings={...DEFAULT_AI_GOODBYE,enabled:true,channelId};
+ let r=await deliverLeaveGoodbye(f.member,async()=>{legacy++},{store:{read:async()=>settings},foundation:f.foundation});assert.equal(r.source,'ai');assert.equal(legacy,0);assert.equal(f.channelSent.length,1);assert.deepEqual(f.channelSent[0].allowedMentions,{parse:[]});assert.match(f.calls[0].prompt,/farewell/);assert.ok(!f.calls[0].prompt.includes('SecretGuildName'));
+ r=await deliverLeaveGoodbye(f.member,async()=>{legacy++},{store:{read:async()=>({...DEFAULT_AI_GOODBYE})}});assert.equal(r.source,'legacy');assert.equal(legacy,1);
+ r=await deliverLeaveGoodbye(f.member,async()=>{legacy++},{store:{read:async()=>settings},foundation:{generate:async()=>{throw Error()}}});assert.equal(r.source,'fallback');assert.match(f.channelSent.at(-1).content,/Sampai jumpa/);
+});
+test('leave cleanup continues even when legacy goodbye lacks channel permission',async()=>{
+ const {default:removeEvent}=await import('../src/events/guildMemberRemove.js');const f=fixture();let deleted=false;f.setPermitted(false);f.client.guilds={cache:new Map([[guildId,f.guild]])};
+ f.client.db={getStatus:()=>({isDegraded:false}),isAvailable:()=>true,get:async key=>key.includes('welcome')?{goodbyeEnabled:true,goodbyeChannelId:channelId}: {},delete:async()=>{deleted=true},db:{isAvailable:()=>true,pool:{query:async()=>({rows:[]})}}};
+ await removeEvent.execute(f.member);assert.equal(deleted,true);assert.equal(f.channelSent.length,0);
 });

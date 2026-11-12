@@ -1,0 +1,22 @@
+import test from 'node:test';import assert from 'node:assert/strict';import express from 'express';import {createImageService} from '../src/services/ai/images.js';import {createAIApi} from '../src/dashboard/aiApi.js';
+const guild='123456789012345678',owner='234567890123456789',other='345678901234567890';
+const sample='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/8ioAAAAASUVORK5CYII=';
+test('image create and edit use fixed provider, consent, quota and validate PNG',async()=>{
+ let calls=[],reserved=0;const client={homeGuildId:guild},foundation={store:{read:async()=>({enabled:true,providerDataConsent:true}),reserve:async()=>{reserved++}}},env={AI_IMAGE_API_KEY:'secret-key',AI_IMAGE_MODEL:'model-name'};
+ const service=createImageService({client,foundation,env,fetchImpl:async(u,o)=>{calls.push({u,o});return new Response(JSON.stringify({data:[{b64_json:sample}]}))}});const args={guildId:guild,userId:owner,prompt:'A bird',mode:'create',imageBase64:null,consent:true};
+ await assert.rejects(service.generate({...args,consent:false}),{status:403});await assert.rejects(service.generate({...args,guildId:other}),{status:403});await assert.rejects(service.generate({...args,mode:'edit',imageBase64:'bad'}),{status:400});assert.equal(reserved,0);
+ const result=await service.generate(args);assert.equal(result.imageBase64,sample);assert.equal(result.mime,'image/png');assert.equal(calls[0].u,'https://api.openai.com/v1/images/generations');assert.equal(calls[0].o.redirect,'error');assert.equal(reserved,1);await service.generate({...args,mode:'edit',imageBase64:sample});assert.equal(calls[1].u,'https://api.openai.com/v1/images/edits');assert.equal(calls[1].o.body.get('image').type,'image/png');
+ const missing=createImageService({client,foundation,env:{}});await assert.rejects(missing.generate(args),{status:503});
+});
+test('image endpoint is owner-only, CSRF-protected and explicit confirmation required',async t=>{
+ let count=0;const client={homeGuildId:guild},imageService={generate:async()=>{count++;return {imageBase64:sample,mime:'image/png'}}};const auth=(req,res,next)=>{if(req.get('auth')!=='yes')return res.sendStatus(401);req.session={user:{id:req.get('who')}};req.guild={id:guild};next()},csrf=(req,res,next)=>req.get('csrf')==='yes'?next():res.sendStatus(403);
+ const app=express();app.use('/ai',createAIApi(client,{auth,csrf,env:{OWNER_IDS:owner},imageService}));const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));t.after(()=>server.close());
+ const req=(body,extra={})=>fetch(`http://127.0.0.1:${server.address().port}/ai/image`,{method:'POST',headers:{auth:'yes',who:owner,csrf:'yes','content-type':'application/json',...extra},body:JSON.stringify(body)});const body={confirmed:true,mode:'create',prompt:'bird',imageBase64:null};
+ assert.equal((await req(body,{who:other})).status,403);assert.equal((await req(body,{csrf:'no'})).status,403);assert.equal((await req({...body,confirmed:false})).status,400);assert.equal(count,0);assert.equal((await req(body)).status,200);assert.equal(count,1);
+});
+
+test('image UI requires confirmation before sending prompt and renders PNG',async t=>{
+ const {JSDOM}=await import('jsdom'),fs=await import('node:fs');const html=fs.readFileSync('dashboard-preview/index.html','utf8').replace(/<script src=".*?"><\/script>/g,'');const d=new JSDOM(html,{url:'http://localhost/dashboard/#ai/image',runScripts:'outside-only'}),w=d.window;t.after(()=>w.close());w.scrollTo=()=>{};let called=0,agree=false;w.confirm=()=>agree;
+ w.fetch=async(u,o={})=>({ok:true,json:async()=>String(u).endsWith('/me')?{user:{username:'Owner'},guild:{name:'Guild'},csrf:'x'}:(called++,{imageBase64:sample,mime:'image/png'})});
+ for(const x of ['session.js','live.js','modules-live.js','operations-live.js','features.js','ai-foundation.js','ai-welcome.js','ai-activities.js','ai-chat.js','ai-knowledge.js','ai-tools-live.js','ai-images-live.js','ai-builder-live.js','ai-studio.js','app.js'])w.eval(fs.readFileSync('dashboard-preview/'+x,'utf8'));await new Promise(r=>setTimeout(r,35));const f=w.document.querySelector('#aiImageForm');f.elements.prompt.value='bird';f.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));assert.equal(called,0);agree=true;f.dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await new Promise(r=>setTimeout(r,15));assert.equal(called,1);assert.equal(w.document.querySelector('#aiImageResult').hidden,false);
+});

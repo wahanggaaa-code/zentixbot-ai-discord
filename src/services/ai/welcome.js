@@ -4,6 +4,7 @@ import { buildWelcomePayload } from '../welcomePayload.js';
 import { formatWelcomeMessage } from '../../utils/welcome.js';
 
 export const DEFAULT_AI_WELCOME=Object.freeze({enabled:false,toChannel:true,toDm:false,channelId:null,tone:'warm',language:'id',fallback:'Selamat datang {user} di {server}!'});
+export const DEFAULT_AI_GOODBYE=Object.freeze({...DEFAULT_AI_WELCOME,fallback:'Sampai jumpa {user}, terima kasih sudah bersama {server}.'});
 const invalid=message=>Object.assign(new Error(message),{status:400,code:'INVALID_WELCOME'});
 export function validateAIWelcome(v,guild){
  const keys=Object.keys(DEFAULT_AI_WELCOME);
@@ -18,20 +19,23 @@ export function validateAIWelcome(v,guild){
  if(typeof v.fallback!=='string'||!v.fallback.trim()||v.fallback.length>1000)throw invalid('Template cadangan harus 1–1000 karakter.');
  return {...v};
 }
-export function createAIWelcomeStore(client){
- const key=id=>`ai:welcome:settings:${id}`,table=pgConfig.tables.cache_data;
+export function createAIWelcomeStore(client,kind='welcome'){
+ if(!['welcome','goodbye'].includes(kind))throw invalid('Jenis greeting tidak valid.');
+ const defaults=kind==='goodbye'?DEFAULT_AI_GOODBYE:DEFAULT_AI_WELCOME;
+ const validate=v=>{const result=validateAIWelcome(v);if(kind==='goodbye' && result.toDm)throw invalid('AI Goodbye tidak mendukung DM.');return result;};
+ const key=id=>`ai:${kind}:settings:${id}`,table=pgConfig.tables.cache_data;
  const pool=()=>{const db=client.db;if(!db||db.getStatus?.().isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool)throw new Error('Persistent database unavailable');return db.db.pool;};
- return {async read(id){const r=await pool().query(`SELECT value FROM ${table} WHERE key=$1`,[key(id)]);return r.rows[0]?.value?validateAIWelcome(r.rows[0].value):{...DEFAULT_AI_WELCOME};},async save(id,settings){const v=validateAIWelcome(settings);await pool().query(`INSERT INTO ${table} (key,value,expires_at) VALUES ($1,$2::jsonb,NULL) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, expires_at=NULL`,[key(id),JSON.stringify(v)]);return v;}};
+ return {async read(id){const r=await pool().query(`SELECT value FROM ${table} WHERE key=$1`,[key(id)]);return r.rows[0]?.value?validate(r.rows[0].value):{...defaults};},async save(id,settings){const v=validate(settings);await pool().query(`INSERT INTO ${table} (key,value,expires_at) VALUES ($1,$2::jsonb,NULL) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, expires_at=NULL`,[key(id),JSON.stringify(v)]);return v;}};
 }
 // No guild or user data is sent to the provider; only fixed instructions and validated enum values.
-export function welcomePrompt(cfg){return `Write one short, friendly Discord server welcome in ${cfg.language==='id'?'Indonesian':'English'} with a ${cfg.tone} tone. Output only the message. Include the exact placeholders {user} and {server}; do not include URLs, mentions or other placeholders.`;}
+export function welcomePrompt(cfg,kind='welcome'){return `Write one short, friendly Discord server ${kind==='goodbye'?'farewell':'welcome'} in ${cfg.language==='id'?'Indonesian':'English'} with a ${cfg.tone} tone. Output only the message. Include the exact placeholders {user} and {server}; do not include URLs, mentions or other placeholders.`;}
 export function safeGeneratedTemplate(text){
  if(typeof text!=='string')return null;const s=text.trim();
  if(!s||s.length>1000||!s.includes('{user}')||!s.includes('{server}')||/https?:\/\/|www\.|discord\.gg|<@|@(everyone|here)/i.test(s)||/\{(?!user\}|server\})[^}]*\}/.test(s))return null;
  return s;
 }
-export async function generateWelcomeTemplate({foundation,guildId,actorId,cfg}){
- try{if(!foundation)throw Error('unavailable');const result=await foundation.generate({guildId,userId:actorId,consent:true,prompt:welcomePrompt(cfg)});const template=safeGeneratedTemplate(result.text);if(!template)throw Error('invalid');return {template,source:'ai'};}catch{return {template:cfg.fallback,source:'fallback'};}
+export async function generateWelcomeTemplate({foundation,guildId,actorId,cfg,kind='welcome'}){
+ try{if(!foundation)throw Error('unavailable');const result=await foundation.generate({guildId,userId:actorId,consent:true,prompt:welcomePrompt(cfg,kind)});const template=safeGeneratedTemplate(result.text);if(!template)throw Error('invalid');return {template,source:'ai'};}catch{return {template:cfg.fallback,source:'fallback'};}
 }
 // The returned text is rendered locally, after generation, without passing Discord names to AI.
 export function renderAIWelcome(template,member){return formatWelcomeMessage(template,{member,user:member.user,guild:member.guild}).slice(0,1900);}
@@ -53,4 +57,14 @@ export async function deliverJoinWelcome(member,legacyConfig,{store,foundation}=
  const content=renderAIWelcome(generated.template,member);const payload={content,allowedMentions:{parse:[]}};
  const sends=[];if(canChannel)sends.push(Promise.resolve().then(()=>channel.send(payload)));if(cfg.toDm)sends.push(Promise.resolve().then(()=>member.send(payload)));
  const results=await Promise.allSettled(sends);return {source:generated.source,sent:results.filter(r=>r.status==='fulfilled').length,failed:results.filter(r=>r.status==='rejected').length+(cfg.toChannel&&!canChannel?1:0)};
+}
+
+export async function deliverLeaveGoodbye(member,legacy,{store,foundation}={}){
+ const guild=member.guild,client=member.client;if(!guild||!client||guild.id!==client.homeGuildId)return {source:'blocked'};
+ let cfg;try{cfg=await (store||createAIWelcomeStore(client,'goodbye')).read(guild.id);}catch{cfg={...DEFAULT_AI_GOODBYE};}
+ if(!cfg.enabled){await legacy();return {source:'legacy'};}
+ const channel=guild.channels.cache.get(cfg.channelId),me=guild.members.me,perms=channel?.type===ChannelType.GuildText&&me?channel.permissionsFor(me):null;
+ if(!perms?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages]))return {source:'unavailable'};
+ const generated=await generateWelcomeTemplate({foundation:foundation||client.aiFoundation,guildId:guild.id,actorId:client.user?.id,cfg,kind:'goodbye'});
+ await channel.send({content:renderAIWelcome(generated.template,member),allowedMentions:{parse:[]}});return {source:generated.source};
 }
