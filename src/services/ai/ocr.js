@@ -10,3 +10,13 @@ export async function extractImageText({client,guildId,userId,name,base64,consen
  if(typeof result.text!=='string'||!result.text.trim()||result.text.length>5000||result.text.includes('\0'))throw error('Hasil OCR tidak valid atau terlalu panjang.',502);
  return {name:`${name}.txt`,text:result.text,usedFallback:result.usedFallback};
 }
+
+// Each invocation renders and transcribes exactly one page; output is never saved automatically.
+export async function extractPdfPageText({client,guildId,userId,name,base64,pageNumber,consent,foundation=client.aiFoundation,renderPage}){
+ if(guildId!==client.homeGuildId||!/^\d{17,20}$/.test(userId||'')||consent!==true)throw error('Akses atau persetujuan tidak valid.',403);
+ if(!foundation)throw error('AI belum tersedia.',503);
+ const render=renderPage||(await import('./pdfPageRender.js')).renderPdfPage;
+ const page=await render(name,base64,pageNumber);
+ const result=await extractImageText({client,guildId,userId,name:`${name}-page-${pageNumber}.png`,base64:page.base64,consent:true,foundation});
+ return {...result,pageNumber,pageCount:page.pageCount};
+}
