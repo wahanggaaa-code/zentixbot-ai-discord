@@ -37,3 +37,36 @@ test('pending create warnings expose only stage and channel ID; malformed metada
  await put({enabled:true,triggerChannels:[channel],pendingCreates:{[token]:{...base,stage:'created',channelId:mid(1)}}});response=await req();raw=await response.text();d=JSON.parse(raw);assert.deepEqual(d.pendingCreate,{stage:'created',channelId:mid(1)});assert.doesNotMatch(raw,new RegExp(token+'|'+user+'|ownerId'));
  for(const pendingCreates of [null,{[token]:base},{[token]:{...base,stage:'created',channelId:'<script>'}},{[token]:{...base,stage:'reserved',extra:'secret'}},{bad:{...base,stage:'reserved'}}]){await put({enabled:true,pendingCreates});response=await req();assert.equal(response.status,409);assert.doesNotMatch(await response.text(),/secret|ownerId|11111111/);}
 });
+const pendingToken='11111111-2222-4333-8444-555555555555',pendingId='555555555555555555';
+const pendingDoc=(stage='created')=>({enabled:true,triggerChannels:[channel],pendingCreates:{[pendingToken]:{ownerId:user,triggerId:channel,createdAt:1700000000000,stage,...(stage==='created'?{channelId:pendingId}:{})}}});
+const checkPath='/test/join-to-create/pending-check?channelId='+pendingId;
+test('pending Discord check uses only stored ID, is authenticated, bounded and private',{skip:!enabled},async t=>{
+ const {put,root,guild}=await setup(t);await put(pendingDoc());let calls=0;guild.channels={fetch:async(id,options)=>{calls++;assert.equal(id,pendingId);assert.deepEqual(options,{force:true,cache:false});return {id,guildId,type:2,name:'secret',ownerId:user}}};
+ const get=(path,headers={'x-auth':'yes'})=>fetch(root+path,{headers});let response=await get(checkPath,{'x-auth':'no'});assert.equal(response.status,401);assert.equal(response.headers.get('cache-control'),'no-store');assert.equal(calls,0);
+ assert.equal((await get('/test/join-to-create/pending-check')).status,400);assert.equal((await get(checkPath+'&channelId='+channel)).status,400);assert.equal((await get('/test/join-to-create/pending-check?channelId='+channel)).status,409);assert.equal(calls,0);
+ response=await get(checkPath);assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');const raw=await response.text();assert.deepEqual(JSON.parse(raw),{channelId:pendingId,status:'voice_found'});assert.doesNotMatch(raw,new RegExp(pendingToken+'|'+user+'|secret|ownerId'));assert.equal(calls,1);assert.equal((await get(checkPath)).status,429);assert.equal(calls,1);
+});
+test('checks fail closed for missing, reserved, TTL, legacy, malformed and unavailable database',{skip:!enabled},async t=>{
+ const {put,pgpool,root,guild,backend,key}=await setup(t);let calls=0;guild.channels={fetch:async()=>{calls++;throw Error('must not call')}};const get=()=>fetch(root+checkPath,{headers:{'x-auth':'yes'}});
+ assert.equal((await get()).status,409);await put(pendingDoc('reserved'));assert.equal((await get()).status,409);await put(pendingDoc(),new Date(Date.now()+60000));assert.equal((await get()).status,409);await put(pendingDoc());await pgpool.query('INSERT INTO cache_data(key,value) VALUES($1,$2)',[key,'{}']);assert.equal((await get()).status,409);await pgpool.query('DELETE FROM cache_data');await put({pendingCreates:{broken:{}}});assert.equal((await get()).status,409);backend.isConnected=false;assert.equal((await get()).status,503);assert.equal(calls,0);
+});
+test('Discord errors, absence and mismatched channel never become proof of absence',{skip:!enabled},async t=>{
+ for(const mode of ['error','null','wrong-type','wrong-guild','wrong-id'])await t.test(mode,async t=>{
+  const {put,root,guild}=await setup(t);await put(pendingDoc());let calls=0;guild.channels={fetch:async()=>{calls++;if(mode==='error')throw Error('secret failure');if(mode==='null')return null;return {id:mode==='wrong-id'?channel:pendingId,guildId:mode==='wrong-guild'?'999999999999999999':guildId,type:mode==='wrong-type'?0:2}}};const r=await fetch(root+checkPath,{headers:{'x-auth':'yes'}}),raw=await r.text();assert.equal(r.status,mode==='error'?503:200);assert.doesNotMatch(raw,/secret failure|ownerId/);if(mode!=='error')assert.equal(JSON.parse(raw).status,'mismatch');else assert.match(raw,/bukan bukti channel tidak ada/);assert.equal(calls,1);
+ });
+});
+test('check rejects stale changes after Discord fetch and guards overlapping requests',{skip:!enabled},async t=>{
+ const {put,root,guild}=await setup(t);await put(pendingDoc());let calls=0,entered,release;const ready=new Promise(r=>entered=r),wait=new Promise(r=>release=r);guild.channels={fetch:async()=>{calls++;entered();await wait;return {id:pendingId,guildId,type:2}}};const get=()=>fetch(root+checkPath,{headers:{'x-auth':'yes'}});const first=get();await ready;assert.equal((await get()).status,429);await put({...pendingDoc(),channelNameTemplate:'changed'});release();const r=await first;assert.equal(r.status,409);assert.match(await r.text(),/berubah selama pemeriksaan/);assert.equal(calls,1);
+});
+test('actual dashboard check requires login and revalidates admin rights',{skip:!enabled},async t=>{
+ const {put,root,guild}=await setup(t);await put(pendingDoc());let calls=0;guild.channels={fetch:async()=>{calls++;return {id:pendingId,guildId,type:2}}};const request=(path,opts={})=>fetch(root+path,{redirect:'manual',...opts}),path='/dashboard/api/bot/join-to-create/pending-check?channelId='+pendingId;let r=await request(path);assert.equal(r.status,401);assert.equal(r.headers.get('cache-control'),'no-store');const start=await request('/dashboard/login'),cookie=start.headers.get('set-cookie').split(';')[0],state=new URL(start.headers.get('location')).searchParams.get('state');const cb=await request(`/dashboard/callback?code=mock&state=${state}`,{headers:{cookie}}),session=cb.headers.getSetCookie().find(x=>x.startsWith('zx_session=')).split(';')[0];r=await request(path,{headers:{cookie:session}});assert.equal(r.status,200);assert.equal(calls,1);guild.members.fetch=async()=>({permissions:{has:()=>false}});r=await request(path,{headers:{cookie:session}});assert.equal(r.status,403);assert.equal(calls,1);
+});
+
+test('timed out Discord request remains guarded until the underlying promise settles',{skip:!enabled},async t=>{
+ const {put,root,guild}=await setup(t);await put(pendingDoc());let calls=0,release;const wait=new Promise(r=>release=r);guild.channels={fetch:async()=>{calls++;await wait;return {id:pendingId,guildId,type:2}}};const get=()=>fetch(root+checkPath,{headers:{'x-auth':'yes'}});const first=await get();assert.equal(first.status,503);assert.match(await first.text(),/bukan bukti channel tidak ada/);assert.equal((await get()).status,429);assert.equal(calls,1);release();
+});
+test('legacy key or expiry introduced during lookup invalidates the result',{skip:!enabled},async t=>{
+ for(const mode of ['legacy','expiry'])await t.test(mode,async t=>{
+  const {put,pgpool,root,guild,key}=await setup(t);await put(pendingDoc());guild.channels={fetch:async()=>{if(mode==='legacy')await pgpool.query('INSERT INTO cache_data(key,value) VALUES($1,$2)',[key,'{}']);else await pgpool.query("UPDATE temp_data SET expires_at=NOW()+interval '1 hour' WHERE key=$1",[key]);return {id:pendingId,guildId,type:2}}};const r=await fetch(root+checkPath,{headers:{'x-auth':'yes'}});assert.equal(r.status,409);assert.doesNotMatch(await r.text(),/voice_found/);
+ });
+});
