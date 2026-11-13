@@ -167,19 +167,17 @@ test('dashboard: index pages', async (t) => {
     assert.deepEqual(cards, Array(14).fill('BUKA FITUR'));
     assert.match(page.main.querySelector('.f-index-bar').textContent, /14 FITUR TERHUBUNG KE BOT/);
     assert.doesNotMatch(page.main.querySelector('.f-index-bar').textContent, /SEBAGIAN|SIMULASI/);
-    // Categories without a page: named as such, and not dressed up as links.
-    const more = page.main.querySelector('.f-more:not(.f-settled)');
-    assert.deepEqual([...more.querySelectorAll('.f-chips span')].map((el) => el.textContent), ['Tools']);
-    assert.equal(more.querySelectorAll('a, button').length, 0);
-    assert.doesNotMatch(more.querySelector('.f-chips').textContent, /↗/);
-    assert.match(more.textContent, /BELUM ADA HALAMAN/);
-    assert.match(more.textContent, /perintah bot di Discord/);
+    // Every category is now either a page or listed as needing none: nothing is left "not built yet".
+    assert.equal(page.main.querySelector('.f-more:not(.f-settled)'), null);
+    assert.doesNotMatch(page.main.textContent, /BELUM ADA HALAMAN|Masih ada lainnya/);
     // Audited categories without a page of their own: not promised one, and pointed at the pages that do affect them.
     const settled = page.main.querySelector('.f-settled');
-    assert.deepEqual([...settled.querySelectorAll('.f-chips span')].map((el) => el.textContent), ['Search', 'Utility']);
+    assert.deepEqual([...settled.querySelectorAll('.f-chips span')].map((el) => el.textContent), ['Search', 'Utility', 'Tools']);
     assert.doesNotMatch(settled.textContent, /BELUM ADA HALAMAN/);
     assert.match(settled.textContent, /TANPA HALAMAN SENDIRI/);
-    const [searchNote, utilityNote] = [...settled.querySelectorAll('p')];
+    const [searchNote, utilityNote, toolsNote] = [...settled.querySelectorAll('p')];
+    assert.match(toolsNote.textContent, /^Tools \(\/baseconvert, \/calculate, \/countdown, \/embedbuilder, \/generatepassword, \/hexcolor, \/poll, \/randomuser, \/shorten, \/time, \/unixtime\) tidak menyimpan pengaturan apa pun:/);
+    assert.deepEqual([...toolsNote.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')]), [['Akses perintah', '#features/core']]);
     assert.match(searchNote.textContent, /^Search \(\/search define, \/search google, \/search urban\) tidak menyimpan pengaturan apa pun\./);
     assert.deepEqual([...searchNote.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')]), [['Akses perintah', '#features/core']]);
     // Utility does store something, so it is not described as storing nothing.

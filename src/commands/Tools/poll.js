@@ -1,112 +1,86 @@
-import { SlashCommandBuilder, MessageFlags } from 'discord.js';
-import { createEmbed, errorEmbed, successEmbed, infoEmbed, warningEmbed } from '../../utils/embeds.js';
+import { SlashCommandBuilder, MessageFlags, PermissionFlagsBits } from 'discord.js';
+import { createEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
-import { getColor } from '../../config/bot.js';
+import { replyUserError, ErrorTypes } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
-const EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
-const MAX_OPTIONS = 10;
+import { plainText } from '../../services/searchLookup.js';
+
+export const POLL_EMOJIS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣', '🔟'];
+export const MAX_OPTIONS = 10;
+export const QUESTION_LIMIT = 300;
+export const OPTION_LIMIT = 100;
+const ORDINALS = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth', 'Tenth'];
+
+// What the bot needs where the poll is posted; the votes are reactions.
+const NEEDED = [
+    [PermissionFlagsBits.ViewChannel, 'View Channel'],
+    [PermissionFlagsBits.EmbedLinks, 'Embed Links'],
+    [PermissionFlagsBits.AddReactions, 'Add Reactions'],
+    [PermissionFlagsBits.ReadMessageHistory, 'Read Message History'],
+];
+
+const builder = new SlashCommandBuilder()
+    .setName('poll')
+    .setDescription('Create a simple poll with up to 10 options')
+    .addStringOption((option) =>
+        option.setName('question')
+            .setDescription('The poll question')
+            .setMaxLength(QUESTION_LIMIT)
+            .setRequired(true));
+for (let index = 0; index < MAX_OPTIONS; index++) {
+    builder.addStringOption((option) =>
+        option.setName(`option${index + 1}`)
+            .setDescription(`${ORDINALS[index]} option${index < 2 ? '' : ' (optional)'}`)
+            .setMaxLength(OPTION_LIMIT)
+            .setRequired(index < 2));
+}
+
 export default {
-    data: new SlashCommandBuilder()
-        .setName('poll')
-        .setDescription('Create a simple poll with up to 10 options')
-        .addStringOption(option =>
-            option.setName('question')
-                .setDescription('The poll question')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('option1')
-                .setDescription('First option')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('option2')
-                .setDescription('Second option')
-                .setRequired(true))
-        .addStringOption(option =>
-            option.setName('option3')
-                .setDescription('Third option (optional)')
-                .setRequired(false))
-        .addStringOption(option =>
-            option.setName('option4')
-                .setDescription('Fourth option (optional)')
-                .setRequired(false))
-        .addStringOption(option =>
-            option.setName('option5')
-                .setDescription('Fifth option (optional)')
-                .setRequired(false))
-        .addStringOption(option =>
-            option.setName('option6')
-                .setDescription('Sixth option (optional)')
-                .setRequired(false))
-        .addStringOption(option =>
-            option.setName('option7')
-                .setDescription('Seventh option (optional)')
-                .setRequired(false))
-        .addStringOption(option =>
-            option.setName('option8')
-                .setDescription('Eighth option (optional)')
-                .setRequired(false))
-        .addStringOption(option =>
-            option.setName('option9')
-                .setDescription('Ninth option (optional)')
-                .setRequired(false))
-        .addStringOption(option =>
-            option.setName('option10')
-                .setDescription('Tenth option (optional)')
-                .setRequired(false))
-        .addBooleanOption(option =>
-            option.setName('anonymous')
-                .setDescription('Make the poll anonymous (default: false)')
-                .setRequired(false)),
+    data: builder,
 
     async execute(interaction) {
-        const deferSuccess = await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
+        const refuse = (message, type = ErrorTypes.VALIDATION) => replyUserError(interaction, { type, message });
+        if (!interaction.guild) return refuse('Polls can only be created in a server.');
+
+        // Members read these as ordinary text: no formatting, no hidden links.
+        const question = plainText(interaction.options.getString('question') ?? '', QUESTION_LIMIT);
+        const options = [];
+        for (let index = 1; index <= MAX_OPTIONS; index++) {
+            const option = plainText(interaction.options.getString(`option${index}`) ?? '', OPTION_LIMIT);
+            if (option) options.push(option);
+        }
+        if (!question) return refuse('The poll needs a question.');
+        if (options.length < 2) return refuse('A poll needs at least 2 options.');
+        if (new Set(options.map((option) => option.toLowerCase())).size !== options.length) return refuse('Two options are the same. Each option must be different.');
+
+        const mine = interaction.channel?.permissionsFor?.(interaction.guild.members.me) ?? interaction.appPermissions ?? null;
+        const missing = mine ? NEEDED.filter(([flag]) => !mine.has(flag)).map(([, name]) => name) : [];
+        if (missing.length) return refuse(`I cannot run a poll in this channel. Missing here: ${missing.join(', ')}.`, ErrorTypes.PERMISSION);
+
+        const deferSuccess = await InteractionHelper.safeDefer(interaction);
         if (!deferSuccess) {
-            logger.warn(`Poll interaction defer failed`, {
-                userId: interaction.user.id,
-                guildId: interaction.guildId,
-                commandName: 'poll'
-            });
+            logger.warn('Poll interaction defer failed', { userId: interaction.user.id, guildId: interaction.guildId, commandName: 'poll' });
             return;
         }
 
-        const question = interaction.options.getString('question');
-        const isAnonymous = interaction.options.getBoolean('anonymous') || false;
-
-        const options = [];
-        for (let i = 1; i <= MAX_OPTIONS; i++) {
-            const option = interaction.options.getString(`option${i}`);
-            if (option) options.push(option);
-        }
-
-        if (options.length < 2) {
-            throw new Error("You must provide at least 2 options for the poll.");
-        }
-
-        let description = `**${question}**\n\n`;
-        options.forEach((option, index) => {
-            description += `${EMOJIS[index]} ${option}\n`;
+        const lines = options.map((option, index) => `**${index + 1}.** ${option}`);
+        const embed = createEmbed({
+            title: 'Poll',
+            description: `**${question}**\n\n${lines.join('\n')}\n\nVote with the numbered reactions below. Reactions are visible to everyone.`,
+            color: 'success',
         });
+        const message = (await interaction.editReply({ embeds: [embed], allowedMentions: { parse: [] } }))
+            ?? (await interaction.fetchReply?.().catch(() => null));
 
-        if (isAnonymous) {
-            description += '\n*This is an anonymous poll. Votes are not tracked to users.*';
-        } else {
-            description += '\n*React with the emoji to vote!*';
+        let added = 0;
+        try {
+            for (; added < options.length; added++) await message.react(POLL_EMOJIS[added]);
+        } catch (error) {
+            logger.warn('Poll reactions could not all be added', { guildId: interaction.guildId, channelId: interaction.channelId, added, wanted: options.length, code: error?.code });
+            await interaction.followUp({
+                content: `The poll is posted, but I could only add ${added} of ${options.length} reactions. Members can still vote by adding the missing numbers themselves.`,
+                flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
         }
-
-        const embed = successEmbed(
-            `📊 ${isAnonymous ? 'Anonymous ' : ''}Poll`,
-            description
-        );
-
-        const message = await interaction.channel.send({ embeds: [embed] });
-
-        for (let i = 0; i < options.length; i++) {
-            await message.react(EMOJIS[i]);
-            await new Promise(resolve => setTimeout(resolve, 500));
-        }
-
-        await InteractionHelper.safeEditReply(interaction, {
-            content: '✅ Poll created successfully!',
-        });
     },
 };

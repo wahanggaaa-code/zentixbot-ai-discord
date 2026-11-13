@@ -1,4 +1,18 @@
 // safeMathParser.js
+//
+// A small arithmetic evaluator with its own tokenizer; nothing is handed to the JavaScript engine.
+// Every failure is a MathError with a `code`: SYNTAX, UNKNOWN_NAME (with `symbol`), NOT_FINITE, TOO_LONG.
+
+export const MAX_EXPRESSION_LENGTH = 200;
+
+export class MathError extends Error {
+  constructor(code, message, extra = {}) {
+    super(message);
+    this.name = 'MathError';
+    this.code = code;
+    Object.assign(this, extra);
+  }
+}
 
 const SUPPORTED_FUNCTIONS = Object.freeze({
   sin: Math.sin,
@@ -6,9 +20,14 @@ const SUPPORTED_FUNCTIONS = Object.freeze({
   tan: Math.tan,
   sqrt: Math.sqrt,
   abs: Math.abs,
+  ln: Math.log,
   log: Math.log,
   log10: Math.log10,
-  exp: Math.exp
+  log2: Math.log2,
+  exp: Math.exp,
+  floor: Math.floor,
+  ceil: Math.ceil,
+  round: Math.round
 });
 
 const SUPPORTED_CONSTANTS = Object.freeze({
@@ -17,8 +36,8 @@ const SUPPORTED_CONSTANTS = Object.freeze({
 });
 
 const OPERATOR_PRECEDENCE = Object.freeze({
-  'u-': 5,
-  '^': 4,
+  '^': 5,
+  'u-': 4,
   '*': 3,
   '/': 3,
   '%': 3,
@@ -30,7 +49,10 @@ const RIGHT_ASSOCIATIVE_OPERATORS = new Set(['^', 'u-']);
 
 function normalizeExpression(input) {
   if (typeof input !== 'string') {
-    throw new Error('Expression must be a string');
+    throw new MathError('SYNTAX', 'Expression must be a string');
+  }
+  if (input.length > MAX_EXPRESSION_LENGTH) {
+    throw new MathError('TOO_LONG', 'Expression is too long');
   }
 
   return input
@@ -79,7 +101,7 @@ function tokenize(expression) {
         if (current === '.') {
           dotCount += 1;
           if (dotCount > 1) {
-            throw new Error('Invalid number format');
+            throw new MathError('SYNTAX', 'Invalid number format');
           }
         }
 
@@ -88,16 +110,28 @@ function tokenize(expression) {
       }
 
       if (numberText === '.' || numberText.length === 0) {
-        throw new Error('Invalid number format');
+        throw new MathError('SYNTAX', 'Invalid number format');
       }
 
-      tokens.push({ type: 'number', value: Number(numberText) });
+      // Scientific notation, the way results are shown: 1e21, 2.5e-3, 1E+6.
+      const exponent = /^[eE][+-]?\d+/.exec(expression.slice(index));
+      if (exponent) {
+        numberText += exponent[0];
+        index += exponent[0].length;
+      }
+
+      const value = Number(numberText);
+      if (!Number.isFinite(value)) {
+        throw new MathError('NOT_FINITE', 'Number is too large');
+      }
+      tokens.push({ type: 'number', value });
       continue;
     }
 
     if (isAlpha(character)) {
       let identifier = '';
-      while (index < expression.length && isAlpha(expression[index])) {
+      // A name starts with a letter and may go on with digits: log10, log2.
+      while (index < expression.length && (isAlpha(expression[index]) || isDigit(expression[index]))) {
         identifier += expression[index];
         index += 1;
       }
@@ -112,7 +146,7 @@ function tokenize(expression) {
         continue;
       }
 
-      throw new Error(`Unsupported token: ${identifier}`);
+      throw new MathError('UNKNOWN_NAME', `Unsupported token: ${identifier}`, { symbol: identifier });
     }
 
     if ('+-*/%^()'.includes(character)) {
@@ -128,7 +162,7 @@ function tokenize(expression) {
       continue;
     }
 
-    throw new Error(`Unsupported character: ${character}`);
+    throw new MathError('SYNTAX', `Unsupported character: ${character}`);
   }
 
   return tokens;
@@ -159,7 +193,8 @@ function toRpn(tokens) {
         operatorValue = 'u-';
       }
 
-      while (stack.length > 0) {
+      // A sign has no left operand, so it never completes an operator that came before it.
+      while (operatorValue !== 'u-' && stack.length > 0) {
         const top = stack[stack.length - 1];
         if (top.type !== 'operator') {
           break;
@@ -201,7 +236,7 @@ function toRpn(tokens) {
       }
 
       if (!hasOpeningParen) {
-        throw new Error('Mismatched parentheses');
+        throw new MathError('SYNTAX', 'Mismatched parentheses');
       }
 
       if (stack.length > 0 && stack[stack.length - 1].type === 'function') {
@@ -215,7 +250,7 @@ function toRpn(tokens) {
   while (stack.length > 0) {
     const top = stack.pop();
     if (top.type === 'leftParen' || top.type === 'rightParen') {
-      throw new Error('Mismatched parentheses');
+      throw new MathError('SYNTAX', 'Mismatched parentheses');
     }
     output.push(top);
   }
@@ -235,14 +270,14 @@ function evaluateRpn(rpnTokens) {
     if (token.type === 'operator') {
       if (token.value === 'u-') {
         if (stack.length < 1) {
-          throw new Error('Invalid expression');
+          throw new MathError('SYNTAX', 'Invalid expression');
         }
         stack.push(-stack.pop());
         continue;
       }
 
       if (stack.length < 2) {
-        throw new Error('Invalid expression');
+        throw new MathError('SYNTAX', 'Invalid expression');
       }
 
       const right = stack.pop();
@@ -254,20 +289,20 @@ function evaluateRpn(rpnTokens) {
       else if (token.value === '/') stack.push(left / right);
       else if (token.value === '%') stack.push(left % right);
       else if (token.value === '^') stack.push(Math.pow(left, right));
-      else throw new Error(`Unsupported operator: ${token.value}`);
+      else throw new MathError('SYNTAX', `Unsupported operator: ${token.value}`);
 
       continue;
     }
 
     if (token.type === 'function') {
       if (stack.length < 1) {
-        throw new Error('Invalid function usage');
+        throw new MathError('SYNTAX', 'Invalid function usage');
       }
 
       const value = stack.pop();
       const handler = SUPPORTED_FUNCTIONS[token.value];
       if (!handler) {
-        throw new Error(`Unsupported function: ${token.value}`);
+        throw new MathError('SYNTAX', `Unsupported function: ${token.value}`);
       }
       stack.push(handler(value));
       continue;
@@ -275,7 +310,7 @@ function evaluateRpn(rpnTokens) {
   }
 
   if (stack.length !== 1) {
-    throw new Error('Invalid expression');
+    throw new MathError('SYNTAX', 'Invalid expression');
   }
 
   return stack[0];
@@ -288,7 +323,7 @@ export function evaluateMathExpression(expression) {
   const value = evaluateRpn(rpn);
 
   if (!Number.isFinite(value)) {
-    throw new Error('Expression result is not finite');
+    throw new MathError('NOT_FINITE', 'Expression result is not finite');
   }
 
   return value;

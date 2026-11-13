@@ -1,146 +1,85 @@
-import { webcrypto as crypto } from 'node:crypto';
-import { getColor } from '../../config/bot.js';
+import { randomInt } from 'node:crypto';
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
-import { createEmbed, successEmbed, infoEmbed, warningEmbed } from '../../utils/embeds.js';
+import { createEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 import { replyUserError, ErrorTypes } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+
+export const MIN_LENGTH = 8;
+export const MAX_LENGTH = 50;
+const CLASSES = Object.freeze({
+    lowercase: { label: 'Lowercase', chars: 'abcdefghijklmnopqrstuvwxyz' },
+    uppercase: { label: 'Uppercase', chars: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' },
+    numbers: { label: 'Numbers', chars: '0123456789' },
+    // No backtick and no backslash: the password is shown inside a code span.
+    symbols: { label: 'Symbols', chars: '!@#$%^&*()_+-=[]{}|;:,.<>?' },
+});
+
+/**
+ * A password of `length` characters with at least one character of every class in `wanted`.
+ * `pick(n)` returns a whole number from 0 up to, not including, n; the default is the
+ * operating system's random source.
+ */
+export function generatePassword(length, wanted, pick = randomInt) {
+    const sets = wanted.map((name) => CLASSES[name].chars);
+    const all = sets.join('');
+    // One of each class first, then the rest from everything.
+    const chars = sets.map((set) => set[pick(set.length)]);
+    while (chars.length < length) chars.push(all[pick(all.length)]);
+    // Shuffle, so the guaranteed characters are not always in front.
+    for (let i = chars.length - 1; i > 0; i--) {
+        const j = pick(i + 1);
+        [chars[i], chars[j]] = [chars[j], chars[i]];
+    }
+    return { password: chars.join(''), bits: Math.floor(length * Math.log2(all.length)) };
+}
+
 export default {
     data: new SlashCommandBuilder()
         .setName('generatepassword')
         .setDescription('Generate a strong, random password')
-        .addIntegerOption(option =>
+        .addIntegerOption((option) =>
             option.setName('length')
-                .setDescription('Password length (default: 16, max: 50)')
-                .setMinValue(8)
-                .setMaxValue(50)
+                .setDescription(`Password length (default: 16, ${MIN_LENGTH}-${MAX_LENGTH})`)
+                .setMinValue(MIN_LENGTH)
+                .setMaxValue(MAX_LENGTH)
                 .setRequired(false))
-        .addBooleanOption(option =>
+        .addBooleanOption((option) =>
             option.setName('uppercase')
                 .setDescription('Include uppercase letters (A-Z)')
                 .setRequired(false))
-        .addBooleanOption(option =>
+        .addBooleanOption((option) =>
             option.setName('numbers')
                 .setDescription('Include numbers (0-9)')
                 .setRequired(false))
-        .addBooleanOption(option =>
+        .addBooleanOption((option) =>
             option.setName('symbols')
                 .setDescription('Include symbols (!@#$%^&*)')
                 .setRequired(false)),
 
     async execute(interaction) {
-        const deferSuccess = await InteractionHelper.safeDefer(interaction, {
-            flags: MessageFlags.Ephemeral
-        });
-
+        const deferSuccess = await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
         if (!deferSuccess) {
-            logger.warn('GeneratePassword interaction defer failed', {
-                userId: interaction.user?.id,
-                guildId: interaction.guildId,
-                commandName: 'generatepassword'
-            });
+            logger.warn('GeneratePassword interaction defer failed', { userId: interaction.user?.id, guildId: interaction.guildId, commandName: 'generatepassword' });
             return;
         }
 
-        const length = interaction.options.getInteger('length') || 16;
-        const includeUppercase = interaction.options.getBoolean('uppercase') ?? true;
-        const includeNumbers = interaction.options.getBoolean('numbers') ?? true;
-        const includeSymbols = interaction.options.getBoolean('symbols') ?? true;
-
-        if (length < 8 || length > 50) {
-            await replyUserError(interaction, { type: ErrorTypes.VALIDATION, message: `Password must be 8-50 characters. You provided: ${length}` });
-            return;
+        const length = interaction.options.getInteger('length') ?? 16;
+        if (!Number.isInteger(length) || length < MIN_LENGTH || length > MAX_LENGTH) {
+            return await replyUserError(interaction, { type: ErrorTypes.VALIDATION, message: `The length must be a whole number from ${MIN_LENGTH} to ${MAX_LENGTH}.` });
+        }
+        const wanted = ['lowercase'];
+        for (const name of ['uppercase', 'numbers', 'symbols']) {
+            if (interaction.options.getBoolean(name) ?? true) wanted.push(name);
         }
 
-        const lowercase = 'abcdefghijklmnopqrstuvwxyz';
-        const uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
-        const numbers = '0123456789';
-        const symbols = '!@#$%^&*()_+-=[]{}|;:,.<>?';
-
-        let chars = lowercase;
-        if (includeUppercase) chars += uppercase;
-        if (includeNumbers) chars += numbers;
-        if (includeSymbols) chars += symbols;
-
-        let password = '';
-        const randomValues = new Uint32Array(length);
-        crypto.getRandomValues(randomValues);
-
-        for (let i = 0; i < length; i++) {
-            const randomIndex = randomValues[i] % chars.length;
-            password += chars[randomIndex];
-        }
-
-        if (includeUppercase && !/[A-Z]/.test(password)) {
-            const randomIndex = Math.floor(Math.random() * length);
-            const randomUpper = uppercase[Math.floor(Math.random() * uppercase.length)];
-            password = password.substring(0, randomIndex) + randomUpper + password.substring(randomIndex + 1);
-        }
-
-        if (includeNumbers && !/[0-9]/.test(password)) {
-            const randomIndex = Math.floor(Math.random() * length);
-            const randomNumber = numbers[Math.floor(Math.random() * numbers.length)];
-            password = password.substring(0, randomIndex) + randomNumber + password.substring(randomIndex + 1);
-        }
-
-        if (includeSymbols && !/[!@#$%^&*()_+\-=\[\]{}|;:,.<>?]/.test(password)) {
-            const randomIndex = Math.floor(Math.random() * length);
-            const randomSymbol = symbols[Math.floor(Math.random() * symbols.length)];
-            password = password.substring(0, randomIndex) + randomSymbol + password.substring(randomIndex + 1);
-        }
-
-        let strength = 'Weak';
-        let strengthEmoji = '🔴';
-        let strengthColor = getColor('error');
-
-        const hasLower = /[a-z]/.test(password);
-        const hasUpper = /[A-Z]/.test(password);
-        const hasNumber = /[0-9]/.test(password);
-        const hasSymbol = /[^a-zA-Z0-9]/.test(password);
-
-        const uniqueChars = new Set(password).size;
-        const uniqueRatio = uniqueChars / password.length;
-
-        let score = 0;
-        score += password.length * 4;
-        score += (password.length - (password.match(/[a-z]/g) || []).length) * 2;
-        score += (password.length - (password.match(/[A-Z]/g) || []).length) * 2;
-        score += (password.match(/[0-9]/g) || []).length * 4;
-        score += (password.match(/[^a-zA-Z0-9]/g) || []).length * 6;
-
-        if (uniqueRatio < 0.5) score *= 0.7;
-        if (hasLower && hasUpper) score *= 1.2;
-        if (hasNumber) score *= 1.2;
-        if (hasSymbol) score *= 1.3;
-
-        if (score > 80) {
-            strength = 'Very Strong';
-            strengthEmoji = '🟢';
-            strengthColor = getColor('success');
-        } else if (score > 60) {
-            strength = 'Strong';
-            strengthEmoji = '🟢';
-            strengthColor = getColor('success');
-        } else if (score > 40) {
-            strength = 'Good';
-            strengthEmoji = '🟡';
-            strengthColor = getColor('warning');
-        } else if (score > 20) {
-            strength = 'Weak';
-            strengthEmoji = '🟠';
-            strengthColor = getColor('warning');
-        }
-
-        const embed = successEmbed(
-            '🔑 Generated Password',
-            `**Password:** ||\`${password}\`||\n` +
-            `**Length:** ${password.length} characters\n` +
-            `**Strength:** ${strengthEmoji} ${strength}\n` +
-            `**Contains:** ${hasLower ? 'Lowercase' : ''}${hasUpper ? ', Uppercase' : ''}${hasNumber ? ', Numbers' : ''}${hasSymbol ? ', Symbols' : ''}`
-        ).setColor(strengthColor);
-
-        await InteractionHelper.safeEditReply(interaction, {
-            embeds: [embed],
+        const { password, bits } = generatePassword(length, wanted);
+        const embed = createEmbed({
+            title: 'Generated Password',
+            description: `**Password:** ||\`${password}\`||\n**Length:** ${length} characters\n**Contains:** ${wanted.map((name) => CLASSES[name].label).join(', ')}\n**Randomness:** about ${bits} bits\n\nOnly you can see this message. The password is not stored or logged.`,
+            color: 'success',
         });
+
+        await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
     },
 };

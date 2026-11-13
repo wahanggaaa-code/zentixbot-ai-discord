@@ -1,230 +1,122 @@
 import { SlashCommandBuilder } from 'discord.js';
-import { createEmbed, successEmbed, infoEmbed, warningEmbed } from '../../utils/embeds.js';
+import { createEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 import { replyUserError, ErrorTypes } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
-import { getColor } from '../../config/bot.js';
+import { codeSpan } from '../../services/searchLookup.js';
 
-const BASE_ALPHABETS = {
-    'BIN': { base: 2, prefix: '0b', name: 'Binary', alphabet: '01' },
-    'OCT': { base: 8, prefix: '0o', name: 'Octal', alphabet: '0-7' },
-    'DEC': { base: 10, prefix: '', name: 'Decimal', alphabet: '0-9' },
-    'HEX': { base: 16, prefix: '0x', name: 'Hexadecimal', alphabet: '0-9A-F' },
-    'B64': { base: 64, prefix: 'b64:', name: 'Base64', alphabet: 'A-Za-z0-9+/=' },
-    'B36': { base: 36, prefix: '', name: 'Base36', alphabet: '0-9A-Z' },
-    'B58': { base: 58, prefix: '', name: 'Base58', alphabet: '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz' },
-    'B62': { base: 62, prefix: '', name: 'Base62', alphabet: '0-9A-Za-z' },
-};
+/** Longest input accepted; with it, every conversion together still fits one embed. */
+export const MAX_INPUT_LENGTH = 200;
 
-const BASE_NAMES = Object.entries(BASE_ALPHABETS).map(([key, { name }]) => ({ name: `${key} (${name})`, value: key }));
-const BASE_CHARSETS = {
-    BIN: '01',
-    OCT: '01234567',
-    DEC: '0123456789',
-    HEX: '0123456789ABCDEF',
-    B36: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-    B58: '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz',
-    B62: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
-};
+// `digits` is the alphabet in order of value. `fold` means letters are read without regard to case.
+const BASES = Object.freeze({
+    BIN: { name: 'Binary', prefix: '0b', digits: '01', fold: true, valid: '0 and 1' },
+    OCT: { name: 'Octal', prefix: '0o', digits: '01234567', fold: true, valid: '0-7' },
+    DEC: { name: 'Decimal', prefix: '', digits: '0123456789', fold: true, valid: '0-9' },
+    HEX: { name: 'Hexadecimal', prefix: '0x', digits: '0123456789ABCDEF', fold: true, valid: '0-9 and A-F' },
+    B64: { name: 'Base64', prefix: 'b64:', digits: null, fold: false, valid: 'standard Base64 (A-Z, a-z, 0-9, + and /, padded with =)' },
+    B36: { name: 'Base36', prefix: '', digits: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', fold: true, valid: '0-9 and A-Z' },
+    B58: { name: 'Base58', prefix: '', digits: '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz', fold: false, valid: '1-9, A-Z and a-z without 0, O, I and l (case matters)' },
+    B62: { name: 'Base62', prefix: '', digits: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz', fold: false, valid: '0-9, A-Z and a-z (case matters)' },
+});
+const BASE_CHOICES = Object.entries(BASES).map(([key, { name }]) => ({ name: `${key} (${name})`, value: key }));
 
-function parseBigIntFromBase(value, baseKey) {
-    if (baseKey === 'B64') {
-        const bytes = Buffer.from(value, 'base64');
-        return bytes.reduce((acc, byte) => (acc * 256n) + BigInt(byte), 0n);
+/**
+ * The value of `text` written in base `key`, as a BigInt; null when `text` is not a number in
+ * that base. Base64 is read as the bytes of a big-endian whole number.
+ */
+export function parseInBase(text, key) {
+    const base = BASES[key];
+    if (!base || typeof text !== 'string' || text.length === 0) return null;
+    if (key === 'B64') {
+        const bytes = Buffer.from(text, 'base64');
+        // Node's decoder skips what it does not know; only the exact spelling the encoder would
+        // produce for these bytes is accepted.
+        if (bytes.toString('base64') !== text) return null;
+        return bytes.reduce((sum, byte) => (sum << 8n) | BigInt(byte), 0n);
     }
-
-    const charset = BASE_CHARSETS[baseKey];
-    if (!charset) {
-        throw new Error(`Unsupported base: ${baseKey}`);
+    const digits = base.fold ? text.toUpperCase() : text;
+    const radix = BigInt(base.digits.length);
+    let value = 0n;
+    for (const digit of digits) {
+        const at = base.digits.indexOf(digit);
+        if (at < 0) return null;
+        value = value * radix + BigInt(at);
     }
-
-    const normalized = ['BIN', 'OCT', 'DEC', 'HEX', 'B36'].includes(baseKey)
-        ? value.toUpperCase()
-        : value;
-
-    let result = 0n;
-    const base = BigInt(charset.length);
-
-    for (const char of normalized) {
-        const digit = charset.indexOf(char);
-        if (digit < 0) {
-            throw new Error(`Invalid character '${char}' for base ${baseKey}`);
-        }
-        result = (result * base) + BigInt(digit);
-    }
-
-    return result;
+    return value;
 }
 
-function formatBigIntToBase(value, baseKey) {
-    if (baseKey === 'B64') {
-        if (value === 0n) {
-            return Buffer.from([0]).toString('base64');
-        }
-
+/** `value` (a BigInt, zero or more) written in base `key`. */
+export function formatInBase(value, key) {
+    const base = BASES[key];
+    if (key === 'B64') {
         const bytes = [];
-        let n = value;
-        while (n > 0n) {
-            bytes.unshift(Number(n & 0xffn));
-            n >>= 8n;
-        }
-
-        return Buffer.from(bytes).toString('base64');
+        for (let rest = value; rest > 0n; rest >>= 8n) bytes.unshift(Number(rest & 0xffn));
+        return Buffer.from(bytes.length ? bytes : [0]).toString('base64');
     }
-
-    const charset = BASE_CHARSETS[baseKey];
-    if (!charset) {
-        throw new Error(`Unsupported base: ${baseKey}`);
-    }
-
-    if (value === 0n) {
-        return '0';
-    }
-
-    const base = BigInt(charset.length);
-    let n = value;
-    let output = '';
-
-    while (n > 0n) {
-        const index = Number(n % base);
-        output = charset[index] + output;
-        n /= base;
-    }
-
-    return output;
+    if (value === 0n) return base.digits[0];
+    const radix = BigInt(base.digits.length);
+    let out = '';
+    for (let rest = value; rest > 0n; rest /= radix) out = base.digits[Number(rest % radix)] + out;
+    return out;
 }
 
 export default {
     data: new SlashCommandBuilder()
         .setName('baseconvert')
-        .setDescription('Convert numbers between different bases')
-        .addStringOption(option =>
+        .setDescription('Convert whole numbers between different bases')
+        .addStringOption((option) =>
             option.setName('number')
-                .setDescription('The number to convert')
+                .setDescription('The whole number to convert')
+                .setMaxLength(MAX_INPUT_LENGTH + 4)
                 .setRequired(true))
-        .addStringOption(option =>
+        .addStringOption((option) =>
             option.setName('from')
                 .setDescription('Source base/format')
                 .setRequired(true)
-                .addChoices(...BASE_NAMES))
-        .addStringOption(option =>
+                .addChoices(...BASE_CHOICES))
+        .addStringOption((option) =>
             option.setName('to')
                 .setDescription('Target base/format (default: all)')
                 .setRequired(false)
-                .addChoices(...BASE_NAMES)),
+                .addChoices(...BASE_CHOICES)),
 
     async execute(interaction) {
         const deferSuccess = await InteractionHelper.safeDefer(interaction);
         if (!deferSuccess) {
-            logger.warn(`BaseConvert interaction defer failed`, {
-                userId: interaction.user.id,
-                guildId: interaction.guildId,
-                commandName: 'baseconvert'
-            });
+            logger.warn('BaseConvert interaction defer failed', { userId: interaction.user.id, guildId: interaction.guildId, commandName: 'baseconvert' });
             return;
         }
+        const refuse = (message) => replyUserError(interaction, { type: ErrorTypes.VALIDATION, message });
 
-        const numberStr = interaction.options.getString('number').trim();
-        const fromBase = interaction.options.getString('from');
-        const toBase = interaction.options.getString('to');
+        const fromKey = interaction.options.getString('from');
+        const toKey = interaction.options.getString('to');
+        const from = BASES[fromKey];
+        if (!from || (toKey && !BASES[toKey])) return refuse('Please choose the bases from the list.');
 
-        const { prefix: fromPrefix, name: fromName } = BASE_ALPHABETS[fromBase];
+        const typed = String(interaction.options.getString('number') ?? '').trim();
+        // The usual prefix of the source base may be typed, in either case: 0xFF, 0b101.
+        const digits = from.prefix && typed.toLowerCase().startsWith(from.prefix) ? typed.slice(from.prefix.length) : typed;
+        if (!digits) return refuse('Please give a number to convert, for example `/baseconvert number:1010 from:BIN to:DEC`.');
+        if (digits.length > MAX_INPUT_LENGTH) return refuse(`That number is too long. Please keep it to ${MAX_INPUT_LENGTH} characters.`);
 
-        const cleanNumber = fromPrefix && numberStr.startsWith(fromPrefix)
-            ? numberStr.slice(fromPrefix.length)
-            : numberStr;
-
-        if (!cleanNumber) {
-            return replyUserError(interaction, {
-                type: ErrorTypes.VALIDATION,
-                message: 'You must provide a number to convert.\n\n**Example:** `/baseconvert number:1010 from:BIN to:DEC`',
-            });
+        const value = parseInBase(digits, fromKey);
+        if (value === null) {
+            return refuse(`${codeSpan(digits, 60)} is not a ${from.name} number. Valid characters: ${from.valid}. Only whole numbers without a sign are converted.`);
         }
 
-        const alphabet = BASE_ALPHABETS[fromBase].alphabet;
-        const regex = new RegExp(`^[${alphabet}]+$`, 'i');
-
-        if (!regex.test(cleanNumber)) {
-            let examples = '';
-            if (fromBase === 'BIN') {
-                examples = '\n\n**Valid:** 101, 1010, 11111 | **Invalid:** 5 (digit 5 not allowed)';
-            } else if (fromBase === 'OCT') {
-                examples = '\n\n**Valid:** 77, 123, 755 | **Invalid:** 8 (only 0-7 allowed)';
-            } else if (fromBase === 'DEC') {
-                examples = '\n\n**Valid:** 42, 123, 999 | **Invalid:** 12.34 (no decimals)';
-            } else if (fromBase === 'HEX') {
-                examples = '\n\n**Valid:** FF, A1B2, DEADBEEF | **Invalid:** G (only 0-9, A-F)';
-            }
-            logger.warn(`Invalid base conversion input: ${cleanNumber} for base ${fromBase}`);
-            return replyUserError(interaction, {
-                type: ErrorTypes.VALIDATION,
-                message: `You provided: \`${cleanNumber}\`\n\nValid characters: \`${alphabet}\`${examples}`,
-            });
-        }
-
-        let decimalValue;
-        try {
-            if (fromBase === 'B64') {
-                decimalValue = parseBigIntFromBase(cleanNumber, fromBase);
-            } else {
-                decimalValue = parseBigIntFromBase(cleanNumber, fromBase);
-            }
-        } catch (error) {
-            logger.error('Base conversion parse error:', error);
-            return replyUserError(interaction, {
-                type: ErrorTypes.VALIDATION,
-                message: 'The number is too large to process.\n\nTry with a smaller number.',
-            });
-        }
-
-        if (toBase) {
-            const { prefix: toPrefix, name: toName } = BASE_ALPHABETS[toBase];
-            let result;
-
-            try {
-                result = formatBigIntToBase(decimalValue, toBase);
-
-                const embed = successEmbed(
-                    '🔄 Base Conversion Result',
-                    `**From ${fromName} (${fromBase}):** \`${fromPrefix}${cleanNumber}\`\n` +
-                    `**To ${toName} (${toBase}):** \`${toPrefix}${result}\`\n` +
-                    `**Decimal:** \`${decimalValue.toLocaleString()}\``
-                );
-                embed.setColor(getColor('success'));
-
-                await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
-
-            } catch (error) {
-                logger.error(`Base conversion error to ${toName}:`, error);
-                await replyUserError(interaction, {
-                    type: ErrorTypes.VALIDATION,
-                    message: 'The result would be too large or incompatible.\n\nTry with a smaller number or different target base.',
-                });
-            }
-
+        const written = (key) => `\`${BASES[key].prefix}${formatInBase(value, key)}\``;
+        const lines = [`**Input (${from.name}):** \`${from.prefix}${from.fold ? digits.toUpperCase() : digits}\``];
+        if (toKey) {
+            lines.push(`**${BASES[toKey].name} (${toKey}):** ${written(toKey)}`);
+            if (fromKey !== 'DEC' && toKey !== 'DEC') lines.push(`**Decimal:** \`${value}\``);
         } else {
-            let description = `**Input (${fromName}):** \`${fromPrefix}${cleanNumber}\`\n`;
-            description += `**Decimal:** \`${decimalValue.toLocaleString()}\`\n\n`;
-
-            for (const [baseKey, { prefix, name }] of Object.entries(BASE_ALPHABETS)) {
-                if (baseKey === fromBase) continue;
-
-                try {
-                    let value = formatBigIntToBase(decimalValue, baseKey);
-
-                    description += `**${name} (${baseKey}):** \`${prefix}${value}\`\n`;
-                } catch (error) {
-                    description += `**${name} (${baseKey}):** *Too large to convert*\n`;
-                }
+            for (const key of Object.keys(BASES)) {
+                if (key !== fromKey) lines.push(`**${BASES[key].name} (${key}):** ${written(key)}`);
             }
-
-            const embed = successEmbed(
-                '🔄 Base Conversion Results',
-                description
-            );
-            embed.setColor(getColor('primary'));
-
-            await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
         }
+
+        const embed = createEmbed({ title: toKey ? 'Base Conversion Result' : 'Base Conversion Results', description: lines.join('\n'), color: 'success' });
+        await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
     },
 };
