@@ -1,14 +1,14 @@
-import {randomInt,randomUUID} from 'node:crypto';
+import {createHash,randomInt,randomUUID} from 'node:crypto';
 import {pgConfig} from '../../config/database/postgres.js';
 
-// Experimental transaction primitives. Not wired into bot or dashboard yet:
-// every writer, scheduler and Discord delivery path must first be migrated.
-// These guarantees require all writers to use the same row lock. SQL, older
-// instances, and the legacy full-map adapter can still overwrite these writes.
+// Participating writes serialize on a giveaway row. Old bot versions and SQL
+// outside this protocol can still overwrite these writes; stop old instances.
 const id=x=>typeof x==='string'&&/^\d{17,20}$/.test(x);
 const tokenPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const plain=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const fail=(code,message)=>Object.assign(new Error(message),{code});
+const revision=row=>createHash('sha256').update(`${row.id}:`+row.serialized).digest('hex');
+export const isPostgresGiveawayBackend=client=>client?.db?.getStatus?.()?.connectionType==='postgresql';
 function store(client,guildId,messageId){
  if(!id(guildId)||!id(messageId)||!id(client?.homeGuildId)||client.homeGuildId!==guildId)throw fail('GIVEAWAY_SCOPE','Invalid giveaway scope');
  const db=client?.db,status=db?.getStatus?.();
@@ -20,16 +20,26 @@ function validRecord(row,guildId,messageId){
  if(!plain(d)||(Object.hasOwn(d,'ok')&&Object.hasOwn(d,'value'))||d.guildId!==guildId||d.messageId!==messageId||!id(d.channelId)||!id(d.hostId)||typeof d.prize!=='string'||!d.prize.trim()||d.prize.length>256||!Number.isInteger(d.winnerCount)||d.winnerCount<1||d.winnerCount>100||!Array.isArray(d.participants)||d.participants.length>10000||!d.participants.every(id)||new Set(d.participants).size!==d.participants.length||typeof d.ended!=='boolean'||d.ended!==d.isEnded)throw fail('GIVEAWAY_INVALID','Giveaway data requires review');
  if(!Number.isSafeInteger(d.endsAt)||d.endsAt<0||Number.isNaN(new Date(d.endsAt).getTime())||(d.endTime!==undefined&&d.endTime!==d.endsAt)||row.ends_exact!==true||typeof row.ends_ms!=='string'||!/^\d+(?:\.0+)?$/.test(row.ends_ms)||BigInt(row.ends_ms.split('.')[0])!==BigInt(d.endsAt))throw fail('GIVEAWAY_INVALID','Giveaway timestamps require review');
  if(d.winnerIds!==undefined&&(!Array.isArray(d.winnerIds)||d.winnerIds.length>d.winnerCount||!d.winnerIds.every(x=>id(x)&&d.participants.includes(x))||new Set(d.winnerIds).size!==d.winnerIds.length))throw fail('GIVEAWAY_INVALID','Giveaway winners require review');
+ if(d.winnerPingMessageId!=null&&(!id(d.winnerPingMessageId)||!d.ended||d.winnerPingMessageId===messageId))throw fail('GIVEAWAY_INVALID','Winner message identity requires review');
  if(d.deliveryStatus!=null&&!['pending','delivered'].includes(d.deliveryStatus))throw fail('GIVEAWAY_INVALID','Giveaway delivery status requires review');
  if(!d.ended&&d.deliveryStatus!=null)throw fail('GIVEAWAY_INVALID','Active giveaway delivery status requires review');
  if(d.deliveryStatus==='pending'&&(!tokenPattern.test(d.deliveryToken||'')||!['manual_end','scheduled_end','reroll'].includes(d.deliveryAction)))throw fail('GIVEAWAY_INVALID','Pending delivery requires review');
  return d;
 }
+async function assertNoLegacy(conn,guildId){
+ const key=`guild:${guildId}:giveaways`;
+ const result=await conn.query(`SELECT 1 FROM ${pgConfig.tables.temp_data} WHERE key=$1 UNION ALL SELECT 1 FROM ${pgConfig.tables.cache_data} WHERE key=$1 LIMIT 1`,[key]);
+ if(result.rows.length)throw fail('GIVEAWAY_LEGACY','Legacy giveaway data requires review');
+}
+export async function assertPostgresGiveawayReady(client,guildId){
+ const conn=await store(client,guildId,'10000000000000000').connect();try{await assertNoLegacy(conn,guildId)}finally{conn.release()}
+}
 async function transaction(client,guildId,messageId,fn){
  const conn=await store(client,guildId,messageId).connect();let begun=false;
  try{
   await conn.query('BEGIN');begun=true;await conn.query("SET LOCAL lock_timeout = '5s'");await conn.query("SET LOCAL statement_timeout = '10s'");
-  const result=await conn.query(`SELECT id,CASE WHEN octet_length(data::text)<=262144 THEN data ELSE NULL END AS data,
+  await assertNoLegacy(conn,guildId);
+  const result=await conn.query(`SELECT id,CASE WHEN octet_length(data::text)<=262144 THEN data ELSE NULL END AS data,CASE WHEN octet_length(data::text)<=262144 THEN data::text ELSE NULL END AS serialized,
    CASE WHEN ends_at IS NULL THEN NULL ELSE trunc(extract(epoch FROM (ends_at AT TIME ZONE 'UTC'))*1000)::text END AS ends_ms,
    CASE WHEN ends_at IS NULL THEN false ELSE extract(epoch FROM (ends_at AT TIME ZONE 'UTC'))*1000=trunc(extract(epoch FROM (ends_at AT TIME ZONE 'UTC'))*1000) END AS ends_exact
    FROM ${pgConfig.tables.giveaways} WHERE guild_id=$1 AND message_id=$2 FOR UPDATE`,[guildId,messageId]);
@@ -39,7 +49,7 @@ async function transaction(client,guildId,messageId,fn){
   const time=await conn.query('SELECT floor(extract(epoch FROM clock_timestamp())*1000)::text AS now_ms');
   const now=Number(time.rows[0]?.now_ms);
   if(!Number.isSafeInteger(now))throw fail('GIVEAWAY_INVALID','Invalid database time');
-  const {patch,value}=fn(data,now);
+  const {patch,value}=fn(data,now,row);
   if(patch){const saved=await conn.query(`UPDATE ${pgConfig.tables.giveaways} SET data=data || $3::jsonb,updated_at=CURRENT_TIMESTAMP WHERE guild_id=$1 AND message_id=$2 RETURNING id`,[guildId,messageId,JSON.stringify(patch)]);if(saved.rowCount!==1||saved.rows[0].id!==row.id)throw fail('GIVEAWAY_STALE','Giveaway changed');}
   await conn.query('COMMIT');begun=false;return value;
  }catch(error){if(begun)await conn.query('ROLLBACK').catch(()=>{});throw error}finally{conn.release()}
@@ -60,24 +70,53 @@ export async function joinPostgresGiveaway(client,guildId,messageId,userId){
 
 // A claim persists a unique delivery token and winner set BEFORE any external
 // Discord request. A successful return is required to perform delivery.
-export async function claimPostgresGiveaway(client,guildId,messageId,action,actorId){
- if(!['manual_end','scheduled_end','reroll'].includes(action)||(action==='scheduled_end'?actorId!==null:!id(actorId)))throw fail('GIVEAWAY_INVALID','Invalid claim');
- return transaction(client,guildId,messageId,(d,now)=>{
+export async function claimPostgresGiveaway(client,guildId,messageId,action,actorId,expectedChannelId=null,expectedRevision=null){
+ if(!['manual_end','scheduled_end','reroll'].includes(action)||(action==='scheduled_end'?actorId!==null:!id(actorId))||(expectedChannelId!==null&&!id(expectedChannelId))||(expectedRevision!==null&&!/^[0-9a-f]{64}$/.test(expectedRevision)))throw fail('GIVEAWAY_INVALID','Invalid claim');
+ return transaction(client,guildId,messageId,(d,now,row)=>{
   pending(d);
-  if(action==='reroll'){if(!d.ended||!Array.isArray(d.winnerIds)||d.participants.length===0)throw fail('GIVEAWAY_STATE','Cannot reroll this giveaway');}
+  if(expectedRevision!==null&&revision(row)!==expectedRevision)throw fail('GIVEAWAY_STALE','Giveaway changed; inspect again');
+  if(expectedChannelId!==null&&d.channelId!==expectedChannelId)throw fail('GIVEAWAY_STALE','Giveaway channel changed');
+  if(action==='reroll'){if(!d.ended||d.deliveryStatus!=='delivered'||!Array.isArray(d.winnerIds)||d.participants.length===0)throw fail('GIVEAWAY_STATE','Cannot reroll this giveaway');}
   else {if(d.ended)throw fail('GIVEAWAY_ENDED','Giveaway has ended');if(action==='scheduled_end'&&now<d.endsAt)throw fail('GIVEAWAY_NOT_DUE','Giveaway is not due');}
   const winners=pick(d.participants,d.winnerCount),token=randomUUID(),when=new Date(now).toISOString();
   const patch={ended:true,isEnded:true,winnerIds:winners,deliveryStatus:'pending',deliveryAction:action,deliveryToken:token,...(action==='reroll'?{rerolledAt:when,rerolledBy:actorId}:{endedAt:when,endedBy:actorId})};
-  return {patch,value:{token,action,winners,entries:d.participants.length}};
+  return {patch,value:{token,action,winners,entries:d.participants.length,prize:d.prize,channelId:d.channelId,hostId:d.hostId,winnerCount:d.winnerCount,winnerPingMessageId:id(d.winnerPingMessageId)?d.winnerPingMessageId:null}};
  });
 }
 
 // Caller may mark delivered only after all intended Discord operations are known
 // to have succeeded. It must NEVER automatically repeat uncertain delivery.
 export async function completePostgresGiveawayDelivery(client,guildId,messageId,token,winnerPingMessageId=null){
- if(typeof token!=='string'||!tokenPattern.test(token)||(winnerPingMessageId!==null&&!id(winnerPingMessageId)))throw fail('GIVEAWAY_INVALID','Invalid delivery acknowledgement');
+ if(typeof token!=='string'||!tokenPattern.test(token)||(winnerPingMessageId!==null&&(!id(winnerPingMessageId)||winnerPingMessageId===messageId)))throw fail('GIVEAWAY_INVALID','Invalid delivery acknowledgement');
  return transaction(client,guildId,messageId,d=>{
   if(d.deliveryStatus!=='pending'||d.deliveryToken!==token)throw fail('GIVEAWAY_STALE','Delivery claim changed');
   const patch={deliveryStatus:'delivered',...(winnerPingMessageId===null?{}:{winnerPingMessageId})};return {patch,value:{status:'delivered'}};
  });
+}
+
+// New-record insert only; never replace an existing row. The Discord message is
+// created first to obtain its ID, so any failure/unknown commit requires review.
+export async function createPostgresGiveaway(client,guildId,input){
+ if(!plain(input))throw fail('GIVEAWAY_INVALID','Invalid giveaway');
+ const serialized=JSON.stringify(input);if(!serialized||Buffer.byteLength(serialized)>262144)throw fail('GIVEAWAY_INVALID','Invalid giveaway');
+ const data=JSON.parse(serialized),messageId=data.messageId,pool=store(client,guildId,messageId);
+ validRecord({data,ends_ms:String(data.endsAt),ends_exact:true},guildId,messageId);
+ if(data.ended||data.deliveryStatus!=null||data.participants.length||data.winnerIds!==undefined)throw fail('GIVEAWAY_INVALID','New giveaway data invalid');
+ const conn=await pool.connect();let begun=false;try{
+  await conn.query('BEGIN');begun=true;await conn.query("SET LOCAL lock_timeout = '5s'");await conn.query("SET LOCAL statement_timeout = '10s'");
+  await assertNoLegacy(conn,guildId);
+  await conn.query(`INSERT INTO ${pgConfig.tables.guilds}(id) VALUES($1) ON CONFLICT(id) DO NOTHING`,[guildId]);
+  const saved=await conn.query(`INSERT INTO ${pgConfig.tables.giveaways}(guild_id,message_id,data,ends_at) VALUES($1,$2,$3::jsonb,to_timestamp($4::double precision/1000) AT TIME ZONE 'UTC') ON CONFLICT(guild_id,message_id) DO NOTHING RETURNING id`,[guildId,messageId,serialized,data.endsAt]);
+  if(saved.rowCount!==1)throw fail('GIVEAWAY_EXISTS','Giveaway already exists');await conn.query('COMMIT');begun=false;return true;
+ }catch(e){if(begun)await conn.query('ROLLBACK').catch(()=>{});throw e}finally{conn.release()}
+}
+
+// A bounded read of a single validated record, for Discord preflight only.
+export async function inspectPostgresGiveaway(client,guildId,messageId){
+ return transaction(client,guildId,messageId,(d,now,row)=>({value:{channelId:d.channelId,deliveryStatus:d.deliveryStatus??null,ended:d.ended,entries:d.participants.length,prize:d.prize,hasWinners:Array.isArray(d.winnerIds),winnerPingMessageId:d.winnerPingMessageId??null,revision:revision(row)}}));
+}
+export async function duePostgresGiveaways(client,guildId){
+ const pool=store(client,guildId,'10000000000000000');
+ const result=await pool.query(`SELECT message_id FROM ${pgConfig.tables.giveaways} WHERE guild_id=$1 AND ends_at <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') AND data->>'ended'='false' AND data->>'isEnded'='false' ORDER BY ends_at,message_id LIMIT 1000`,[guildId]);
+ return result.rows.map(r=>r.message_id).filter(id);
 }

@@ -8,6 +8,8 @@ import {
     isGiveawayEnded 
 } from '../utils/giveaways.js';
 import { Mutex } from '../utils/mutex.js';
+import {InteractionHelper} from '../utils/interactionHelper.js';
+import {isPostgresGiveawayBackend,joinPostgresGiveaway} from '../services/storage/postgresGiveawayTransactions.js';
 import {isSQLiteGiveawayBackend,joinSQLiteGiveaway} from '../services/storage/sqliteGiveaways.js';
 import {prepareGiveawayDelivery,completeGiveawayDelivery} from '../services/storage/giveawayDelivery.js';
 import { 
@@ -28,7 +30,20 @@ export const giveawayJoinHandler = {
                 return replyUserError(interaction, { type: ErrorTypes.RATE_LIMIT, message: 'Please wait a moment before interacting with this giveaway again.' });
             }
 
+            if(isPostgresGiveawayBackend(client)&&!await InteractionHelper.safeDefer(interaction,{flags:MessageFlags.Ephemeral}))return;
             await recordUserInteraction(interaction.user.id, interaction.message.id);
+
+            if(isPostgresGiveawayBackend(client)){
+                if(!interaction.inGuild())throw new TitanBotError('Invalid guild',ErrorTypes.VALIDATION,'This button must be used in the server.');
+                let joined;try{joined=await joinPostgresGiveaway(client,interaction.guildId,interaction.message.id,interaction.user.id)}catch(e){
+                    if(e.code==='GIVEAWAY_ENDED')return replyUserError(interaction,{type:ErrorTypes.VALIDATION,message:'This giveaway has ended.'});
+                    throw new TitanBotError('Giveaway join failed',ErrorTypes.DATABASE,'Entry may or may not have been saved. Check before retrying.');
+                }
+                if(joined.status==='already')return replyUserError(interaction,{type:ErrorTypes.VALIDATION,message:'You have already entered this giveaway!'});
+                // Do not refresh the public message: a delayed join edit could
+                // overwrite an end announcement made by another process.
+                return InteractionHelper.safeReply(interaction,{embeds:[successEmbed('Entry saved',`Your entry is recorded. There are ${joined.entries} stored entries; the public count may not update until the giveaway ends.`)],flags:MessageFlags.Ephemeral});
+            }
 
             const lockKey = `giveaway:${interaction.message.id}`;
             await Mutex.runExclusive(lockKey, async () => {
@@ -93,6 +108,8 @@ export const giveawayEndHandler = {
             if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
                 return replyUserError(interaction, { type: ErrorTypes.PERMISSION, message: 'You need the \'Manage Server\' permission to end a giveaway.' });
             }
+
+            if(isPostgresGiveawayBackend(client)){const {runPostgresGiveawayInteraction}=await import('../services/postgresGiveawayRuntime.js');return await runPostgresGiveawayInteraction(interaction,client,'manual_end',interaction.message.id,interaction.channelId);}
 
             const guildGiveaways = await getGuildGiveaways(client, interaction.guildId);
             const giveaway = guildGiveaways.find(g => g.messageId === interaction.message.id);
@@ -211,6 +228,8 @@ export const giveawayRerollHandler = {
             if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
                 return replyUserError(interaction, { type: ErrorTypes.PERMISSION, message: 'You need the \'Manage Server\' permission to reroll a giveaway.' });
             }
+
+            if(isPostgresGiveawayBackend(client)){const {runPostgresGiveawayInteraction}=await import('../services/postgresGiveawayRuntime.js');return await runPostgresGiveawayInteraction(interaction,client,'reroll',interaction.message.id,interaction.channelId);}
 
             const guildGiveaways = await getGuildGiveaways(client, interaction.guildId);
             const giveaway = guildGiveaways.find(g => g.messageId === interaction.message.id);
@@ -342,6 +361,8 @@ export const giveawayViewHandler = {
                     { messageId: interaction.message.id, guildId: interaction.guildId }
                 );
             }
+
+            if(isPostgresGiveawayBackend(client)&&(!giveaway.ended&&!giveaway.isEnded||giveaway.deliveryStatus==='pending'))return replyUserError(interaction,{type:ErrorTypes.VALIDATION,message:giveaway.deliveryStatus==='pending'?'The result delivery is pending or unknown. Please ask an administrator to inspect it.':'The giveaway has not been recorded as ended yet.'});
 
             if (!giveaway.ended && !giveaway.isEnded && !isGiveawayEnded(giveaway)) {
                 return replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'This giveaway has not ended yet, so winners are not available.' });

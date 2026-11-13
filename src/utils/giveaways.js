@@ -4,6 +4,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { logger } from './logger.js';
 import { TitanBotError, ErrorTypes } from './errorHandler.js';
 import { unwrapReplitData } from './database.js';
+import {isPostgresGiveawayBackend,createPostgresGiveaway} from '../services/storage/postgresGiveawayTransactions.js';
 import {isSQLiteGiveawayBackend,readSQLiteGiveaways,saveSQLiteGiveaway,deleteSQLiteGiveaway} from '../services/storage/sqliteGiveaways.js';
 import {transferGiveawaySnapshot} from '../services/storage/giveawaySnapshots.js';
 export {transferGiveawaySnapshot};
@@ -69,6 +70,7 @@ export async function saveGiveaway(client, guildId, giveawayData) {
         }
 
         if(isSQLiteGiveawayBackend(client)){saveSQLiteGiveaway(client,guildId,giveawayData);return true;}
+        if(isPostgresGiveawayBackend(client))return await createPostgresGiveaway(client,guildId,giveawayData);
         const key = giveawayKey(guildId);
         const giveaways = await getGuildGiveaways(client, guildId);
 
@@ -84,7 +86,7 @@ export async function saveGiveaway(client, guildId, giveawayData) {
         if (error instanceof TitanBotError) {
             throw error;
         }
-        if(isSQLiteGiveawayBackend(client))throw new TitanBotError('SQLite giveaway write failed',ErrorTypes.DATABASE,'Could not save giveaway data.');
+        if(isSQLiteGiveawayBackend(client)||isPostgresGiveawayBackend(client))throw new TitanBotError('Persistent giveaway write failed',ErrorTypes.DATABASE,'Could not save giveaway data.');
         return false;
     }
 }
@@ -106,6 +108,7 @@ export async function deleteGiveaway(client, guildId, messageId) {
         }
 
         if(isSQLiteGiveawayBackend(client))return deleteSQLiteGiveaway(client,guildId,messageId);
+        if(isPostgresGiveawayBackend(client))throw new TitanBotError('PostgreSQL giveaway deletion unavailable',ErrorTypes.DATABASE,'Giveaway deletion is temporarily unavailable; no message or data was deleted.');
         const key = giveawayKey(guildId);
         const giveaways = await getGuildGiveaways(client, guildId);
 
@@ -126,7 +129,7 @@ export async function deleteGiveaway(client, guildId, messageId) {
         if (error instanceof TitanBotError) {
             throw error;
         }
-        if(isSQLiteGiveawayBackend(client))throw new TitanBotError('SQLite giveaway write failed',ErrorTypes.DATABASE,'Could not save giveaway data.');
+        if(isSQLiteGiveawayBackend(client)||isPostgresGiveawayBackend(client))throw new TitanBotError('Persistent giveaway write failed',ErrorTypes.DATABASE,'Could not save giveaway data.');
         return false;
     }
 }

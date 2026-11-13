@@ -1,5 +1,7 @@
 import express from 'express';
 import {pgConfig} from '../config/database/postgres.js';
+import {inspectPostgresGiveaway} from '../services/storage/postgresGiveawayTransactions.js';
+import {deliverPostgresGiveaway} from '../services/postgresGiveawayRuntime.js';
 
 const id=x=>typeof x==='string'&&/^\d{17,20}$/.test(x);
 const object=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
@@ -40,8 +42,10 @@ function summarize(row,guildId){
  if(delivery==='review')warnings.push('Status pengiriman tidak dikenal; periksa data.');
  return {messageId:row.message_id,channelId,hostId,prize,status,endAt,entries,winnerCount,delivery,review:warnings.length>0,warnings};
 }
-export function createGiveawayApi(client,{auth}){
+export function createGiveawayApi(client,{auth,csrf}){
  const router=express.Router();
+ router.use('/giveaway',express.json({limit:'4kb'}));
+ router.use('/giveaway',(req,res,next)=>{res.set('Cache-Control','no-store');next()});
  router.get('/giveaway/list',auth,async(req,res)=>{res.set('Cache-Control','no-store');let conn;try{
   if(Object.keys(req.query).some(k=>k!=='after')||(req.query.after!==undefined&&!id(req.query.after)))throw failure(400,'Parameter halaman tidak valid.');
   const after=req.query.after;conn=await pool(client).connect();
@@ -56,5 +60,16 @@ export function createGiveawayApi(client,{auth}){
   await conn.query('COMMIT');const page=rows.slice(0,50);
   res.json({giveaways:page.map(r=>summarize(r,req.guild.id)),next:rows.length>50?page.at(-1).message_id:null,legacyDetected:legacy.rows.length>0});
  }catch(e){if(conn)await conn.query('ROLLBACK').catch(()=>{});res.status(e.status||503).json({error:e.status?e.message:'Gagal membaca data Giveaway dari PostgreSQL.'})}finally{conn?.release()}});
+ router.get('/giveaway/prepare',auth,async(req,res)=>{try{
+  if(Object.keys(req.query).join(',')!=='messageId'||!id(req.query.messageId))throw failure(400,'ID pesan tidak valid.');
+  const view=await inspectPostgresGiveaway(client,req.guild.id,req.query.messageId);
+  res.json({messageId:req.query.messageId,channelId:view.channelId,prize:view.prize,entries:view.entries,ended:view.ended,deliveryStatus:view.deliveryStatus,canReroll:view.ended&&view.deliveryStatus==='delivered'&&view.entries>0&&view.hasWinners,revision:view.revision});
+ }catch(e){const conflict=['GIVEAWAY_INVALID','GIVEAWAY_LEGACY','GIVEAWAY_MISSING'].includes(e.code);res.status(e.status||(conflict?409:503)).json({error:e.status?e.message:conflict?'Data Giveaway perlu diperiksa atau tidak tersedia.':'Database tidak tersedia.'})}});
+ router.post('/giveaway/action',auth,csrf,async(req,res)=>{try{
+  const b=req.body;
+  if(!object(b)||Object.keys(b).sort().join(',')!=='action,confirmed,messageId,revision'||!id(b.messageId)||!['end','reroll'].includes(b.action)||b.confirmed!==true||typeof b.revision!=='string'||!/^[0-9a-f]{64}$/.test(b.revision)||!id(req.session?.user?.id))throw failure(400,'Permintaan Giveaway tidak valid.');
+  const result=await deliverPostgresGiveaway(client,req.guild.id,b.messageId,b.action==='end'?'manual_end':'reroll',req.session.user.id,null,b.revision);
+  res.json({ok:true,winners:result.winners,entries:result.entries});
+ }catch(e){res.status(e.status||503).json({error:e.status?e.message:e.userMessage||'Hasil mungkin tidak diketahui. Periksa Discord dan database sebelum mengulang.'})}});
  return router;
 }

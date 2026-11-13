@@ -17,7 +17,7 @@ Inventaris kode per perubahan dashboard ini, bukan sertifikasi produksi. **Live*
 | AI Studio | Jalur untuk welcome/goodbye AI, Activities, chat, pengetahuan, tools, gambar, builder dan fondasi provider | Fitur dan opsi parsial, beberapa fungsi memerlukan provider/biaya/izin dan konfirmasi. Lihat `DOKUMENTASI-TAHAP-8.md`; label live tidak membuktikan provider sehat. |
 | Pengaturan utama | Halaman utama pengaturan masih placeholder | Server, akses/izin dan kartu pengaturan belum menjadi panel pengelolaan umum. Pengaturan provider AI ada di AI Studio. |
 | Core | Akses perintah dan kategori dari registry bot; baca dan ubah pada PostgreSQL | Tidak mengelola data atau konfigurasi setiap fitur; lihat `DOKUMENTASI-CORE-DASHBOARD.md`. |
-| Giveaway | Daftar ringkas giveaway tersimpan pada PostgreSQL, hanya baca | Status/entri bukan verifikasi Discord; create/end/reroll/delete web belum tersedia. |
+| Giveaway | Daftar PostgreSQL dan aksi akhiri/undi ulang terkonfirmasi | Create/delete web belum tersedia; `/gdelete` PostgreSQL diblokir, pengiriman pending perlu pemeriksaan manual. |
 | Kategori lainnya | Community, Fun, Join to Create, Reaction Roles, Search, Server Stats, Tools, Utility masih berupa daftar rencana | Belum ada halaman dashboard terpadu untuk setiap kategori; integrasikan dan uji satu per satu. |
 
 ## Goodbye non-AI
@@ -44,17 +44,12 @@ Saat edit/hapus tanggal, API menolak jika entri sudah berubah atau hilang sejak 
 
 Web menerima 29 Februari. Scheduler hanya mengumumkannya pada 29 Februari UTC; tidak ada pengumuman otomatis pada tahun non-kabisat. Perintah `/birthday set` masih mempunyai validasi berbeda untuk tanggal tersebut dan perhitungan upcoming lama dapat berbeda; jangan menganggap perilakunya seragam.
 
-### Audit awal Giveaway untuk integrasi berikutnya
+## Giveaway PostgreSQL
 
-Aksi Giveaway melalui web belum tersedia. Jalur PostgreSQL lama `saveGiveaway`/`deleteGiveaway` membaca seluruh map lalu menyimpannya kembali; adapter `guild_giveaways` menghapus dan memasukkan kembali seluruh baris guild. Dua penulis bersamaan dapat menimpa perubahan, dan kesalahan di antara operasi dapat meninggalkan data tidak lengkap. Efek edit/kirim pesan Discord juga terpisah dari commit database; helper penanda delivery saat ini khusus SQLite. Karena itu jangan membuka tombol create/end/reroll/delete di web sebelum menata ulang semua penulis PostgreSQL yang relevan, menyelesaikan strategi konflik dan rekonsiliasi efek Discord, dan menguji perlombaan/kegagalan. Ini temuan audit awal, bukan jaminan daftar seluruh masalah Giveaway sudah lengkap.
+Buka **Fitur bot → Giveaway** sebagai owner atau administrator. Daftar memuat maksimal 50 record per halaman menurut ID pesan; bukan snapshot lintas halaman. Status, waktu dan jumlah entri adalah data tersimpan, bukan verifikasi kondisi Discord, keanggotaan atau kelayakan peserta. Identitas peserta/pemenang tidak dikirim dalam daftar. Preview statis tidak mengakses database.
 
+Dashboard dapat **mengakhiri** giveaway aktif atau **mengundi ulang** giveaway yang pengirimannya tercatat `delivered`. Setelah data terbaru dibaca, pengguna harus mengonfirmasi bahwa bot akan mengedit pesan dan mengirim atau memperbarui pengumuman Discord. Aksi memakai autentikasi, origin, CSRF, validasi, dan pemeriksaan revisi. Pemenang dipilih di server dalam transaksi, bukan di browser. Jika data berubah selama pemeriksaan, muat ulang. Revisi berbasis isi dan ID tidak mendeteksi A→B→A.
 
-### Daftar Giveaway (hanya baca)
+Database dan Discord tidak atomik. Bila hasil simpan/pengiriman tidak diketahui atau bertanda `pending`, periksa database dan Discord sebelum tindakan apa pun; jangan mengulang otomatis. Belum ada workflow rekonsiliasi pending, audit khusus, pembuatan/penghapusan melalui web, atau `/gdelete` PostgreSQL yang aman. Hasil lama tanpa catatan pengiriman `delivered` belum bisa diundi ulang. Ketersediaan pesan dan izin Discord dapat berubah setelah pemeriksaan.
 
-Buka **Fitur bot → Giveaway** setelah login Discord sebagai owner atau administrator. Halaman mengambil maksimal 50 baris setiap kali dari tabel PostgreSQL `giveaways` untuk server yang dikonfigurasi, berurutan menurut ID pesan (bukan waktu). Daftar menampilkan hadiah, ID pesan/channel/host, status, penanda pengiriman jika tersimpan, dan jumlah entri tersimpan. Identitas peserta maupun pemenang tidak dikirim ke browser. Respons dibatasi no-store; data cacat/berukuran besar ditandai untuk diperiksa dan ID baris yang tidak valid menolak halaman itu. Preview statis tidak mengakses database.
-
-Tampilan adalah inventaris tersimpan, **bukan bukti kondisi Discord atau hasil final**. Angka entri menghitung elemen yang disimpan, bukan bukti peserta unik/layak; waktu berasal dari JSON dan ditampilkan pada zona waktu browser. Kolom waktu PostgreSQL untuk scheduler bisa berbeda dan belum diverifikasi pada halaman. Pesan Discord dapat hilang, status dapat tertunda atau tidak cocok, dan daftar dapat sementara kosong/tidak lengkap selama proses penulis lama menghapus lalu memasukkan data. Paging bukan snapshot lintas permintaan. Peringatan legacy hanya memeriksa key persis `guild:<id>:giveaways` pada `temp_data` dan `cache_data`, bukan audit semua key atau backup. Periksa Discord dan penyimpanan sebelum bertindak.
-
-Audit juga menemukan scheduler PostgreSQL yang memodifikasi pesan sebelum menandai hasil di database, sehingga kegagalan/proses paralel bisa menimbulkan keadaan atau pengumuman yang tidak konsisten. Operasi Giveaway web belum disediakan sampai semua jalur terkait direkayasa dan diuji, termasuk pendaftaran, penguncian, pilihan pemenang dan rekonsiliasi pengiriman; lihat juga audit awal di atas.
-
-Fondasi transaksi Giveaway PostgreSQL telah dibuat dan diuji secara terisolasi, tetapi **belum terhubung ke runtime atau aksi web**. Risiko jalur bot lama di atas masih berlaku. Detail dan prasyarat cutover: `DOKUMENTASI-GIVEAWAY-PG.md`.
+**Upgrade:** hentikan semua instance lama dan penulis lain, backup dan periksa data, timestamp UTC serta catatan legacy sebelum memakai versi ini. Penulis lama dan SQL langsung masih bisa mengabaikan protokol. Lihat `DOKUMENTASI-GIVEAWAY-PG.md` untuk syarat, perilaku pembuatan, scheduler dan batas pemulihan. Pengujian memakai PostgreSQL lokal dan Discord mock, belum Discord atau deployment nyata.

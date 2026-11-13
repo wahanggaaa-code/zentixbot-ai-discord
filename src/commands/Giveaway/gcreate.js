@@ -1,3 +1,4 @@
+import {isPostgresGiveawayBackend,assertPostgresGiveawayReady} from '../../services/storage/postgresGiveawayTransactions.js';
 import { SlashCommandBuilder, PermissionFlagsBits, PermissionsBitField, ChannelType, MessageFlags } from 'discord.js';
 import { errorEmbed, successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
@@ -115,6 +116,7 @@ export default {
         const embed = createGiveawayEmbed(initialGiveawayData, "active");
         const row = createGiveawayButtons(false);
 
+        if(isPostgresGiveawayBackend(interaction.client)){try{await assertPostgresGiveawayReady(interaction.client,interaction.guildId)}catch{throw new TitanBotError('Giveaway storage unavailable',ErrorTypes.DATABASE,'Giveaway storage is unavailable or needs review. No message was sent.')}}
         const giveawayMessage = await targetChannel.send({
             content: "🎉 **NEW GIVEAWAY** 🎉",
             embeds: [embed],

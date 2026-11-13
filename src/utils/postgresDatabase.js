@@ -440,7 +440,7 @@ class PostgreSQLDatabase {
     async set(key, value, ttl = null) {
         // Replacements require the configuration service's snapshot transaction.
         // Deleting a guild row can also cascade into unrelated guild data.
-        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left'].includes(parseKey(canonicalizeKey(key)).type)) return false;
+        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left','guild_giveaways'].includes(parseKey(canonicalizeKey(key)).type)) return false;
         const warningKey=canonicalizeKey(key);
         if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
@@ -482,7 +482,7 @@ class PostgreSQLDatabase {
     }
 
     async delete(key) {
-        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left'].includes(parseKey(canonicalizeKey(key)).type)) return false;
+        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left','guild_giveaways'].includes(parseKey(canonicalizeKey(key)).type)) return false;
         const warningKey=canonicalizeKey(key);
         if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
@@ -616,7 +616,7 @@ class PostgreSQLDatabase {
     }
 
     async increment(key, amount = 1) {
-        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left'].includes(parseKey(canonicalizeKey(key)).type)) {
+        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left','guild_giveaways'].includes(parseKey(canonicalizeKey(key)).type)) {
             throw Object.assign(new Error('Generic configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
         }
         try {
@@ -635,7 +635,7 @@ class PostgreSQLDatabase {
     }
 
     async decrement(key, amount = 1) {
-        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left'].includes(parseKey(canonicalizeKey(key)).type)) {
+        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left','guild_giveaways'].includes(parseKey(canonicalizeKey(key)).type)) {
             throw Object.assign(new Error('Generic configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
         }
         try {
@@ -774,31 +774,8 @@ class PostgreSQLDatabase {
                     return false; // Per-member birthday transactions only.
 
                 case 'guild_giveaways':
-                    await this.pool.query(
-                        `INSERT INTO ${pgConfig.tables.guilds} (id, created_at) 
-                         VALUES ($1, CURRENT_TIMESTAMP) 
-                         ON CONFLICT (id) DO NOTHING`,
-                        [parsedKey.guildId]
-                    );
-                    
-                    await this.pool.query(`DELETE FROM ${pgConfig.tables.giveaways} WHERE guild_id = $1`, [parsedKey.guildId]);
+                    return false; // Never replace the full giveaway map.
 
-                    const giveaways = Array.isArray(value)
-                        ? value
-                        : (value && typeof value === 'object' ? Object.values(value) : []);
-
-                    for (const giveaway of giveaways) {
-                        if (!giveaway?.messageId) {
-                            continue;
-                        }
-                        await this.pool.query(
-                            `INSERT INTO ${pgConfig.tables.giveaways} (guild_id, message_id, data, ends_at) 
-                             VALUES ($1, $2, $3, $4)`,
-                            [parsedKey.guildId, giveaway.messageId, giveaway, giveaway.endsAt ? new Date(giveaway.endsAt) : null]
-                        );
-                    }
-                    return true;
-                
                 case 'welcome_config':
                     return false; // Use the transactional welcome configuration service.
 
@@ -976,9 +953,8 @@ class PostgreSQLDatabase {
                     return false; // Never delete the full birthday map.
 
                 case 'guild_giveaways':
-                    await this.pool.query(`DELETE FROM ${pgConfig.tables.giveaways} WHERE guild_id = $1`, [parsedKey.guildId]);
-                    return true;
-                
+                    return false; // Deletion requires coordinated Discord handling.
+
                 case 'welcome_config':
                     return false; // Generic deletion bypasses configuration safeguards.
 

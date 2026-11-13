@@ -88,7 +88,7 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
   router.use('/api/bot', createGoodbyeApi(client, {auth, csrf}));
   router.use('/api/bot', createBirthdayApi(client, {auth, csrf}));
   router.use('/api/bot', createCoreApi(client, {auth, csrf}));
-  router.use('/api/bot', createGiveawayApi(client, {auth}));
+  router.use('/api/bot', createGiveawayApi(client, {auth, csrf}));
   router.use('/api/bot', createModulesApi(client, {auth, csrf}));
   router.use('/api/bot', createOperationsApi(client, {auth, csrf}));
   router.use('/api/bot', createHostingApi({auth, env}));

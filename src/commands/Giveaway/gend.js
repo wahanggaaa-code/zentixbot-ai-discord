@@ -1,3 +1,4 @@
+import {isPostgresGiveawayBackend} from '../../services/storage/postgresGiveawayTransactions.js';
 import { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { errorEmbed, successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
@@ -58,6 +59,8 @@ export default {
                 { providedId: messageId }
             );
         }
+
+        if(isPostgresGiveawayBackend(interaction.client)){const {runPostgresGiveawayInteraction}=await import('../../services/postgresGiveawayRuntime.js');return await runPostgresGiveawayInteraction(interaction,interaction.client,'manual_end',messageId);}
 
         const giveaways = await getGuildGiveaways(interaction.client, interaction.guildId);
         const giveaway = giveaways.find(g => g.messageId === messageId);

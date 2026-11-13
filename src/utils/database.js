@@ -331,17 +331,8 @@ export async function markGiveawayEnded(client, giveawayId, endedData) {
             return false;
         }
 
-        if (isPostgresSqlReady(wrapper)) {
-            const { pgConfig } = await import('../config/database/postgres.js');
-
-            await wrapper.db.pool.query(
-                `UPDATE ${pgConfig.tables.giveaways} 
-                 SET data = $1, updated_at = NOW() 
-                 WHERE id = $2`,
-                [endedData, giveawayId],
-            );
-
-            return true;
+        if (wrapper.getStatus?.()?.connectionType === 'postgresql') {
+            return false; // PostgreSQL must use the claim/ack transaction.
         }
 
         const guildId = endedData?.guildId;
