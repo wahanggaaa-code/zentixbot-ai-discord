@@ -15,7 +15,7 @@ Dokumen ini adalah bagian pertama dari butir checklist "Audit dan integrasikan k
 
 ## Ringkasan
 
-Lima belas masalah diperbaiki dan diuji. Lima belas keterbatasan dicatat tanpa diperbaiki. Sebelum mengubah kode, sebelas masalah pertama dibuktikan lebih dulu dengan menjalankan kode lama pada lingkungan tes yang sama; sisanya didapat dari pembacaan kode.
+Lima belas masalah diperbaiki dan diuji. Lima belas keterbatasan dicatat tanpa diperbaiki. Sebelum mengubah kode, sembilan masalah pertama (S1–S9) dibuktikan lebih dulu dengan menjalankan kode lama pada lingkungan tes yang sama; enam sisanya (S10–S15) didapat dari pembacaan kode dan hanya perilaku barunya yang diuji.
 
 Yang paling penting:
 
