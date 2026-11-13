@@ -1,9 +1,10 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { replyUserError, ErrorTypes } from '../../utils/errorHandler.js';
 
-import searchDefine from './modules/search_define.js';
-import searchGoogle from './modules/search_google.js';
-import searchUrban from './modules/search_urban.js';
+// Each module checks its limit again for itself: prefix commands do not pass through Discord's own check.
+import searchDefine, { MAX_WORD_LENGTH } from './modules/search_define.js';
+import searchGoogle, { MAX_QUERY_LENGTH } from './modules/search_google.js';
+import searchUrban, { MAX_TERM_LENGTH } from './modules/search_urban.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -16,6 +17,8 @@ export default {
                 .addStringOption(option =>
                     option.setName('word')
                         .setDescription('The word to look up')
+                        .setMinLength(2)
+                        .setMaxLength(MAX_WORD_LENGTH)
                         .setRequired(true))
         )
         .addSubcommand(subcommand =>
@@ -25,15 +28,19 @@ export default {
                 .addStringOption(option =>
                     option.setName('query')
                         .setDescription('What would you like to search for?')
+                        .setMinLength(1)
+                        .setMaxLength(MAX_QUERY_LENGTH)
                         .setRequired(true))
         )
         .addSubcommand(subcommand =>
             subcommand
                 .setName('urban')
-                .setDescription('Search Urban Dictionary for definitions')
+                .setDescription('Search Urban Dictionary for definitions (age-restricted channels only)')
                 .addStringOption(option =>
                     option.setName('term')
                         .setDescription('The term to look up on Urban Dictionary')
+                        .setMinLength(2)
+                        .setMaxLength(MAX_TERM_LENGTH)
                         .setRequired(true))
         ),
 

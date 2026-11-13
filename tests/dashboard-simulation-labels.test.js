@@ -167,13 +167,24 @@ test('dashboard: index pages', async (t) => {
     assert.match(page.main.querySelector('.f-index-bar').textContent, /13 FITUR TERHUBUNG KE BOT/);
     assert.doesNotMatch(page.main.querySelector('.f-index-bar').textContent, /SEBAGIAN|SIMULASI/);
     // Categories without a page: named as such, and not dressed up as links.
-    const more = page.main.querySelector('.f-more');
-    assert.equal(more.querySelectorAll('.f-chips span').length, 4);
-    assert.doesNotMatch(more.querySelector('.f-chips').textContent, /Server Stats|Reaction Roles|Fun/, 'these have a page now');
+    const more = page.main.querySelector('.f-more:not(.f-settled)');
+    assert.deepEqual([...more.querySelectorAll('.f-chips span')].map((el) => el.textContent), ['Community', 'Tools', 'Utility']);
     assert.equal(more.querySelectorAll('a, button').length, 0);
     assert.doesNotMatch(more.querySelector('.f-chips').textContent, /↗/);
     assert.match(more.textContent, /BELUM ADA HALAMAN/);
     assert.match(more.textContent, /perintah bot di Discord/);
+    // Search stores nothing: it is not promised a page, and it points at the one place that does affect it.
+    const settled = page.main.querySelector('.f-settled');
+    assert.deepEqual([...settled.querySelectorAll('.f-chips span')].map((el) => el.textContent), ['Search']);
+    assert.doesNotMatch(settled.textContent, /BELUM ADA HALAMAN/);
+    assert.match(settled.textContent, /TANPA HALAMAN SENDIRI/);
+    assert.match(settled.querySelector('p').textContent, /^Search \(\/search define, \/search google, \/search urban\) tidak menyimpan pengaturan apa pun\./);
+    const links = [...settled.querySelectorAll('a')];
+    assert.deepEqual(links.map((a) => [a.textContent, a.getAttribute('href')]), [['Akses perintah', '#features/core']]);
+    assert.equal(settled.querySelectorAll('button, input, select, textarea').length, 0);
+    await page.go(links[0].getAttribute('href'));
+    assert.match(page.main.textContent, /Core & command access/);
+    assert.match(page.main.textContent, /TERHUBUNG KE BOT · PERUBAHAN BERLAKU PADA AKSES PERINTAH/, 'the link opens the live command access page');
 
     await page.go('#ai');
     const ai = [...page.main.querySelectorAll('.f-index-bottom span:first-child')].map((el) => el.textContent);

@@ -44,7 +44,7 @@ Preview statis `dashboard-preview/` yang dibuka sendiri adalah **simulasi**. Aks
 | **Join to Create** | Pengaturan trigger lewat web (aktifkan pada channel suara yang ada, ubah template/batas/bitrate, lepas trigger) dengan konfirmasi dan pemeriksaan perubahan bertabrakan. Inventaris PostgreSQL baca-saja, peringatan data pending, dan pemeriksaan Discord terbatas untuk ID pending. | Web tidak membuat atau menghapus channel Discord dan tidak mengelola channel sementara (hapus, transfer, rekonsiliasi). Belum diuji dengan Discord sungguhan; tampilan belum dilihat di browser. |
 | **AI Studio** | Fondasi provider dan jalur parsial untuk AI Welcome/Goodbye, Activities, chat/agent, pengetahuan, tools, gambar dan Server Builder. | Memerlukan pengaturan provider, kuota, biaya, izin, privasi dan konfirmasi sesuai fitur. Provider/model dan Discord nyata belum diuji; beberapa fungsi tetap terbatas. |
 | **Pengaturan utama** | Pusat kendali baca-saja: kondisi server dan izin bot di Discord, jenis dan status penyimpanan, dasar akses sesi, status konfigurasi hosting (owner bot), serta pintasan ke halaman fitur. Diuji lokal. | Tidak menyimpan apa pun; hanya izin tingkat server; prefix perintah belum dapat diatur lewat web. Opsi simulasi di halaman fitur dan AI Studio belum diaudit. |
-| **Kategori lain** | Kategori bot sudah terdaftar dalam kode/struktur. | Server Stats, Reaction Roles dan Fun sudah diaudit dan memiliki halaman dashboard (`DOKUMENTASI-AUDIT-SERVER-STATS.md`, `DOKUMENTASI-AUDIT-REACTION-ROLES.md`, `DOKUMENTASI-AUDIT-FUN.md`). Community, Search, Tools dan Utility belum memiliki integrasi dashboard terpadu untuk masing-masing kategori. |
+| **Kategori lain** | Kategori bot sudah terdaftar dalam kode/struktur. | Server Stats, Reaction Roles dan Fun sudah diaudit dan memiliki halaman dashboard (`DOKUMENTASI-AUDIT-SERVER-STATS.md`, `DOKUMENTASI-AUDIT-REACTION-ROLES.md`, `DOKUMENTASI-AUDIT-FUN.md`). Search sudah diaudit; ia tidak menyimpan pengaturan sehingga tidak punya halaman sendiri, dan subperintahnya diatur lewat halaman Akses perintah (`DOKUMENTASI-AUDIT-SEARCH.md`). Community, Tools dan Utility belum diaudit dan belum memiliki integrasi dashboard. |
 
 Rincian batas tiap area ada di `DOKUMENTASI-DASHBOARD.md`, `DOKUMENTASI-CORE-DASHBOARD.md` dan `DOKUMENTASI-TAHAP-8.md`.
 
@@ -123,6 +123,8 @@ Untuk basis kode `98b2bee`:
 | Tes Reaction Roles dengan Node 20.20 (2026-11-13) | **64/64 lulus** | Empat berkas: layanan dan perintah Reaction Roles (35), API dan halaman Reaction Roles (17), label simulasi (10), penelusuran dashboard dengan router asli (2). |
 | Regresi Node 22 setelah audit Fun (2026-11-13) | **873 lulus, 0 gagal, 4 dilewati** dari 877 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. |
 | Tes Fun dengan Node 20.20 (2026-11-13) | **64/64 lulus** | Enam berkas: sistem angka (6), `/roll` `/fight` `/flip` (6), permainan hitung dan `/count` (26), API dan halaman permainan hitung (14), label simulasi (10), penelusuran dashboard dengan router asli (2). |
+| Regresi Node 22 setelah audit Search (2026-11-13) | **893 lulus, 0 gagal, 4 dilewati** dari 897 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. Layanan kamus dan Urban Dictionary tidak dihubungi; tes memakai server HTTP lokal dan tiruan. |
+| Tes Search dengan Node 20.20 (2026-11-13) | **32/32 lulus** | Lima berkas: permintaan HTTP dan escape teks (8), perintah `/search` (11), akses per subperintah (1), label simulasi (10), penelusuran dashboard dengan router asli (2). |
 | `npm audit --omit=dev` | **0 kerentanan dilaporkan** | Saat pengujian; hanya dependency produksi dan hasil advisory dapat berubah. |
 | Git diff check | **Bersih** sebelum dokumentasi ini | Pemeriksaan whitespace, bukan audit kode/keamanan. |
 
@@ -157,7 +159,7 @@ Jangan arahkan tes ke database produksi. Sertifikat dan direktori `/tmp` bersifa
   - [ ] Community
   - [x] Fun: 20 masalah diperbaiki, 20 keterbatasan dicatat, halaman dashboard permainan hitung ditambahkan. Rincian di `DOKUMENTASI-AUDIT-FUN.md`. Masih perlu diuji di server Discord nyata.
   - [x] Reaction Roles: 23 masalah diperbaiki, 16 keterbatasan dicatat, halaman dashboard ditambahkan. Rincian di `DOKUMENTASI-AUDIT-REACTION-ROLES.md`. Masih perlu diuji di server Discord nyata.
-  - [ ] Search
+  - [x] Search: 15 masalah diperbaiki, 14 keterbatasan dicatat. Tidak ada halaman baru karena tidak ada pengaturan; dashboard menautkan ke Akses perintah. `/search urban` kini hanya di channel berbatas usia. Rincian di `DOKUMENTASI-AUDIT-SEARCH.md`. Layanan luar dan server Discord nyata belum diuji.
   - [ ] Tools
   - [ ] Utility
 - [x] Halaman pengaturan utama: pusat kendali baca-saja yang memisahkan kondisi Discord saat ini dari data tersimpan. Rincian di `DOKUMENTASI-DASHBOARD.md`.
@@ -179,7 +181,7 @@ Jangan arahkan tes ke database produksi. Sertifikat dan direktori `/tmp` bersifa
 
 Pada saat inventaris, `HEAD` kode adalah `98b2bee`; referensi **lokal** `origin/main` menunjuk ke `51cfc24fa63b74b6f40b7961e7e30b53a0eecaa6`, dan ada **11 commit kode lokal** di depannya. Dokumentasi ini serta pembaruan tabel status ditambahkan sebagai commit dokumentasi terpisah, sehingga bila commit tersebut dibuat dan belum ada push, total menjadi **12 commit lokal**. Angka ini dapat berubah; referensi remote lokal belum membuktikan keadaan GitHub terkini tanpa fetch. Tidak ada push yang dilakukan dalam tahap dokumentasi ini.
 
-**Pembaruan 2026-11-13 (sesi Arena):** paragraf di atas menggambarkan repositori lama. Pekerjaan sejak itu berada di branch `arena/7ea7d915-zentixbot-ai-discord`, bercabang dari commit `87bafcc` di `main`, dan **sudah di-push** ke GitHub. Commit-commit awal sesi ini (protokol Join to Create, penggantian nama, pengaturan Join to Create di web, Birthday, Giveaway, halaman pengaturan utama, audit tiket, audit reward role) hilang dari riwayat Git lokal dua kali ketika lingkungan kerja direset; isi berkasnya utuh dan kini tercatat sebagai satu commit, `fd11ff3`. Audit penulis ekonomi (`b65dd5e`), audit simulasi dashboard (`47369d1`), audit Server Stats (`f9670c3`), audit Reaction Roles (`2c21fd6`) dan audit Fun adalah commit berikutnya di atasnya. Belum ada pull request.
+**Pembaruan 2026-11-13 (sesi Arena):** paragraf di atas menggambarkan repositori lama. Pekerjaan sejak itu berada di branch `arena/7ea7d915-zentixbot-ai-discord`, bercabang dari commit `87bafcc` di `main`, dan **sudah di-push** ke GitHub. Commit-commit awal sesi ini (protokol Join to Create, penggantian nama, pengaturan Join to Create di web, Birthday, Giveaway, halaman pengaturan utama, audit tiket, audit reward role) hilang dari riwayat Git lokal dua kali ketika lingkungan kerja direset; isi berkasnya utuh dan kini tercatat sebagai satu commit, `fd11ff3`. Audit penulis ekonomi (`b65dd5e`), audit simulasi dashboard (`47369d1`), audit Server Stats (`f9670c3`), audit Reaction Roles (`2c21fd6`), audit Fun (`15c523a`) dan audit Search adalah commit berikutnya di atasnya. Belum ada pull request.
 
 | Berkas / direktori | Kegunaan |
 |---|---|
