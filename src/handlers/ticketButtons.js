@@ -1,6 +1,6 @@
 import { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, AttachmentBuilder, MessageFlags } from 'discord.js';
 import { createEmbed, successEmbed } from '../utils/embeds.js';
-import { createTicket, closeTicket, claimTicket, updateTicketPriority } from '../services/ticket.js';
+import { createTicket, closeTicket, claimTicket, updateTicketPriority, getTicketLimit, countOpenTickets } from '../services/ticket.js';
 import { getGuildConfig } from '../services/config/guildConfig.js';
 import { logTicketEvent } from '../utils/ticket/ticketLogging.js';
 import { logger } from '../utils/logger.js';
@@ -116,10 +116,8 @@ const createTicketHandler = {
       }
 
       const config = await getGuildConfig(client, interaction.guildId);
-      const maxTicketsPerUser = config.maxTicketsPerUser || 3;
-      
-      const { getUserTicketCount } = await import('../services/ticket.js');
-      const currentTicketCount = await getUserTicketCount(interaction.guildId, interaction.user.id);
+      const maxTicketsPerUser = getTicketLimit(config);
+      const currentTicketCount = await countOpenTickets(interaction.guild, interaction.user.id, maxTicketsPerUser);
       
       if (currentTicketCount >= maxTicketsPerUser) {
         return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: `You have reached the maximum number of open tickets (${maxTicketsPerUser}).\n\nPlease close your existing tickets before creating a new one.\n\n**Current Tickets:** ${currentTicketCount}/${maxTicketsPerUser}` });
@@ -232,12 +230,8 @@ const closeTicketModalHandler = {
       await closeTicket(interaction.channel, interaction.user, reason);
       await interaction.editReply({ embeds: [successEmbed('Ticket Closed', 'This ticket has been closed.')] });
     } catch (error) {
-      logger.error('Error submitting close ticket modal:', error);
-      if (!interaction.replied && !interaction.deferred) {
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while closing the ticket.' });
-      } else if (interaction.deferred) {
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while closing the ticket.' });
-      }
+      // Shows the reason given by the ticket service (already closed, already claimed, missing permission).
+      await handleInteractionError(interaction, error, { type: 'button', handler: 'ticket', customId: interaction.customId });
     }
   }
 };
@@ -256,12 +250,8 @@ const claimTicketHandler = {
       await claimTicket(interaction.channel, interaction.user);
       await interaction.editReply({ embeds: [successEmbed('Ticket Claimed', 'You have claimed this ticket.')] });
     } catch (error) {
-      logger.error('Error claiming ticket:', error);
-      if (!interaction.replied && !interaction.deferred) {
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while claiming the ticket.' });
-      } else if (interaction.deferred) {
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while claiming the ticket.' });
-      }
+      // Shows the reason given by the ticket service (already closed, already claimed, missing permission).
+      await handleInteractionError(interaction, error, { type: 'button', handler: 'ticket', customId: interaction.customId });
     }
   }
 };
@@ -286,12 +276,8 @@ const priorityTicketHandler = {
       await updateTicketPriority(interaction.channel, priority, interaction.user);
       await interaction.editReply({ embeds: [successEmbed('Priority Updated', `Ticket priority set to **${priority.toUpperCase()}**.`)] });
     } catch (error) {
-      logger.error('Error updating ticket priority:', error);
-      if (!interaction.replied && !interaction.deferred) {
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while updating the priority.' });
-      } else if (interaction.deferred) {
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while updating the priority.' });
-      }
+      // Shows the reason given by the ticket service (already closed, already claimed, missing permission).
+      await handleInteractionError(interaction, error, { type: 'button', handler: 'ticket', customId: interaction.customId });
     }
   }
 };
@@ -407,12 +393,8 @@ const unclaimTicketHandler = {
       await unclaimTicket(interaction.channel, interaction.member);
       await interaction.editReply({ embeds: [successEmbed('Ticket Unclaimed', 'This ticket has been unclaimed.')] });
     } catch (error) {
-      logger.error('Error unclaiming ticket:', error);
-      if (!interaction.replied && !interaction.deferred) {
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while unclaiming the ticket.' });
-      } else if (interaction.deferred) {
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while unclaiming the ticket.' });
-      }
+      // Shows the reason given by the ticket service (already closed, already claimed, missing permission).
+      await handleInteractionError(interaction, error, { type: 'button', handler: 'ticket', customId: interaction.customId });
     }
   }
 };
@@ -436,12 +418,8 @@ const reopenTicketHandler = {
       }
       await interaction.editReply({ embeds: [successEmbed('Ticket Reopened', reopenMessage)] });
     } catch (error) {
-      logger.error('Error reopening ticket:', error);
-      if (!interaction.replied && !interaction.deferred) {
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while reopening the ticket.' });
-      } else if (interaction.deferred) {
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while reopening the ticket.' });
-      }
+      // Shows the reason given by the ticket service (already closed, already claimed, missing permission).
+      await handleInteractionError(interaction, error, { type: 'button', handler: 'ticket', customId: interaction.customId });
     }
   }
 };
@@ -461,12 +439,8 @@ const deleteTicketHandler = {
       await deleteTicket(interaction.channel, interaction.member);
       await interaction.editReply({ embeds: [successEmbed('Ticket Deleted', 'This ticket will be deleted shortly.')] });
     } catch (error) {
-      logger.error('Error deleting ticket:', error);
-      if (!interaction.replied && !interaction.deferred) {
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while deleting the ticket.' });
-      } else if (interaction.deferred) {
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while deleting the ticket.' });
-      }
+      // Shows the reason given by the ticket service (already closed, already claimed, missing permission).
+      await handleInteractionError(interaction, error, { type: 'button', handler: 'ticket', customId: interaction.customId });
     }
   }
 };

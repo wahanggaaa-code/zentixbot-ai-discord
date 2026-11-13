@@ -26,7 +26,7 @@ import { shutdownMusic } from './services/music/playerHandler.js';
 import pkg from '../package.json' with { type: 'json' };
 import { createReadinessHandler } from './services/storage/databaseReadiness.js';
 
-class TitanBot extends Client {
+class ZentixBot extends Client {
   constructor() {
     super({
       intents: [
@@ -63,7 +63,7 @@ class TitanBot extends Client {
 
   async start() {
     try {
-      startupLog('Starting TitanBot...');
+      startupLog('Starting ZentixBot...');
       await new Promise(resolve => setTimeout(resolve, 1000));
       
       startupLog('Initializing database...');
@@ -181,7 +181,7 @@ class TitanBot extends Client {
 
     app.get('/', (req, res) => {
       res.status(200).json({ 
-        message: 'TitanBot System Online',
+        message: 'ZentixBot System Online',
         version: pkg.version,
         timestamp: new Date().toISOString()
       });
@@ -225,7 +225,10 @@ class TitanBot extends Client {
   }
 
   setupCronJobs() {
-    cron.schedule('0 6 * * *', runSafeTask('birthday_check', () => checkBirthdays(this)));
+    // Birthdays are matched against the UTC date, so the daily run is pinned
+    // to UTC as well; otherwise a host in another timezone could announce
+    // the previous day's birthdays.
+    cron.schedule('0 6 * * *', runSafeTask('birthday_check', () => checkBirthdays(this)), { timezone: 'UTC' });
     cron.schedule('* * * * *', runSafeTask('giveaway_check', () => checkGiveaways(this)));
     cron.schedule('* * * * *', runSafeTask('ai_activity', () => runScheduledActivity(this)));
     cron.schedule('* * * * *', runSafeTask('ai_proactive', () => runProactiveAgent(this)));
@@ -371,7 +374,7 @@ class TitanBot extends Client {
 }
 
 try {
-  const bot = new TitanBot();
+  const bot = new ZentixBot();
   
   const setupShutdown = () => {
     process.on('SIGTERM', () => bot.shutdown('SIGTERM'));
@@ -411,4 +414,4 @@ try {
   process.exit(1);
 }
 
-export default TitanBot;
+export default ZentixBot;

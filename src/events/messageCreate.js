@@ -1,8 +1,7 @@
 import { Events } from 'discord.js';
 import { logger } from '../utils/logger.js';
-import { getLevelingConfig, getUserLevelData } from '../services/leveling/leveling.js';
+import { getLevelingConfig } from '../services/leveling/leveling.js';
 import { addXp } from '../services/leveling/xpSystem.js';
-import {isSQLiteLevelBackend} from '../services/leveling/sqliteLevels.js';
 import { checkRateLimit } from '../utils/rateLimiter.js';
 import { parsePrefixCommand } from '../utils/prefixParser.js';
 import { supportsPrefixExecution, executePrefixCommand, resolvePrefixAccessKey } from '../utils/messageAdapter.js';
@@ -22,6 +21,8 @@ import {
 
 const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
+// Same value as the default leveling settings.
+const DEFAULT_XP_COOLDOWN_SECONDS = 20;
 
 export default {
   name: Events.MessageCreate,
@@ -218,12 +219,12 @@ async function handleLeveling(message, client) {
       return;
     }
 
-    const cooldownTime = levelingConfig.xpCooldown || 60;
-    // SQLite performs the authoritative cooldown check together with the award.
-    if (!isSQLiteLevelBackend(client)) {
-      const userData = await getUserLevelData(client, message.guild.id, message.author.id);
-      if (Date.now() - (userData.lastMessage || 0) < cooldownTime * 1000) return;
-    }
+    // The cooldown is checked by addXp, together with the award, so that
+    // messages arriving at the same moment cannot all pass it.
+    const storedCooldown = Number(levelingConfig.xpCooldown);
+    const cooldownTime = Number.isFinite(storedCooldown) && storedCooldown >= 0
+      ? storedCooldown
+      : DEFAULT_XP_COOLDOWN_SECONDS;
 
     const minXP = levelingConfig.xpRange?.min || levelingConfig.xpPerMessage?.min || 15;
     const maxXP = levelingConfig.xpRange?.max || levelingConfig.xpPerMessage?.max || 25;

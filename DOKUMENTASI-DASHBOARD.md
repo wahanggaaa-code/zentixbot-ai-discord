@@ -9,16 +9,16 @@ Inventaris kode per perubahan dashboard ini, bukan sertifikasi produksi. **Live*
 | Overview | Status bot dan sumber hosting jika dikonfigurasi | Resource tidak tersedia bukan berarti host mati; koneksi hosting sebenarnya belum diuji. |
 | Welcome & verification | Welcome, **Goodbye non-AI**, verification dan pengiriman panel verification | Goodbye hanya PostgreSQL; tampilan preview lokal tanpa mengirim. Perubahan pengaturan tidak membuktikan pesan berhasil dikirim saat anggota keluar. |
 | Moderation | Daftar kasus dan tindakan melalui operasi dashboard | Efek Discord dan penyimpanan bukan transaksi bersama; pemeriksaan izin/hierarki dan hasil nyata perlu diuji. |
-| Ticket | Konfigurasi, panel, daftar/detail, aksi dan transcript terbatas | Transcript bergantung channel yang tersedia; tindakan Discord dan database dapat berbeda hasilnya. |
-| Leveling & economy | Pengaturan leveling, leaderboard, pencarian anggota serta sebagian pengelolaan | Reward role tidak disinkronkan otomatis; saldo/wallet dan penulis ekonomi lain masih perlu audit. Jangan sambungkan poin Activities ke wallet. |
+| Ticket | Konfigurasi, panel, daftar/detail, aksi dan transcript terbatas. Aksi yang ditolak service (tiket sudah diklaim, sudah tertutup, atau baru saja diubah) dijawab 409 dengan alasannya | Transcript bergantung channel yang tersedia; tindakan Discord dan database dapat berbeda hasilnya. Lihat `DOKUMENTASI-AUDIT-TIKET.md`. |
+| Leveling & economy | Pengaturan leveling, leaderboard, pencarian anggota serta sebagian pengelolaan | Reward role: lihat bagian "Role hadiah leveling"; belum diuji di Discord nyata. Saldo/wallet dan penulis ekonomi lain masih perlu audit. Jangan sambungkan poin Activities ke wallet. |
 | Music | Player, antrean, pencarian dan kontrol yang didukung | Memerlukan Lavalink dan Discord; perilaku langsung dan resource hosting belum diuji. |
 | Logging | Pengaturan dan riwayat terbatas dari channel audit | Bukan riwayat lengkap semua event; bergantung pada izin dan pesan yang tersedia. |
-| Birthday | Channel pengumuman serta lihat, ubah, atau hapus tanggal yang sudah tersimpan pada PostgreSQL | Penulis lama tidak atomik dan perlu dihentikan saat upgrade. Tidak ada penambahan entri baru melalui web; scheduler dan Discord perlu diuji langsung. |
+| Birthday | Channel pengumuman serta lihat, tambah, ubah, atau hapus tanggal pada PostgreSQL; perubahan dicatat ke channel audit bila logging aktif | Penulis lama tidak atomik dan perlu dihentikan saat upgrade. Scheduler dan Discord perlu diuji langsung; catatan audit bersifat best-effort. |
 | AI Studio | Jalur untuk welcome/goodbye AI, Activities, chat, pengetahuan, tools, gambar, builder dan fondasi provider | Fitur dan opsi parsial, beberapa fungsi memerlukan provider/biaya/izin dan konfirmasi. Lihat `DOKUMENTASI-TAHAP-8.md`; label live tidak membuktikan provider sehat. |
-| Pengaturan utama | Halaman utama pengaturan masih placeholder | Server, akses/izin dan kartu pengaturan belum menjadi panel pengelolaan umum. Pengaturan provider AI ada di AI Studio. |
+| Pengaturan utama | Pusat kendali baca-saja: kondisi server dan izin bot di Discord, penyimpanan, dasar akses sesi, status konfigurasi hosting, pintasan ke halaman fitur | Tidak menyimpan atau mengubah apa pun. Izin yang ditampilkan adalah izin tingkat server. Lihat bagian "Pengaturan utama" di bawah. |
 | Core | Akses perintah dan kategori dari registry bot; baca dan ubah pada PostgreSQL | Tidak mengelola data atau konfigurasi setiap fitur; lihat `DOKUMENTASI-CORE-DASHBOARD.md`. |
-| Giveaway | Daftar PostgreSQL dan aksi akhiri/undi ulang terkonfirmasi | Create/delete web belum tersedia; `/gdelete` PostgreSQL diblokir, pengiriman pending perlu pemeriksaan manual. |
-| Join to Create | Inventaris PostgreSQL baca-saja dan pemeriksaan Discord untuk ID pending yang tercatat | Penulis transaksi masih prototipe terisolasi; edit, pembuatan dan rekonsiliasi belum tersedia di web. |
+| Giveaway | Daftar PostgreSQL; buat, akhiri, undi ulang, hapus; perbaikan pengiriman yang tertunda (tandai terkirim atau kirim ulang) | Discord dan database bukan satu transaksi; setiap aksi bisa terhenti di tengah dan perlu dilanjutkan manual. Belum diuji di Discord nyata. `/gcreate` belum memakai pembersihan pesan yatim. |
+| Join to Create | Pengaturan trigger, inventaris PostgreSQL baca-saja dan pemeriksaan Discord untuk ID pending yang tercatat | Web hanya mengubah pengaturan tersimpan; pengelolaan channel sementara dan rekonsiliasi tidak tersedia di web. |
 | Kategori lainnya | Community, Fun, Reaction Roles, Search, Server Stats, Tools, Utility masih berupa daftar rencana | Belum ada halaman dashboard terpadu untuk setiap kategori; integrasikan dan uji satu per satu. |
 
 ## Goodbye non-AI
@@ -33,17 +33,51 @@ Tidak ada tombol tes Discord dalam integrasi ini. Discord dan PostgreSQL tidak b
 
 Buka **Fitur bot → Birthday** pada dashboard bot yang diautentikasi. Owner atau administrator dapat memilih channel teks untuk pengumuman atau memilih **Nonaktif**. Server memeriksa izin View Channel, Send Messages dan Embed Links saat menyimpan, tetapi izin dan keberadaan channel dapat berubah kemudian. Scheduler bot memakai tanggal **UTC** dan pengaturan channel ini; role birthday opsional tetap diatur di luar halaman ini. Saat channel dinonaktifkan, scheduler juga melewati pembersihan role birthday pada siklus itu; periksa role secara manual bila perlu. Menyimpan tidak mengirim pesan percobaan atau menjamin scheduler berjalan.
 
-Daftar menampilkan ID serta hari/bulan maksimal 50 per halaman, tanpa tahun. Owner/admin dapat mengubah atau menghapus entri yang sudah ada setelah konfirmasi; fitur ini memberi admin kemampuan mengubah data anggota lain, jadi pastikan ada dasar dan izin yang sesuai. Penambahan entri baru melalui web dan riwayat audit khusus perubahan Birthday belum tersedia. Pengubahan memeriksa keanggotaan melalui Discord; penghapusan entri aktif tetap dapat dilakukan tanpa pemeriksaan itu. Penghapusan ini bukan penghapusan menyeluruh dari backup database atau salinan lain. Ini data pribadi: akses dibatasi owner/admin, respons no-store, dan tidak tersedia di preview statis. Data bisa berubah antarhalaman atau tampak sementara tidak lengkap jika penulis bot lama masih aktif; halaman bukan snapshot atau backup. Data tanggal tidak valid pada halaman ditolak untuk ditinjau. Jangan bagikan screenshot atau ekspor tanpa kebutuhan dan izin.
+Daftar menampilkan ID serta hari/bulan maksimal 50 per halaman, tanpa tahun. Owner/admin dapat mengubah atau menghapus entri yang sudah ada setelah konfirmasi; fitur ini memberi admin kemampuan mengubah data anggota lain, jadi pastikan ada dasar dan izin yang sesuai. Penambahan entri baru dan catatan audit dijelaskan di bawah. Pengubahan memeriksa keanggotaan melalui Discord; penghapusan entri aktif tetap dapat dilakukan tanpa pemeriksaan itu. Penghapusan ini bukan penghapusan menyeluruh dari backup database atau salinan lain. Ini data pribadi: akses dibatasi owner/admin, respons no-store, dan tidak tersedia di preview statis. Data bisa berubah antarhalaman atau tampak sementara tidak lengkap jika penulis bot lama masih aktif; halaman bukan snapshot atau backup. Data tanggal tidak valid pada halaman ditolak untuk ditinjau. Jangan bagikan screenshot atau ekspor tanpa kebutuhan dan izin.
 
-API `GET /dashboard/api/bot/birthday/settings`, `PATCH /dashboard/api/bot/birthday/settings`, `GET /dashboard/api/bot/birthday/list` dan `PATCH /dashboard/api/bot/birthday/member/:userId` memerlukan autentikasi; PATCH memerlukan Origin dan CSRF. PATCH pengaturan channel mengunci record guild lalu welcome dan menolak jika channel yang dilihat sudah berubah. Deteksi berdasarkan nilai channel tidak mendeteksi A→B→A; penulis SQL langsung atau bot lama dapat mengabaikan penguncian. Perubahan bidang lain dipertahankan. Jika status commit tidak diketahui, muat ulang dan periksa sebelum mencoba lagi. SQLite belum didukung.
+API `GET /dashboard/api/bot/birthday/settings`, `PATCH /dashboard/api/bot/birthday/settings`, `GET /dashboard/api/bot/birthday/list`, `GET /dashboard/api/bot/birthday/member/:userId`, `POST /dashboard/api/bot/birthday/member` dan `PATCH /dashboard/api/bot/birthday/member/:userId` memerlukan autentikasi; POST dan PATCH memerlukan Origin dan CSRF. PATCH pengaturan channel mengunci record guild lalu welcome dan menolak jika channel yang dilihat sudah berubah. Deteksi berdasarkan nilai channel tidak mendeteksi A→B→A; penulis SQL langsung atau bot lama dapat mengabaikan penguncian. Perubahan bidang lain dipertahankan. Jika status commit tidak diketahui, muat ulang dan periksa sebelum mencoba lagi. SQLite belum didukung.
 
 **Jangan gunakan daftar sebagai bukti data aman:** versi lama bot memakai read-modify-write seluruh daftar dan DELETE/INSERT tanpa transaksi. Jalur bot versi ini memakai transaksi per anggota, termasuk perpindahan cadangan saat keluar/bergabung, dan menolak mutasi map melalui API generik. Hal ini hanya melindungi penulis yang mengikuti aturan tersebut: hentikan semua instans versi lama sebelum upgrade, dan jangan jalankan migrasi atau SQL manual bersamaan. Tidak ada perbaikan otomatis untuk data yang sudah hilang. Backup dan prosedur pemulihan yang diuji tetap diperlukan. Tes scheduler menggunakan Discord tiruan, bukan pengujian penjadwalan atau pengiriman live.
 
-Transaksi Birthday PostgreSQL mengunci guild dan memperbarui satu anggota. Saat memindahkan atau memulihkan, backup yang rusak, berakhir masa berlaku, atau berbenturan dengan tanggal aktif ditolak untuk ditinjau tanpa overwrite. Data legacy birthday yang ambigu juga ditolak saat operasi. Kegagalan event keluar/bergabung dicatat tetapi tidak dicoba ulang otomatis; event yang hilang atau diterima tidak berurutan masih perlu pemulihan manual. `/birthday list` dan `/birthday next` tidak lagi menghapus tanggal hanya karena Discord gagal menemukan anggota. Penyimpanan backup bukan pengganti backup database, dan hasil commit ketika koneksi terputus bisa tidak diketahui. Perintah `/birthday set` lama masih menolak 29 Februari pada tahun yang bukan kabisat, walaupun format penyimpanan dapat menyimpannya.
+Transaksi Birthday PostgreSQL mengunci guild dan memperbarui satu anggota. Saat memindahkan atau memulihkan, backup yang rusak, berakhir masa berlaku, atau berbenturan dengan tanggal aktif ditolak untuk ditinjau tanpa overwrite. Data legacy birthday yang ambigu juga ditolak saat operasi. Kegagalan event keluar/bergabung dicatat tetapi tidak dicoba ulang otomatis; event yang hilang atau diterima tidak berurutan masih perlu pemulihan manual. `/birthday list` dan `/birthday next` tidak lagi menghapus tanggal hanya karena Discord gagal menemukan anggota. Penyimpanan backup bukan pengganti backup database, dan hasil commit ketika koneksi terputus bisa tidak diketahui.
 
 Saat edit/hapus tanggal, API menolak jika entri sudah berubah atau hilang sejak daftar dimuat, jika backup anggota keluar masih ada, atau jika data legacy ambigu. Setelah konflik, muat ulang; jangan menimpa tanpa pemeriksaan. Pemeriksaan tanggal berbasis nilai tidak mendeteksi perubahan A→B→A. Pengecekan anggota Discord tidak atomik dengan transaksi database; anggota dapat keluar sesudah pemeriksaan. Event keluar/bergabung dan operasi dashboard yang memakai versi ini berbagi kunci transaksi; instans lama atau SQL langsung tidak dilindungi. Hasil commit yang terputus bisa tidak diketahui. Halaman daftar memeriksa konflik legacy dalam snapshot baca per halaman, tetapi bukan snapshot stabil antarhalaman.
 
-Web menerima 29 Februari. Scheduler hanya mengumumkannya pada 29 Februari UTC; tidak ada pengumuman otomatis pada tahun non-kabisat. Perintah `/birthday set` masih mempunyai validasi berbeda untuk tanggal tersebut dan perhitungan upcoming lama dapat berbeda; jangan menganggap perilakunya seragam.
+### Menambah tanggal lewat web
+
+Panel **Tambah tanggal** bekerja dalam dua langkah, untuk anggota yang belum mempunyai tanggal:
+
+1. Masukkan ID Discord anggota (17–20 digit) lalu **PERIKSA ANGGOTA**. Server bertanya langsung ke Discord (bukan cache) dan menampilkan nama anggota itu. Jawaban hanya menyebut apakah tanggal sudah ada, tidak menampilkan tanggalnya.
+2. Isi hari dan bulan, lalu konfirmasi. Dialog konfirmasi menyebut tanggal, nama dan ID.
+
+Yang ditolak, tanpa mengubah data apa pun:
+
+| Keadaan | Hasil |
+|---|---|
+| Anggota sudah punya tanggal | 409. Pakai **KELOLA** pada daftar; penambahan tidak pernah menimpa tanggal yang sudah ada, termasuk yang baru saja diisi anggota lewat `/birthday set`. |
+| Ada cadangan saat anggota keluar untuk ID itu | 409, perlu ditinjau. Cadangan dapat berisi tanggal lain dan tidak ditimpa. |
+| Bukan anggota server, atau Discord tidak dapat memastikan | 409 |
+| Akun bot | 400 |
+| Tanggal tidak ada di kalender (30 Februari, 31 April), isi tidak lengkap, atau tanpa konfirmasi | 400 |
+| Data legacy Birthday yang ambigu | 409 |
+| Database tidak tersedia | 503 |
+
+Batasnya: pemeriksaan anggota dan penyimpanan bukan satu transaksi. Anggota yang keluar tepat di antara keduanya dapat tetap tercatat; scheduler melewati anggota yang sudah tidak ada, tetapi catatannya tinggal sampai dihapus lewat **KELOLA**. Jika koneksi terputus saat menyimpan, hasilnya bisa tidak diketahui: muat ulang daftar dan periksa sebelum mengulang. Pencarian anggota berdasarkan nama belum ada; ID diambil dari Discord (Mode Pengembang → Salin ID Pengguna).
+
+### Catatan audit perubahan
+
+Setiap tambah, ubah dan hapus dari dashboard dikirim ke channel audit bot sebagai event `moderation.config`, berisi aksi, anggota yang datanya diubah dan admin yang melakukannya. **Tanggalnya sendiri tidak ditulis** ke channel, karena itu data pribadi. Catatan ini best-effort: tidak terkirim bila logging mati, event itu dinonaktifkan, channel audit belum diatur, atau bot tidak punya izin; kegagalan mengirim tidak membatalkan perubahan dan tidak ditampilkan di dashboard. Ini bukan riwayat yang lengkap atau tahan-ubah, dan perubahan lewat perintah bot (`/birthday set`, `/birthday remove`) tidak dicatat di sini.
+
+### 29 Februari dan tanggal UTC
+
+Aturannya ada di satu tempat, `src/utils/birthdayDates.js`, dan dipakai oleh web, `/birthday set`, `/birthday next`, daftar "hari ini" dan scheduler:
+
+- 29 Februari selalu dapat disimpan, di tahun apa pun. `/birthday set` tidak lagi menolaknya pada tahun non-kabisat.
+- Pada tahun tanpa 29 Februari, ulang tahun itu dirayakan pada **28 Februari**. Pada tahun kabisat dirayakan pada 29 Februari saja. Jadi tepat satu pengumuman per tahun. Untuk memakai 1 Maret, ubah `LEAP_DAY_FALLBACK` di file tersebut.
+- "Hari ini" dan "berapa hari lagi" memakai tanggal kalender **UTC**, bukan zona waktu mesin. `/birthday next` sekarang sepakat dengan scheduler tentang siapa yang berulang tahun hari ini.
+- Scheduler harian dipatok ke **06.00 UTC** (13.00 WIB). Sebelumnya ia berjalan pukul 06.00 zona waktu mesin tetapi mencocokkan tanggal UTC, sehingga pada mesin ber-zona WIB yang diumumkan adalah ulang tahun hari sebelumnya. Pada mesin yang sudah UTC tidak ada perubahan jam.
+
+Belum ada pengaturan zona waktu per server: anggota di WIB menerima ucapan pukul 13.00 pada tanggal yang benar menurut UTC. Scheduler tidak mencatat tanggal terakhir yang sudah diumumkan; bot yang mati pada pukul 06.00 UTC melewatkan hari itu dan tidak mengejarnya.
 
 ## Giveaway PostgreSQL
 
@@ -51,22 +85,97 @@ Buka **Fitur bot → Giveaway** sebagai owner atau administrator. Daftar memuat 
 
 Dashboard dapat **mengakhiri** giveaway aktif atau **mengundi ulang** giveaway yang pengirimannya tercatat `delivered`. Setelah data terbaru dibaca, pengguna harus mengonfirmasi bahwa bot akan mengedit pesan dan mengirim atau memperbarui pengumuman Discord. Aksi memakai autentikasi, origin, CSRF, validasi, dan pemeriksaan revisi. Pemenang dipilih di server dalam transaksi, bukan di browser. Jika data berubah selama pemeriksaan, muat ulang. Revisi berbasis isi dan ID tidak mendeteksi A→B→A.
 
-Database dan Discord tidak atomik. Bila hasil simpan/pengiriman tidak diketahui atau bertanda `pending`, periksa database dan Discord sebelum tindakan apa pun; jangan mengulang otomatis. Belum ada workflow rekonsiliasi pending, audit khusus, pembuatan/penghapusan melalui web, atau `/gdelete` PostgreSQL yang aman. Hasil lama tanpa catatan pengiriman `delivered` belum bisa diundi ulang. Ketersediaan pesan dan izin Discord dapat berubah setelah pemeriksaan.
+Database dan Discord tidak atomik. Bila hasil simpan/pengiriman tidak diketahui atau bertanda `pending`, periksa Discord sebelum tindakan apa pun; bot tidak pernah mengulang sendiri. Hasil lama tanpa catatan pengiriman `delivered` belum bisa diundi ulang. Ketersediaan pesan dan izin Discord dapat berubah setelah pemeriksaan.
+
+### Membuat, menghapus dan memperbaiki pengiriman
+
+Semua aksi di bawah memakai autentikasi, Origin, CSRF, konfirmasi, dan revisi dari data yang baru dibaca. Setiap pesan galat menyebut sisi mana (Discord atau database) yang mungkin sudah berubah.
+
+**Buat.** Panel **Buat Giveaway** meminta channel, hadiah, jumlah pemenang (1–10) dan durasi (5 menit sampai 30 hari, batas yang sama dengan `/gcreate`). Hanya channel teks tempat bot boleh melihat, mengirim pesan dan menyematkan tautan yang ditawarkan, dan izin itu diperiksa lagi saat membuat. Host adalah admin yang login. Bot mengirim pesan publik lebih dulu, lalu menyimpan catatan:
+
+| Yang terjadi | Hasil |
+|---|---|
+| Discord menolak pesan | Tidak ada pesan, tidak ada catatan. |
+| Pengiriman pesan timeout | Pesan mungkin ada; catatan tidak ditulis. Periksa channel dan hapus pesannya bila ada. |
+| Catatan gagal disimpan dan dipastikan tidak ada | Bot menghapus lagi pesannya. Tidak ada yang tertinggal. |
+| Catatan tidak dapat dipastikan (database terputus) | Pesan dibiarkan dan ID-nya ditampilkan. Periksa daftar; bila catatan tidak ada, hapus pesan di Discord. |
+| Commit berhasil tetapi balasannya hilang | Dianggap berhasil setelah catatan terbaca. |
+
+Dua pembuatan bersamaan dalam satu proses bot ditolak salah satunya. Jika browser kehilangan balasan, periksa daftar sebelum mengulang; pengulangan membuat giveaway kedua.
+
+**Hapus.** Bot menandai catatan (sejak itu tombol Join, akhiri, undi ulang dan scheduler menolak giveaway tersebut), menghapus pesan Giveaway di Discord, lalu menghapus catatan beserta semua entrinya. Pengumuman pemenang yang sudah ada **tidak** dihapus. Tidak ada pemulihan setelah terhapus.
+
+- Pesan atau channel yang sudah tidak ada di Discord tidak menghalangi: catatannya tetap dihapus.
+- Jika Discord tidak dapat diperiksa, atau pesan itu ternyata bukan milik bot, tidak ada yang diubah. Halaman lalu menawarkan **HAPUS CATATAN SAJA**, yang tidak menyentuh Discord sama sekali; pesan yang masih ada harus dihapus sendiri.
+- Jika Discord menolak penghapusan (izin), tanda dicabut lagi dan giveaway tetap berjalan.
+- Jika terhenti di tengah (timeout, database terputus), baris tampil sebagai **PENGHAPUSAN BELUM SELESAI** dan tetap beku sampai **LANJUTKAN HAPUS** atau **HAPUS CATATAN SAJA** dijalankan.
+- Jika ada yang bergabung atau giveaway berakhir setelah halaman dimuat, penghapusan ditolak dan harus dikonfirmasi ulang.
+
+**Pengiriman tertunda.** Setelah memeriksa channel, admin memilih salah satu:
+
+- **TANDAI TERKIRIM**: pengumuman pemenang memang sudah ada. Bot tidak mengirim apa pun; pemenang tidak berubah. Sesudahnya giveaway bisa diundi ulang.
+- **KIRIM ULANG**: pengumuman belum ada. Bot mengedit pesan giveaway dan mengumumkan pemenang **yang sama**, tanpa undian baru. Bila pengumuman pertama ternyata sudah terkirim, akan ada dua pengumuman.
+- **HAPUS**: membuang giveaway itu.
+
+Ketiganya ditolak selama dua menit sejak pengiriman dimulai, karena pengiriman itu mungkin masih berjalan. Kirim ulang yang gagal kembali tertunda dan baru bisa dicoba lagi dua menit kemudian.
+
+**Catatan audit.** Buat, hapus, tandai terkirim dan kirim ulang dari dashboard dikirim ke channel audit bot (event `giveaway.create`, `giveaway.delete`, `giveaway.winner`) bila logging aktif. Best-effort: kegagalan mencatat tidak membatalkan aksi dan tidak tampil di dashboard.
+
+**Yang belum ada:** mengubah giveaway yang sudah dibuat; menghapus catatan yang datanya rusak (ditandai PERLU DIPERIKSA; masih perlu SQL manual); pengaman pembuatan ganda antar-proses; pembersihan pesan yatim pada `/gcreate`.
 
 **Upgrade:** hentikan semua instance lama dan penulis lain, backup dan periksa data, timestamp UTC serta catatan legacy sebelum memakai versi ini. Penulis lama dan SQL langsung masih bisa mengabaikan protokol. Lihat `DOKUMENTASI-GIVEAWAY-PG.md` untuk syarat, perilaku pembuatan, scheduler dan batas pemulihan. Pengujian memakai PostgreSQL lokal dan Discord mock, belum Discord atau deployment nyata.
 
-## Join to Create PostgreSQL — inventaris baca-saja
+## Join to Create PostgreSQL — pengaturan trigger dan inventaris
 
-Buka **Fitur bot → Join to Create** sebagai owner/admin. Halaman menampilkan konfigurasi key utama dan hingga 50 channel sementara per halaman, berdasarkan ID, dari PostgreSQL. ID pemilik tidak dikirim ke browser. Respons `GET /dashboard/api/bot/join-to-create` memakai autentikasi dan `no-store`; preview statis tidak meminta data. Tidak ada endpoint atau tombol perubahan. Fallback ditampilkan untuk bidang yang tidak ada pada objek tersimpan; nilai ini bukan bukti fitur berjalan. PostgreSQL yang tidak tersedia ditolak, bukan dianggap konfigurasi kosong. Record kedaluwarsa ditandai terpisah; data invalid, wrapper legacy atau lebih dari 512 KiB ditolak untuk pemeriksaan. Keberadaan key channel terpisah atau key dalam cache diberi peringatan, bukan digabung otomatis. Deteksi ini terbatas pada key yang dikenal, bukan audit menyeluruh.
+Buka **Fitur bot → Join to Create** sebagai owner/admin. Halaman menampilkan konfigurasi key utama dan hingga 50 channel sementara per halaman, berdasarkan ID, dari PostgreSQL. ID pemilik tidak dikirim ke browser. Respons `GET /dashboard/api/bot/join-to-create` memakai autentikasi dan `no-store`; preview statis tidak meminta data. Inventaris ini tidak memiliki endpoint atau tombol perubahan; pengaturan trigger berada pada panel terpisah di halaman yang sama (lihat di bawah). Fallback ditampilkan untuk bidang yang tidak ada pada objek tersimpan; nilai ini bukan bukti fitur berjalan. PostgreSQL yang tidak tersedia ditolak, bukan dianggap konfigurasi kosong. Record kedaluwarsa ditandai terpisah; data invalid, wrapper legacy atau lebih dari 512 KiB ditolak untuk pemeriksaan. Keberadaan key channel terpisah atau key dalam cache diberi peringatan, bukan digabung otomatis. Deteksi ini terbatas pada key yang dikenal, bukan audit menyeluruh.
 
-Data adalah inventaris tersimpan, **bukan status Discord aktual**: channel bisa sudah dihapus, hilang dari data, memiliki izin berbeda atau tersisa setelah kegagalan. Pagination membaca ulang record dan bukan snapshot antarhalaman. Periksa Discord secara langsung sebelum tindakan. Pada implementasi event saat ini, kategori yang tercatat tidak dipakai untuk pembuatan channel: bot memakai parent trigger. Event cleanup juga dapat terlewat ketika fitur nonaktif atau tidak ada trigger. Jangan menganggap halaman ini menjamin cleanup atau fungsi otomatis berjalan.
+Data adalah inventaris tersimpan, **bukan status Discord aktual**: channel bisa sudah dihapus, hilang dari data, memiliki izin berbeda atau tersisa setelah kegagalan. Pagination membaca ulang record dan bukan snapshot antarhalaman. Periksa Discord secara langsung sebelum tindakan. Kategori yang tercatat pada data lama tidak dipakai untuk pembuatan channel: bot memakai parent trigger. Cleanup tetap berjalan saat fitur nonaktif, tetapi event yang gagal diproses tidak diulang sampai bot menyala lagi. Jangan menganggap halaman ini menjamin cleanup atau fungsi otomatis berjalan.
 
-Konfigurasi dan channel sementara masih ditulis sebagai satu objek read-modify-write oleh beberapa jalur bot tanpa penguncian bersama; perubahan bersamaan dapat saling menimpa. Jangan menambahkan mutasi dashboard sebelum semua jalur penulis dimigrasikan dan diuji untuk concurrency, termasuk event dan command; SQL langsung dan instance lama juga perlu ditangani dalam rencana cutover. Halaman ini tidak memperbaiki atau memulihkan data yang telah hilang. Pengujian menggunakan PostgreSQL lokal dan Discord mock, bukan deployment atau Discord live.
+Semua penulis bot sekarang memakai satu protokol transaksi PostgreSQL, sehingga perubahan bersamaan dari perintah dan event tidak lagi saling menimpa. Panel **Pengaturan trigger** memakai protokol yang sama: mengaktifkan Join to Create pada channel suara yang sudah ada, mengubah template nama, batas user dan bitrate, serta melepas trigger. Perubahan memerlukan login owner/admin, Origin, CSRF dan konfirmasi; simpan ditolak bila pengaturan berubah sejak halaman dimuat. Web tidak membuat atau menghapus channel Discord, dan channel sementara tidak dapat dikelola dari web. Perintah `/jointocreate` tetap tersedia. SQL langsung dan restore tidak menghormati kunci protokol. Halaman ini tidak memperbaiki data. Pengujian menggunakan PostgreSQL lokal dan Discord tiruan, bukan deployment atau Discord live.
 
-Audit jalur penulis dan prototipe transaksi yang masih terisolasi: lihat `DOKUMENTASI-JOIN-TO-CREATE-PG.md`. Prototipe belum diaktifkan pada bot atau dashboard.
+Rincian protokol, pemulihan dan risiko: lihat `DOKUMENTASI-JOIN-TO-CREATE-PG.md`.
 
-Inventaris Join to Create juga memperingatkan metadata create tertunda berformat prototipe bila ditemukan, dengan ID channel hanya bila sudah tercatat dan tanpa token atau ID pemilik. Status ini bukan verifikasi Discord; metadata yang tidak valid ditolak. Prototipe penulis masih terisolasi, dan web tidak menyediakan pembatalan atau rekonsiliasi.
+Inventaris Join to Create juga memperingatkan metadata create tertunda bila ditemukan, dengan ID channel hanya bila sudah tercatat dan tanpa token atau ID pemilik. Status ini bukan verifikasi Discord; metadata yang tidak valid ditolak. Create tertunda wajar terlihat selama beberapa detik; bot menyelesaikannya sendiri pada event berikutnya atau saat menyala. Web tidak menyediakan pembatalan atau rekonsiliasi.
 
-Jika metadata pending berformat prototipe memuat ID channel, tidak ada konflik key dan record tidak memiliki TTL, owner/admin dapat memilih **Periksa ID di Discord**. Pemeriksaan hanya membaca ID yang sedang tersimpan, memanggil Discord dengan fresh fetch, lalu membandingkan ulang record database. Hasil “channel suara” hanya menunjukkan respons Discord pada saat pemeriksaan, bukan bukti bahwa channel dibuat oleh operasi tersebut, siapa pemiliknya, izin yang berlaku, atau bahwa channel masih ada setelah itu. Gagal/mismatch/timeout bukan bukti channel tidak ada; periksa manual sebelum mengambil tindakan. Tidak ada pembatalan, perbaikan, atau retry create dari tombol ini.
+Jika metadata pending memuat ID channel (tahap `created`; runtime bot saat ini tidak mencatat tahap ini, jadi tombol ini biasanya tidak muncul), tidak ada konflik key dan record tidak memiliki TTL, owner/admin dapat memilih **Periksa ID di Discord**. Pemeriksaan hanya membaca ID yang sedang tersimpan, memanggil Discord dengan fresh fetch, lalu membandingkan ulang record database. Hasil “channel suara” hanya menunjukkan respons Discord pada saat pemeriksaan, bukan bukti bahwa channel dibuat oleh operasi tersebut, siapa pemiliknya, izin yang berlaku, atau bahwa channel masih ada setelah itu. Gagal/mismatch/timeout bukan bukti channel tidak ada; periksa manual sebelum mengambil tindakan. Tidak ada pembatalan, perbaikan, atau retry create dari tombol ini.
 
 `GET /dashboard/api/bot/join-to-create/pending-check?channelId=…` memerlukan login owner/admin dan `no-store`; ID dari browser hanya pembanding, sementara ID untuk Discord diambil dari database. Pemeriksaan ditolak pada data invalid, konflik key, TTL, perubahan record, atau bot tidak siap. Perbandingan isi tidak mendeteksi A→B→A; kondisi Discord juga bisa berubah sesaat setelah fetch. Pembatas satu request aktif dan jeda dua detik bersifat per proses, bukan batas terdistribusi; timeout delapan detik tidak membatalkan permintaan Discord yang sudah berjalan. Jika request itu macet, pemeriksaan berikutnya diblokir sampai selesai atau proses restart. Pengujian menggunakan Discord mock, bukan Discord live. Alur penulis pending masih prototipe dan belum diaktifkan pada bot.
+
+## Role hadiah leveling
+
+Rincian audit: `DOKUMENTASI-AUDIT-REWARD-ROLE.md`.
+
+- **Halaman leveling** menampilkan setiap role hadiah yang tersimpan dengan keadaannya: dapat diberikan, atau alasan bot tidak dapat atau tidak boleh memberikannya (role hilang, dikelola integrasi, memiliki izin pengelolaan atau moderasi, berada di atas role bot, bot tanpa Manage Roles). Keadaan dibaca dari cache role bot.
+- **Menambah dan menghapus hadiah** dilakukan di kolom "Hadiah role" (satu baris `level:ID role`) atau lewat `/level dashboard` di Discord. Halaman web mengirim seluruh daftar saat disimpan. Role yang tidak dapat atau tidak boleh diberikan ditolak dengan menyebut level dan alasannya; selama daftar masih memuat role seperti itu, pengaturan leveling tidak dapat disimpan dari web.
+- **Halaman usang:** bila pengaturan leveling berubah di tempat lain setelah halaman dimuat (misalnya hadiah ditambahkan lewat `/level dashboard`), simpan ditolak (409) dan halaman harus dimuat ulang. Tanpa ini halaman lama menghapus perubahan tersebut.
+- **Tombol "Sinkronkan role hadiah"** memberikan role yang belum dimiliki anggota yang levelnya sudah mencukupi. Meminta konfirmasi, berjalan di latar belakang, hanya menambah role, dan hasilnya (anggota diperiksa, role diberikan, role bermasalah, error) tampil di halaman. Satu sinkronisasi per server pada satu waktu; setelah selesai, tunggu satu menit sebelum mengulang. Riwayatnya hilang saat bot dinyalakan ulang.
+- **Ubah level anggota** (pencarian anggota) memberikan role hadiah setelah level tersimpan dan menampilkan jumlah role yang diberikan dan yang tidak. Menurunkan level tidak mencabut role.
+
+## Pengaturan utama — pusat kendali baca-saja
+
+Halaman `#settings` pada `/dashboard/` membaca `GET /dashboard/api/bot/control-center`. Di luar `/dashboard/` halaman tetap berupa kartu statis berlabel "Preview statis" dan tidak mengirim permintaan apa pun.
+
+Halaman ini **tidak menyimpan dan tidak mengubah apa pun**. Setiap pengaturan tetap diubah di halaman fiturnya; halaman ini menyediakan pintasan ke sana.
+
+### Yang ditampilkan dan asalnya
+
+| Panel | Isi | Asal |
+|---|---|---|
+| Server di Discord | Nama, ID, jumlah anggota, owner, status gateway, ping, lama aktif, peran tertinggi bot dan jumlah peran di atasnya, 14 izin bot | Cache Discord milik bot pada saat permintaan. Bukan data tersimpan. |
+| Penyimpanan | Jenis database (`postgresql`, `sqlite`, `memory`, `none`) dan status `connected`, `degraded` (bot jatuh ke mode cadangan) atau `unavailable` | Status wrapper database bot. |
+| Akses & izin | Akun, dasar akses (owner server atau Administrator), apakah owner bot, waktu sesi berakhir, daftar peran ber-Administrator (maksimum 50) | Sesi dashboard dan peran server di Discord. |
+| Koneksi hosting | Sudah dikonfigurasi atau belum; tombol "Periksa koneksi" yang memanggil endpoint statistik hosting yang sudah ada | Environment bot. Hanya owner bot (`OWNER_IDS`); orang lain menerima `null`. |
+
+Nilai yang tidak dapat dibaca dikembalikan sebagai `null` dan ditampilkan sebagai "tidak tersedia", bukan sebagai nol atau "baik".
+
+### Batasan
+
+- Izin bot yang ditampilkan adalah izin **tingkat server**. Pengaturan per channel dan urutan peran tetap dapat menghalangi bot di tempat tertentu; halaman ini tidak memeriksanya.
+- Kolom "contoh pemakai" pada tabel izin adalah petunjuk, bukan daftar lengkap fitur yang memerlukan izin tersebut.
+- Status penyimpanan berasal dari status internal bot, bukan dari kueri baru ke database saat halaman dibuka.
+- Jumlah anggota dan daftar peran berasal dari cache bot dan dapat tertinggal dari Discord.
+- "Dikonfigurasi" pada hosting berarti nilai environment ada dan bentuknya benar. Itu tidak membuktikan panel menjawab; gunakan tombol periksa.
+- URL panel, ID server, kunci API dan nilai environment lain tidak pernah dikirim ke browser.
+- Halaman tidak memperbarui diri; gunakan "Muat ulang".
+- Prefix perintah tidak ditampilkan dan tidak dapat diubah dari halaman ini.
+- Diuji dengan Discord tiruan dan jsdom saja, belum pada server Discord atau browser nyata.

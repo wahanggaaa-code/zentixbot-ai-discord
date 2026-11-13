@@ -2,7 +2,7 @@ import {isPostgresGiveawayBackend} from '../../services/storage/postgresGiveaway
 import { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { errorEmbed, successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
-import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
+import { ZentixBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { getGuildGiveaways, saveGiveaway, transferGiveawaySnapshot } from '../../utils/giveaways.js';
 import { 
     selectWinners,
@@ -28,7 +28,7 @@ export default {
 
     async execute(interaction) {
         if (!interaction.inGuild()) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'Giveaway command used outside guild',
                 ErrorTypes.VALIDATION,
                 'This command can only be used in a server.',
@@ -37,7 +37,7 @@ export default {
         }
 
         if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'User lacks ManageGuild permission',
                 ErrorTypes.PERMISSION,
                 "You need the 'Manage Server' permission to reroll a giveaway.",
@@ -50,7 +50,7 @@ export default {
         const messageId = interaction.options.getString("messageid");
 
         if (!messageId || !/^\d+$/.test(messageId)) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'Invalid message ID format',
                 ErrorTypes.VALIDATION,
                 'Please provide a valid message ID.',
@@ -68,7 +68,7 @@ export default {
         const giveaway = giveaways.find(g => g.messageId === messageId);
 
         if (!giveaway) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 `Giveaway not found: ${messageId}`,
                 ErrorTypes.VALIDATION,
                 "No giveaway was found with that message ID in the database.",
@@ -77,7 +77,7 @@ export default {
         }
 
         if (!giveaway.isEnded && !giveaway.ended) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 `Giveaway still active: ${messageId}`,
                 ErrorTypes.VALIDATION,
                 "This giveaway is still active. Please use `/gend` to end it first.",
@@ -88,7 +88,7 @@ export default {
         const participants = giveaway.participants || [];
 
         if (participants.length < giveaway.winnerCount) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 `Insufficient participants for reroll: ${participants.length} < ${giveaway.winnerCount}`,
                 ErrorTypes.VALIDATION,
                 "Not enough entries to pick the required number of winners.",
@@ -246,7 +246,7 @@ export default {
             ? await channel.messages.fetch(giveaway.winnerPingMessageId).catch(error => {if(isSQLiteGiveawayBackend(interaction.client))throw error;return null})
             : null;
         if (isSQLiteGiveawayBackend(interaction.client) && giveaway.winnerPingMessageId && !existingPingMsg) {
-            throw new TitanBotError('Winner message lookup uncertain',ErrorTypes.DATABASE,'Could not confirm the existing winner message. Delivery remains pending; inspect Discord before retrying.');
+            throw new ZentixBotError('Winner message lookup uncertain',ErrorTypes.DATABASE,'Could not confirm the existing winner message. Delivery remains pending; inspect Discord before retrying.');
         }
         if (existingPingMsg) {
             await existingPingMsg.edit({

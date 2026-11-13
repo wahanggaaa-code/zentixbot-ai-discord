@@ -5,7 +5,8 @@ import { getGuildConfig } from './config/guildConfig.js';
 import { getGuildBirthdays, setBirthday as dbSetBirthday, deleteBirthday as dbDeleteBirthday, getMonthName, getBirthdayTrackingKey } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
 import {isPostgresBirthdayBackend,deletePostgresBirthday} from './storage/postgresBirthdays.js';
-import { TitanBotError, ErrorTypes } from '../utils/errorHandler.js';
+import { ZentixBotError, ErrorTypes } from '../utils/errorHandler.js';
+import { validBirthday, isBirthdayOn, nextBirthday } from '../utils/birthdayDates.js';
 
 export function validateBirthday(month, day) {
   
@@ -30,13 +31,12 @@ export function validateBirthday(month, day) {
     };
   }
 
-  const currentYear = new Date().getFullYear();
-  const date = new Date(currentYear, month - 1, day);
-  
-  if (isNaN(date.getTime()) || date.getMonth() !== month - 1 || date.getDate() !== day) {
+  // 29 February is a real birthday and is accepted in every year; see
+  // utils/birthdayDates.js for the day it is celebrated in other years.
+  if (!validBirthday(month, day)) {
     return {
       isValid: false,
-      error: 'Invalid date. Please check the month and day combination (e.g., February 29th only exists in leap years)'
+      error: 'Invalid date. Please check the month and day combination.'
     };
   }
 
@@ -56,7 +56,7 @@ export async function setBirthday(client, guildId, userId, month, day) {
         error: validation.error
       });
       
-      throw new TitanBotError(
+      throw new ZentixBotError(
         validation.error,
         ErrorTypes.VALIDATION,
         validation.error,
@@ -67,7 +67,7 @@ export async function setBirthday(client, guildId, userId, month, day) {
     const success = await dbSetBirthday(client, guildId, userId, month, day);
     
     if (!success) {
-      throw new TitanBotError(
+      throw new ZentixBotError(
         'Failed to save birthday to database',
         ErrorTypes.DATABASE,
         'Failed to set your birthday. Please try again later.',
@@ -176,7 +176,7 @@ export async function deleteBirthday(client, guildId, userId) {
     const success = await dbDeleteBirthday(client, guildId, userId);
     
     if (!success) {
-      throw new TitanBotError(
+      throw new ZentixBotError(
         'Failed to delete birthday from database',
         ErrorTypes.DATABASE,
         'Failed to remove your birthday. Please try again.',
@@ -202,7 +202,7 @@ export async function deleteBirthday(client, guildId, userId) {
   }
 }
 
-export async function getUpcomingBirthdays(client, guildId, limit = 5) {
+export async function getUpcomingBirthdays(client, guildId, limit = 5, now = new Date()) {
   try {
     const birthdays = await getGuildBirthdays(client, guildId);
     
@@ -210,27 +210,19 @@ export async function getUpcomingBirthdays(client, guildId, limit = 5) {
       return [];
     }
 
-    const today = new Date();
-    const currentYear = today.getFullYear();
-    
     const upcomingBirthdays = [];
     
     for (const [userId, userData] of Object.entries(birthdays)) {
-      let nextBirthday = new Date(currentYear, userData.month - 1, userData.day);
-
-      if (nextBirthday < today) {
-        nextBirthday = new Date(currentYear + 1, userData.month - 1, userData.day);
-      }
-      
-      const daysUntil = Math.ceil((nextBirthday - today) / (1000 * 60 * 60 * 24));
+      // Same calendar rules as the daily announcement (UTC date, leap day).
+      const next = nextBirthday(userData, now);
       
       upcomingBirthdays.push({
         userId,
         month: userData.month,
         day: userData.day,
         monthName: getMonthName(userData.month),
-        date: nextBirthday,
-        daysUntil
+        date: next.date,
+        daysUntil: next.daysUntil
       });
     }
 
@@ -247,17 +239,14 @@ export async function getUpcomingBirthdays(client, guildId, limit = 5) {
   }
 }
 
-export async function getTodaysBirthdays(client, guildId) {
+export async function getTodaysBirthdays(client, guildId, now = new Date()) {
   try {
     const birthdays = await getGuildBirthdays(client, guildId);
-    const today = new Date();
-    const currentMonth = today.getUTCMonth() + 1;
-    const currentDay = today.getUTCDate();
 
     const todaysBirthdays = [];
 
     for (const [userId, userData] of Object.entries(birthdays)) {
-      if (userData.month === currentMonth && userData.day === currentDay) {
+      if (isBirthdayOn(userData, now)) {
         todaysBirthdays.push({
           userId,
           month: userData.month,
@@ -277,8 +266,8 @@ export async function getTodaysBirthdays(client, guildId) {
   }
 }
 
-export async function checkBirthdays(client) {
-  const today = new Date();
+export async function checkBirthdays(client, now = new Date()) {
+  const today = now;
   const currentMonth = today.getUTCMonth() + 1;
   const currentDay = today.getUTCDate();
 
@@ -329,7 +318,7 @@ export async function checkBirthdays(client) {
       const birthdays = (await getGuildBirthdays(client, guildId)) || {};
       const birthdayMembers = [];
       for (const [userId, userData] of Object.entries(birthdays)) {
-        if (userData.month === currentMonth && userData.day === currentDay) {
+        if (isBirthdayOn(userData, today)) {
           const member = await guild.members.fetch(userId).catch(() => null);
           if (member) {
             birthdayMembers.push(member);

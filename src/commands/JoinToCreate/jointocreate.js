@@ -2,7 +2,7 @@ import { getColor } from '../../config/bot.js';
 import { SlashCommandBuilder, PermissionFlagsBits, MessageFlags, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, StringSelectMenuBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, EmbedBuilder, LabelBuilder } from 'discord.js';
 import { successEmbed, warningEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
-import { TitanBotError, ErrorTypes, replyUserError } from '../../utils/errorHandler.js';
+import { ZentixBotError, ErrorTypes, replyUserError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import {
     initializeJoinToCreate,
@@ -11,8 +11,29 @@ import {
     removeTriggerChannel,
     hasManageGuildPermission,
     logConfigurationChange,
-    getConfiguration
+    getConfiguration,
+    validateChannelNameTemplate,
+    validateUserLimit,
+    validateBitrate
 } from '../../services/joinToCreateService.js';
+
+const UNKNOWN_CHANNEL_CODE = 10003;
+
+/** "12" → 12; anything else (including "12abc") → NaN, which validation rejects. */
+const parseWholeNumber = (text) => (/^\d{1,3}$/.test(text) ? Number(text) : Number.NaN);
+
+/**
+ * A submitted dialog must be answered on the dialog itself, otherwise Discord
+ * shows a generic failure and the administrator never learns the reason.
+ */
+async function replyModalFailure(modalSubmission, error) {
+    if (!(error instanceof ZentixBotError)) return false;
+    await modalSubmission.reply({
+        content: `❌ ${error.userMessage || 'The change could not be saved.'}`,
+        flags: MessageFlags.Ephemeral
+    }).catch(() => {});
+    return true;
+}
 
 export default {
     data: new SlashCommandBuilder()
@@ -51,11 +72,15 @@ export default {
                     option
                         .setName("user_limit")
                         .setDescription("Maximum number of users in temporary channels. (0 = unlimited)")
+                        .setMinValue(0)
+                        .setMaxValue(99)
                 )
                 .addIntegerOption((option) =>
                     option
                         .setName("bitrate")
-                        .setDescription("Bitrate for temporary channels in kbps (8-96).")
+                        .setDescription("Bitrate in kbps (8-384). Limited by the server's boost level.")
+                        .setMinValue(8)
+                        .setMaxValue(384)
                 )
         )
         .addSubcommand((subcommand) =>
@@ -76,7 +101,7 @@ export default {
         try {
             
             if (!hasManageGuildPermission(interaction.member)) {
-                throw new TitanBotError(
+                throw new ZentixBotError(
                     'User lacks ManageGuild permission',
                     ErrorTypes.PERMISSION,
                     'You need **Manage Server** permission to use this command.'
@@ -100,9 +125,9 @@ export default {
             try {
                 let errorMessage = 'An error occurred while executing this command.';
                 
-                if (error instanceof TitanBotError) {
+                if (error instanceof ZentixBotError) {
                     errorMessage = error.userMessage || 'An error occurred. Please try again.';
-                    logger.debug(`TitanBotError [${error.type}]: ${error.message}`, error.context || {});
+                    logger.debug(`ZentixBotError [${error.type}]: ${error.message}`, error.context || {});
                 } else {
                     logger.error('Unexpected error in jointocreate command:', error);
                     errorMessage = 'An unexpected error occurred. Please try again or contact support.';
@@ -133,10 +158,19 @@ async function handleSetupSubcommand(interaction, client) {
             const staleTriggerChannelIds = [];
 
             for (const existingChannelId of existingConfig.triggerChannels) {
-                const existingChannel = await interaction.guild.channels.fetch(existingChannelId).catch(() => null);
-                if (existingChannel) {
-                    activeTriggerChannels.push(existingChannel);
-                } else {
+                // Only "Unknown Channel" proves the trigger is gone; a failed
+                // lookup must not remove a working configuration.
+                try {
+                    const existingChannel = await interaction.guild.channels.fetch(existingChannelId, { force: true });
+                    if (existingChannel) activeTriggerChannels.push(existingChannel);
+                } catch (fetchError) {
+                    if (fetchError?.code !== UNKNOWN_CHANNEL_CODE) {
+                        throw new ZentixBotError(
+                            `Could not verify existing trigger ${existingChannelId}: ${fetchError?.message}`,
+                            ErrorTypes.DISCORD_API,
+                            'Could not check the existing Join to Create channel in Discord. Please try again.'
+                        );
+                    }
                     staleTriggerChannelIds.push(existingChannelId);
                 }
             }
@@ -152,7 +186,7 @@ async function handleSetupSubcommand(interaction, client) {
                 const primaryTrigger = activeTriggerChannels[0];
                 const errorMessage = `This server already has a Join to Create channel set up: ${primaryTrigger}\n\nUse \`/jointocreate dashboard\` to modify it, or remove it first before creating a new one.`;
 
-                throw new TitanBotError(
+                throw new ZentixBotError(
                     'Guild already has a Join to Create channel',
                     ErrorTypes.VALIDATION,
                     errorMessage,
@@ -166,8 +200,13 @@ async function handleSetupSubcommand(interaction, client) {
             }
         }
 
+        // Validate before anything is created in Discord.
+        validateChannelNameTemplate(nameTemplate);
+        validateUserLimit(userLimit);
+        validateBitrate(bitrate);
+
         logger.debug('Creating Join to Create trigger channel...');
-        let triggerChannel = await interaction.guild.channels.create({
+        const triggerChannel = await interaction.guild.channels.create({
             name: 'Join to Create',
             type: ChannelType.GuildVoice,
             parent: category?.id,
@@ -183,12 +222,19 @@ async function handleSetupSubcommand(interaction, client) {
 
         logger.debug(`Created trigger channel ${triggerChannel.id}, initializing config...`);
 
-        const config = await initializeJoinToCreate(client, guildId, triggerChannel.id, {
-            nameTemplate: nameTemplate,
-            userLimit: userLimit,
-            bitrate: bitrate * 1000,
-            categoryId: category?.id
-        });
+        try {
+            await initializeJoinToCreate(client, guildId, triggerChannel.id, {
+                nameTemplate: nameTemplate,
+                userLimit: userLimit,
+                bitrate: bitrate * 1000
+            });
+        } catch (initError) {
+            // Nothing was saved: do not leave an unconfigured trigger channel behind.
+            await triggerChannel.delete('Join to Create setup could not be saved').catch((deleteError) => {
+                logger.warn(`Could not delete unconfigured trigger channel ${triggerChannel.id}: ${deleteError.message}`);
+            });
+            throw initError;
+        }
 
         await logConfigurationChange(client, guildId, interaction.user.id, 'Initialized Join to Create', {
             channelId: triggerChannel.id,
@@ -206,17 +252,18 @@ async function handleSetupSubcommand(interaction, client) {
             `• Template: \`${nameTemplate}\`\n` +
             `• User Limit: ${userLimit === 0 ? 'Unlimited' : userLimit + ' users'}\n` +
             `• Bitrate: ${bitrate} kbps\n` +
-            `${category ?`• Category: ${category.name}`: '• Category: Root level'}`
+            `${category ?`• Category: ${category.name}`: '• Category: Root level'}\n\n` +
+            `Temporary channels are created in the same category as this channel and copy that category's permissions.`
         );
 
         return await InteractionHelper.safeEditReply(interaction, { embeds: [responseEmbed] });
 
     } catch (error) {
         logger.error('Error in handleSetupSubcommand:', error);
-        if (error instanceof TitanBotError) {
+        if (error instanceof ZentixBotError) {
             throw error;
         }
-        throw new TitanBotError(
+        throw new ZentixBotError(
             `Setup failed: ${error.message}`,
             ErrorTypes.DISCORD_API,
             'Failed to set up Join to Create system. Please check bot permissions.'
@@ -286,7 +333,7 @@ async function handleConfigSubcommand(interaction, client) {
         const message = await interaction.fetchReply();
 
         if (!message || typeof message.createMessageComponentCollector !== 'function') {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'Failed to fetch interaction reply for collector setup',
                 ErrorTypes.DISCORD_API,
                 'Failed to open configuration controls. Please run `/jointocreate dashboard` again.'
@@ -321,11 +368,11 @@ async function handleConfigSubcommand(interaction, client) {
                     await handleChannelDeletion(buttonInteraction, triggerChannel, currentConfig, client);
                 }
             } catch (error) {
-                const userMessage = error instanceof TitanBotError
+                const userMessage = error instanceof ZentixBotError
                     ? error.userMessage || 'An error occurred.'
                     : 'An error occurred while processing your request.';
 
-                if (error instanceof TitanBotError) {
+                if (error instanceof ZentixBotError) {
                     logger.debug(`Button interaction validation error: ${error.message}`, error.context || {});
                 } else {
                     logger.error('Unexpected error in config button interaction:', error);
@@ -353,10 +400,10 @@ async function handleConfigSubcommand(interaction, client) {
         });
 
     } catch (error) {
-        if (error instanceof TitanBotError) {
+        if (error instanceof ZentixBotError) {
             throw error;
         }
-        throw new TitanBotError(
+        throw new ZentixBotError(
             `Config failed: ${error.message}`,
             ErrorTypes.DATABASE,
             'Failed to load configuration.'
@@ -420,9 +467,14 @@ async function handleNameTemplateModal(interaction, triggerChannel, currentConfi
 
         const [newTemplate] = modalSubmission.fields.getStringSelectValues('template');
 
-        await updateChannelConfig(client, interaction.guild.id, triggerChannel.id, {
-            nameTemplate: newTemplate
-        });
+        try {
+            currentConfig.channelConfig = await updateChannelConfig(client, interaction.guild.id, triggerChannel.id, {
+                nameTemplate: newTemplate
+            });
+        } catch (updateError) {
+            if (await replyModalFailure(modalSubmission, updateError)) return;
+            throw updateError;
+        }
 
         await logConfigurationChange(client, interaction.guild.id, interaction.user.id, 'Updated channel name template', {
             channelId: triggerChannel.id,
@@ -438,11 +490,11 @@ async function handleNameTemplateModal(interaction, triggerChannel, currentConfi
         if (error.code === 'INTERACTION_COLLECTOR_ERROR') {
             return;
         }
-        if (error instanceof TitanBotError) {
+        if (error instanceof ZentixBotError) {
             throw error;
         }
         logger.error('Unexpected error in name template modal:', error);
-        throw new TitanBotError(
+        throw new ZentixBotError(
             `Modal error: ${error.message}`,
             ErrorTypes.UNKNOWN,
             'An error occurred while updating the template.'
@@ -488,17 +540,22 @@ async function handleUserLimitModal(interaction, triggerChannel, currentConfig, 
 
         const userInput = modalSubmission.fields.getTextInputValue('user_limit').trim();
 
-        await updateChannelConfig(client, interaction.guild.id, triggerChannel.id, {
-            userLimit: parseInt(userInput)
-        });
+        try {
+            currentConfig.channelConfig = await updateChannelConfig(client, interaction.guild.id, triggerChannel.id, {
+                userLimit: parseWholeNumber(userInput)
+            });
+        } catch (updateError) {
+            if (await replyModalFailure(modalSubmission, updateError)) return;
+            throw updateError;
+        }
 
         await logConfigurationChange(client, interaction.guild.id, interaction.user.id, 'Updated user limit', {
             channelId: triggerChannel.id,
-            userLimit: parseInt(userInput)
+            userLimit: parseWholeNumber(userInput)
         });
 
         await modalSubmission.reply({
-            embeds: [successEmbed('Updated', `User limit changed to ${parseInt(userInput) === 0 ? 'Unlimited' : parseInt(userInput) + ' users'}`)],
+            embeds: [successEmbed('Updated', `User limit changed to ${parseWholeNumber(userInput) === 0 ? 'Unlimited' : parseWholeNumber(userInput) + ' users'}`)],
             flags: MessageFlags.Ephemeral
         });
 
@@ -506,11 +563,11 @@ async function handleUserLimitModal(interaction, triggerChannel, currentConfig, 
         if (error.code === 'INTERACTION_COLLECTOR_ERROR') {
             return;
         }
-        if (error instanceof TitanBotError) {
+        if (error instanceof ZentixBotError) {
             throw error;
         }
         logger.error('Unexpected error in user limit modal:', error);
-        throw new TitanBotError(
+        throw new ZentixBotError(
             `Modal error: ${error.message}`,
             ErrorTypes.UNKNOWN,
             'An error occurred while updating the user limit.'
@@ -556,17 +613,22 @@ async function handleBitrateModal(interaction, triggerChannel, currentConfig, cl
 
         const userInput = modalSubmission.fields.getTextInputValue('bitrate').trim();
 
-        await updateChannelConfig(client, interaction.guild.id, triggerChannel.id, {
-            bitrate: parseInt(userInput) * 1000
-        });
+        try {
+            currentConfig.channelConfig = await updateChannelConfig(client, interaction.guild.id, triggerChannel.id, {
+                bitrate: parseWholeNumber(userInput) * 1000
+            });
+        } catch (updateError) {
+            if (await replyModalFailure(modalSubmission, updateError)) return;
+            throw updateError;
+        }
 
         await logConfigurationChange(client, interaction.guild.id, interaction.user.id, 'Updated bitrate', {
             channelId: triggerChannel.id,
-            bitrate: parseInt(userInput)
+            bitrate: parseWholeNumber(userInput)
         });
 
         await modalSubmission.reply({
-            embeds: [successEmbed('Updated', `Bitrate changed to ${parseInt(userInput)} kbps`)],
+            embeds: [successEmbed('Updated', `Bitrate changed to ${parseWholeNumber(userInput)} kbps`)],
             flags: MessageFlags.Ephemeral
         });
 
@@ -574,11 +636,11 @@ async function handleBitrateModal(interaction, triggerChannel, currentConfig, cl
         if (error.code === 'INTERACTION_COLLECTOR_ERROR') {
             return;
         }
-        if (error instanceof TitanBotError) {
+        if (error instanceof ZentixBotError) {
             throw error;
         }
         logger.error('Unexpected error in bitrate modal:', error);
-        throw new TitanBotError(
+        throw new ZentixBotError(
             `Modal error: ${error.message}`,
             ErrorTypes.UNKNOWN,
             'An error occurred while updating the bitrate.'
@@ -600,7 +662,7 @@ async function handleChannelDeletion(interaction, triggerChannel, currentConfig,
         );
 
         await InteractionHelper.safeReply(interaction, {
-            embeds: [warningEmbed('Confirm Deletion', `Are you sure you want to remove **${triggerChannel.name}** from the Join to Create system?\n\nThis action cannot be undone.`)],
+            embeds: [warningEmbed('Confirm Deletion', `Are you sure you want to remove **${triggerChannel.name}** from the Join to Create system?\n\nTemporary channels that already exist stay until they are empty. This action cannot be undone.`)],
             components: [confirmRow],
             flags: MessageFlags.Ephemeral
         });
@@ -656,9 +718,14 @@ async function handleChannelDeletion(interaction, triggerChannel, currentConfig,
                     });
                 }
             } catch (collectError) {
-                logger.error('Error handling delete confirmation:', collectError);
+                const expected = collectError instanceof ZentixBotError;
+                if (expected) {
+                    logger.debug(`Join to Create trigger removal refused: ${collectError.message}`);
+                } else {
+                    logger.error('Error handling delete confirmation:', collectError);
+                }
                 await buttonInteraction.reply({
-                    content: '❌ An error occurred while processing your request.',
+                    content: `❌ ${expected && collectError.userMessage ? collectError.userMessage : 'An error occurred while processing your request.'}`,
                     flags: MessageFlags.Ephemeral
                 }).catch(() => {});
             }
@@ -671,11 +738,11 @@ async function handleChannelDeletion(interaction, triggerChannel, currentConfig,
         });
 
     } catch (error) {
-        if (error instanceof TitanBotError) {
+        if (error instanceof ZentixBotError) {
             throw error;
         }
         logger.error('Unexpected error in handleChannelDeletion:', error);
-        throw new TitanBotError(
+        throw new ZentixBotError(
             `Deletion error: ${error.message}`,
             ErrorTypes.UNKNOWN,
             'An error occurred while removing the channel.'

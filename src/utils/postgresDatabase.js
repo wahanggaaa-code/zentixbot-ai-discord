@@ -42,6 +42,19 @@ function normalizeTimestampInput(value, fallback = new Date()) {
     return !Number.isNaN(parsedDate.getTime()) ? parsedDate : fallback;
 }
 
+// Data with its own transactional writer. The generic key/value methods
+// (set, delete, increment, decrement) refuse these so that no code path can
+// replace a whole record behind the protocol's back. Reads stay available.
+const PROTOCOL_ONLY_KEY_TYPES = [
+    'guild_config',
+    'welcome_config',
+    'guild_birthdays',
+    'birthday_left',
+    'guild_giveaways',
+    'jointocreate_config',
+    'jointocreate_channels',
+];
+
 class PostgreSQLDatabase {
     constructor() {
         this.pool = null;
@@ -440,7 +453,7 @@ class PostgreSQLDatabase {
     async set(key, value, ttl = null) {
         // Replacements require the configuration service's snapshot transaction.
         // Deleting a guild row can also cascade into unrelated guild data.
-        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left','guild_giveaways'].includes(parseKey(canonicalizeKey(key)).type)) return false;
+        if (typeof key === 'string' && PROTOCOL_ONLY_KEY_TYPES.includes(parseKey(canonicalizeKey(key)).type)) return false;
         const warningKey=canonicalizeKey(key);
         if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
@@ -482,7 +495,7 @@ class PostgreSQLDatabase {
     }
 
     async delete(key) {
-        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left','guild_giveaways'].includes(parseKey(canonicalizeKey(key)).type)) return false;
+        if (typeof key === 'string' && PROTOCOL_ONLY_KEY_TYPES.includes(parseKey(canonicalizeKey(key)).type)) return false;
         const warningKey=canonicalizeKey(key);
         if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
@@ -616,7 +629,7 @@ class PostgreSQLDatabase {
     }
 
     async increment(key, amount = 1) {
-        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left','guild_giveaways'].includes(parseKey(canonicalizeKey(key)).type)) {
+        if (typeof key === 'string' && PROTOCOL_ONLY_KEY_TYPES.includes(parseKey(canonicalizeKey(key)).type)) {
             throw Object.assign(new Error('Generic configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
         }
         try {
@@ -635,7 +648,7 @@ class PostgreSQLDatabase {
     }
 
     async decrement(key, amount = 1) {
-        if (typeof key === 'string' && ['guild_config','welcome_config','guild_birthdays','birthday_left','guild_giveaways'].includes(parseKey(canonicalizeKey(key)).type)) {
+        if (typeof key === 'string' && PROTOCOL_ONLY_KEY_TYPES.includes(parseKey(canonicalizeKey(key)).type)) {
             throw Object.assign(new Error('Generic configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
         }
         try {

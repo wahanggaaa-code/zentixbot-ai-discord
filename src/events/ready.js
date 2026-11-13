@@ -5,6 +5,7 @@ import { reconcileReactionRoleMessages } from "../services/reactionRoleService.j
 import { reconcileTicketPanels, reconcileVerificationPanels, reconcileReactionRolePanelHealth } from "../services/panelHealthService.js";
 import { reconcileLevelRoles } from "../services/leveling/levelRoleSyncService.js";
 import { initRiffyAfterReady } from "../services/music/riffySetup.js";
+import { reconcileJoinToCreate } from "../services/joinToCreateRuntime.js";
 
 export default {
   name: Events.ClientReady,
@@ -48,8 +49,21 @@ export default {
 
       const levelRoleSummary = await reconcileLevelRoles(client, client.homeGuildId);
       startupLog(
-        `Level role sync: scanned ${levelRoleSummary.scannedGuilds} guilds, missing ${levelRoleSummary.missingRewardEntries} reward roles (config preserved), re-awarded ${levelRoleSummary.rolesReAwarded} roles, errors ${levelRoleSummary.errors}`
+        `Level role sync: scanned ${levelRoleSummary.scannedGuilds} guilds, checked ${levelRoleSummary.membersChecked} members, ` +
+        `missing ${levelRoleSummary.missingRewardEntries} reward roles and ${levelRoleSummary.unusableRewardEntries} the bot may not give (config preserved), ` +
+        `re-awarded ${levelRoleSummary.rolesReAwarded} roles, errors ${levelRoleSummary.errors}`
       );
+
+      // Last and isolated: it may wait for an interrupted channel create to
+      // become checkable, and its failure must not hide the summaries above.
+      try {
+        const jtc = await reconcileJoinToCreate(client, client.homeGuildId);
+        startupLog(
+          `Join to Create reconciliation: interrupted creates ${jtc.pendingSettled}, stale records ${jtc.recordsRemoved}, empty channels deleted ${jtc.channelsDeleted}, owners transferred ${jtc.ownersTransferred}, missing triggers ${jtc.triggersRemoved}, waiting members served ${jtc.membersServed}, errors ${jtc.errors}`
+        );
+      } catch (error) {
+        logger.warn(`Join to Create reconciliation skipped (${error?.code ?? error?.name ?? 'error'}): ${error?.message}`);
+      }
     } catch (error) {
       logger.error("Error in ready event:", error);
     }

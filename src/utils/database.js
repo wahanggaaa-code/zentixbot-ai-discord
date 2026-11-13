@@ -4,7 +4,7 @@ import { pgDb } from './postgresDatabase.js';
 import { logger } from './logger.js';
 import { pgConfig } from '../config/database/postgres.js';
 import { assertOnboardingCompatible, assertOnboardingShape } from '../services/config/onboardingConflict.js';
-import { createError, ErrorTypes, TitanBotError } from './errorHandler.js';
+import { createError, ErrorTypes, ZentixBotError } from './errorHandler.js';
 import { BotConfig, getDefaultApplicationQuestions } from '../config/bot.js';
 import {isSQLiteBirthdayBackend,readSQLiteBirthdays,setSQLiteBirthday,deleteSQLiteBirthday} from '../services/storage/sqliteBirthdays.js';
 import {isPostgresBirthdayBackend,readPostgresBirthdays,setPostgresBirthday,deletePostgresBirthday} from '../services/storage/postgresBirthdays.js';
@@ -58,6 +58,7 @@ export {
 export {
     getTicketData,
     getOpenTicketCountForUser,
+    listOpenTicketsForUser,
     saveTicketData,
     deleteTicketData,
     getTicketCounter,
@@ -519,7 +520,7 @@ async function writeWelcomeChanges(client, guildId, changes, replace = false) {
         return merged;
     } catch (error) {
         logger.error(`Error saving welcome config for guild ${guildId}:`, error);
-        if (error instanceof TitanBotError) throw error;
+        if (error instanceof ZentixBotError) throw error;
         throw createError('Failed to save welcome configuration', ErrorTypes.DATABASE,
             'Failed to save welcome settings. The database is unavailable or needs review.', {guildId});
     }
@@ -1124,192 +1125,6 @@ export async function getApplications(client, guildId, filters = {}) {
         logger.error(`Error getting applications for guild ${guildId}:`, error);
         return [];
     }
-}
-
-export async function getJoinToCreateConfig(client, guildId) {
-    if (!client.db) {
-        logger.warn('Database not available for getJoinToCreateConfig');
-        return {
-            enabled: false,
-            triggerChannels: [],
-            categoryId: null,
-            channelNameTemplate: "{username}'s Room",
-            userLimit: 0,
-            bitrate: 64000,
-            temporaryChannels: {}
-        };
-    }
-    
-    const key = getJoinToCreateConfigKey(guildId);
-    try {
-        const config = await client.db.get(key, {});
-        const unwrapped = unwrapReplitData(config);
-        
-        return {
-            enabled: unwrapped.enabled || false,
-            triggerChannels: unwrapped.triggerChannels || [],
-            categoryId: unwrapped.categoryId || null,
-            channelNameTemplate: unwrapped.channelNameTemplate || "{username}'s Room",
-            userLimit: unwrapped.userLimit || 0,
-            bitrate: unwrapped.bitrate || 64000,
-            temporaryChannels: unwrapped.temporaryChannels || {},
-            ...unwrapped
-        };
-    } catch (error) {
-        logger.error(`Error getting Join to Create config for guild ${guildId}:`, error);
-        return {
-            enabled: false,
-            triggerChannels: [],
-            categoryId: null,
-            channelNameTemplate: "{username}'s Room",
-            userLimit: 0,
-            bitrate: 64000,
-            temporaryChannels: {}
-        };
-    }
-}
-
-export async function saveJoinToCreateConfig(client, guildId, config) {
-    const key = getJoinToCreateConfigKey(guildId);
-    try {
-        const existingConfig = await getJoinToCreateConfig(client, guildId);
-        const mergedConfig = { ...existingConfig, ...config };
-        
-        await client.db.set(key, mergedConfig);
-        return true;
-    } catch (error) {
-        logger.error(`Error saving Join to Create config for guild ${guildId}:`, error);
-        return false;
-    }
-}
-
-export async function updateJoinToCreateConfig(client, guildId, updates) {
-    try {
-        const currentConfig = await getJoinToCreateConfig(client, guildId);
-        const updatedConfig = { ...currentConfig, ...updates };
-        
-        await saveJoinToCreateConfig(client, guildId, updatedConfig);
-        return updatedConfig;
-    } catch (error) {
-        logger.error(`Error updating Join to Create config for guild ${guildId}:`, error);
-        throw error;
-    }
-}
-
-export async function addJoinToCreateTrigger(client, guildId, channelId, options = {}) {
-    try {
-        const config = await getJoinToCreateConfig(client, guildId);
-        
-        if (config.triggerChannels.includes(channelId)) {
-            return false;
-        }
-        
-        config.triggerChannels.push(channelId);
-        config.enabled = config.triggerChannels.length > 0;
-        
-        if (Object.keys(options).length > 0) {
-            if (!config.channelOptions) {
-                config.channelOptions = {};
-            }
-            config.channelOptions[channelId] = {
-                nameTemplate: options.nameTemplate || config.channelNameTemplate,
-                userLimit: options.userLimit || config.userLimit,
-                bitrate: options.bitrate || config.bitrate
-            };
-        }
-        
-        return await saveJoinToCreateConfig(client, guildId, config);
-    } catch (error) {
-        logger.error(`Error adding Join to Create trigger for guild ${guildId}:`, error);
-        return false;
-    }
-}
-
-export async function removeJoinToCreateTrigger(client, guildId, channelId) {
-    try {
-        const config = await getJoinToCreateConfig(client, guildId);
-        
-        const index = config.triggerChannels.indexOf(channelId);
-        if (index === -1) {
-            return false;
-        }
-        
-        config.triggerChannels.splice(index, 1);
-        config.enabled = config.triggerChannels.length > 0;
-        
-        if (config.channelOptions && config.channelOptions[channelId]) {
-            delete config.channelOptions[channelId];
-        }
-        
-        return await saveJoinToCreateConfig(client, guildId, config);
-    } catch (error) {
-        logger.error(`Error removing Join to Create trigger for guild ${guildId}:`, error);
-        return false;
-    }
-}
-
-export async function registerTemporaryChannel(client, guildId, channelId, ownerId, triggerChannelId) {
-    try {
-        const config = await getJoinToCreateConfig(client, guildId);
-        
-        config.temporaryChannels[channelId] = {
-            ownerId,
-            triggerChannelId,
-            createdAt: Date.now()
-        };
-        
-        return await saveJoinToCreateConfig(client, guildId, config);
-    } catch (error) {
-        logger.error(`Error registering temporary channel for guild ${guildId}:`, error);
-        return false;
-    }
-}
-
-export async function unregisterTemporaryChannel(client, guildId, channelId) {
-    try {
-        const config = await getJoinToCreateConfig(client, guildId);
-        
-        if (config.temporaryChannels[channelId]) {
-            delete config.temporaryChannels[channelId];
-            return await saveJoinToCreateConfig(client, guildId, config);
-        }
-        
-        return false;
-    } catch (error) {
-        logger.error(`Error unregistering temporary channel for guild ${guildId}:`, error);
-        return false;
-    }
-}
-
-export async function getTemporaryChannelInfo(client, guildId, channelId) {
-    try {
-        const config = await getJoinToCreateConfig(client, guildId);
-        return config.temporaryChannels[channelId] || null;
-    } catch (error) {
-        logger.error(`Error getting temporary channel info for guild ${guildId}:`, error);
-        return null;
-    }
-}
-
-export function formatChannelName(template, variables) {
-    let formatted = template;
-    
-    const replacements = {
-        '{username}': variables.username || 'User',
-        '{user_tag}': variables.userTag || 'User#0000',
-        '{display_name}': variables.displayName || 'User',
-        '{guild_name}': variables.guildName || 'Server',
-        '{channel_name}': variables.channelName || 'Voice Channel'
-    };
-    
-    for (const [placeholder, value] of Object.entries(replacements)) {
-        formatted = formatted.replace(new RegExp(placeholder.replace(/[{}]/g, '\\$&'), 'g'), value);
-    }
-    
-    formatted = formatted.replace(/[^\w\s-]/g, '').trim();
-formatted = formatted.substring(0, 100);
-    
-    return formatted || 'Voice Channel';
 }
 
 function generateCaseId() {

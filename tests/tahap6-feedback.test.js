@@ -9,7 +9,10 @@ const guild='123456789012345678',channel='234567890123456789',owner='34567890123
 test('ticket feedback enforces ticket owner, keeps comment, and reports failed writes',async()=>{
  const originals={initialized:db.initialized,db:db.db,useFallback:db.useFallback,get:db.get,set:db.set,reply:InteractionHelper.safeReply,edit:InteractionHelper.safeEditReply,defer:InteractionHelper.safeDefer};
  let stored={id:'42',userId:owner,status:'closed',feedback:{comment:'Excellent'}};let result,shown=false,fail=false,readFail=false;
- db.initialized=true;db.useFallback=false;db.db={isAvailable:()=>true,pool:{query:async()=>{if(readFail)throw Error('database offline');return {rows:[{data:structuredClone(stored)}]}}}};db.get=async()=>structuredClone(stored);db.set=async(k,v)=>{if(fail)return false;stored=structuredClone(v);return true};
+ db.initialized=true;db.useFallback=false;db.db={isAvailable:()=>true,pool:{query:async(sql,args)=>{if(readFail)throw Error('database offline');
+  // Ticket writes are compare-and-swap updates: only the record that was read may be replaced.
+  if(/^\s*UPDATE/.test(sql)){if(fail)throw Error('write failed');if(JSON.stringify(stored)!==args[3])return {rowCount:0};stored=JSON.parse(args[2]);return {rowCount:1}}
+  return {rows:[{data:structuredClone(stored)}]}}}};db.get=async()=>structuredClone(stored);db.set=async(k,v)=>{if(fail)return false;stored=structuredClone(v);return true};
  InteractionHelper.safeReply=async(i,v)=>{result=v};InteractionHelper.safeEditReply=async(i,v)=>{result=v};InteractionHelper.safeDefer=async()=>true;
  const client={guilds:{cache:new Map(),fetch:async()=>null}};
  const interaction=id=>({user:{id},client,deferUpdate:async()=>{},showModal:async()=>{shown=true},update:async v=>{result=v},fields:{getTextInputValue:()=> 'Good service'}});

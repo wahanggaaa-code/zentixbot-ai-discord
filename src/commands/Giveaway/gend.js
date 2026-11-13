@@ -2,7 +2,7 @@ import {isPostgresGiveawayBackend} from '../../services/storage/postgresGiveaway
 import { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { errorEmbed, successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
-import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
+import { ZentixBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { getGuildGiveaways, saveGiveaway } from '../../utils/giveaways.js';
 import { 
     endGiveaway as endGiveawayService,
@@ -30,7 +30,7 @@ export default {
 
     async execute(interaction) {
         if (!interaction.inGuild()) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'Giveaway command used outside guild',
                 ErrorTypes.VALIDATION,
                 'This command can only be used in a server.',
@@ -39,7 +39,7 @@ export default {
         }
 
         if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'User lacks ManageGuild permission',
                 ErrorTypes.PERMISSION,
                 "You need the 'Manage Server' permission to end a giveaway.",
@@ -52,7 +52,7 @@ export default {
         const messageId = interaction.options.getString("messageid");
 
         if (!messageId || !/^\d+$/.test(messageId)) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'Invalid message ID format',
                 ErrorTypes.VALIDATION,
                 'Please provide a valid message ID.',
@@ -66,7 +66,7 @@ export default {
         const giveaway = giveaways.find(g => g.messageId === messageId);
 
         if (!giveaway) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 `Giveaway not found: ${messageId}`,
                 ErrorTypes.VALIDATION,
                 "No giveaway was found with that message ID in the database.",
@@ -92,7 +92,7 @@ export default {
         });
 
         if (!channel || !channel.isTextBased()) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 `Channel not found: ${updatedGiveaway.channelId}`,
                 ErrorTypes.VALIDATION,
                 "Could not find the channel where the giveaway was hosted. No new state was saved.",
@@ -108,7 +108,7 @@ export default {
             });
 
         if (!message) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 `Message not found: ${messageId}`,
                 ErrorTypes.VALIDATION,
                 "Could not find the giveaway message. No new state was saved.",

@@ -1,8 +1,9 @@
 import { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, MessageFlags } from 'discord.js';
 import { logger } from '../../utils/logger.js';
-import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
+import { ZentixBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { checkUserPermissions } from '../../utils/permissionGuard.js';
 import { setUserLevel, getLevelingConfig } from '../../services/leveling/leveling.js';
+import { syncMemberRewardRoles, describeRewardSync } from '../../services/leveling/rewardRoles.js';
 import { createEmbed } from '../../utils/embeds.js';
 
 import { InteractionHelper } from '../../utils/interactionHelper.js';
@@ -55,7 +56,7 @@ export default {
 
     const member = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
     if (!member) {
-      throw new TitanBotError(
+      throw new ZentixBotError(
         `User ${targetUser.id} not found in this guild`,
         ErrorTypes.USER_INPUT,
         'The specified user is not in this server.'
@@ -64,11 +65,17 @@ export default {
 
     const userData = await setUserLevel(client, interaction.guildId, targetUser.id, newLevel);
 
+    // The level is stored. Reward roles follow and cannot undo it. Roles are
+    // only added: lowering a level leaves earlier reward roles in place.
+    const rewardLine = describeRewardSync(
+      await syncMemberRewardRoles(interaction.guild, member, userData.level, levelingConfig, { source: '/levelset' })
+    );
+
     await InteractionHelper.safeEditReply(interaction, {
       embeds: [
         createEmbed({
           title: 'Level Set',
-          description: `Successfully set ${targetUser.tag}'s level to **${newLevel}**.\n**Total XP:** ${userData.totalXp}`,
+          description: `Successfully set ${targetUser.tag}'s level to **${newLevel}**.\n**Total XP:** ${userData.totalXp}${rewardLine ? `\n${rewardLine}` : ''}`,
           color: 'success'
         })
       ]

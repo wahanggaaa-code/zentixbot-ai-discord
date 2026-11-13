@@ -17,7 +17,7 @@ import { getColor, BotConfig } from '../../../config/bot.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
 import { successEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
-import { TitanBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
+import { ZentixBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
 import { getEconomyPrefix } from '../../../utils/database.js';
 import { getEconomyData, addMoney, removeMoney, getMaxBankCapacity } from '../../../utils/economy.js';
 import fs from 'fs/promises';
@@ -177,14 +177,14 @@ export default {
                             break;
                     }
                 } catch (error) {
-                    if (error instanceof TitanBotError) {
+                    if (error instanceof ZentixBotError) {
                         logger.debug(`Economy dashboard validation error: ${error.message}`);
                     } else {
                         logger.error('Unexpected economy dashboard error:', error);
                     }
 
                     const errorMessage =
-                        error instanceof TitanBotError
+                        error instanceof ZentixBotError
                             ? error.userMessage || 'An error occurred while processing your selection.'
                             : 'An unexpected error occurred while processing your request.';
 
@@ -213,9 +213,9 @@ export default {
                 }
             });
         } catch (error) {
-            if (error instanceof TitanBotError) throw error;
+            if (error instanceof ZentixBotError) throw error;
             logger.error('Unexpected error in economy_dashboard:', error);
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 `Economy dashboard failed: ${error.message}`,
                 ErrorTypes.UNKNOWN,
                 'Failed to open the economy dashboard.',
