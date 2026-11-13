@@ -132,7 +132,7 @@ Untuk basis kode `98b2bee`:
 | Regresi Node 22 setelah audit Tools (2026-11-13) | **1062 lulus, 0 gagal, 4 dilewati** dari 1066 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. Layanan is.gd tidak dihubungi; tes memakai server HTTP lokal. |
 | Tes Tools dengan Node 20.20 (2026-11-13) | **77/77 lulus** | Enam berkas: kalkulator (10), hitung mundur dan poll (19), perintah lain dan akses perintah (22), embed builder (14), label simulasi (10), penelusuran dashboard dengan router asli (2). |
 | Regresi Node 22 setelah perubahan port dan dashboard HTTP (2026-11-13) | **1073 lulus, 0 gagal, 4 dilewati** dari 1077 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. Bukan panel hosting sungguhan. |
-| Tes port dan dashboard HTTP dengan Node 20.20 (2026-11-13) | **31/31 lulus** | Tiga berkas: port dan login HTTP (9), halaman pengaturan (17), login dan CSRF (5). |
+| Tes port dan dashboard HTTP dengan Node 20.20 (2026-11-13) | **31/31 lulus** | Tiga berkas: port dan login HTTP (9), pusat kendali dan halaman pengaturan (15), login, CSRF dan satu-server (7). |
 | `npm audit --omit=dev` | **0 kerentanan dilaporkan** | Saat pengujian; hanya dependency produksi dan hasil advisory dapat berubah. |
 | Git diff check | **Bersih** sebelum dokumentasi ini | Pemeriksaan whitespace, bukan audit kode/keamanan. |
 
