@@ -18,7 +18,8 @@ Inventaris kode per perubahan dashboard ini, bukan sertifikasi produksi. **Live*
 | Pengaturan utama | Halaman utama pengaturan masih placeholder | Server, akses/izin dan kartu pengaturan belum menjadi panel pengelolaan umum. Pengaturan provider AI ada di AI Studio. |
 | Core | Akses perintah dan kategori dari registry bot; baca dan ubah pada PostgreSQL | Tidak mengelola data atau konfigurasi setiap fitur; lihat `DOKUMENTASI-CORE-DASHBOARD.md`. |
 | Giveaway | Daftar PostgreSQL dan aksi akhiri/undi ulang terkonfirmasi | Create/delete web belum tersedia; `/gdelete` PostgreSQL diblokir, pengiriman pending perlu pemeriksaan manual. |
-| Kategori lainnya | Community, Fun, Join to Create, Reaction Roles, Search, Server Stats, Tools, Utility masih berupa daftar rencana | Belum ada halaman dashboard terpadu untuk setiap kategori; integrasikan dan uji satu per satu. |
+| Join to Create | Inventaris PostgreSQL baca-saja dan pemeriksaan Discord untuk ID pending yang tercatat | Penulis transaksi masih prototipe terisolasi; edit, pembuatan dan rekonsiliasi belum tersedia di web. |
+| Kategori lainnya | Community, Fun, Reaction Roles, Search, Server Stats, Tools, Utility masih berupa daftar rencana | Belum ada halaman dashboard terpadu untuk setiap kategori; integrasikan dan uji satu per satu. |
 
 ## Goodbye non-AI
 
