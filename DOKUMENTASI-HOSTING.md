@@ -40,7 +40,7 @@ Untuk dashboard:
 | `DASHBOARD_URL` | Alamat dashboard, tanpa path: `https://bot.example.com` atau `http://203.0.113.5:16954` |
 | `DASHBOARD_ALLOW_HTTP` | `true` hanya bila alamatnya `http://` publik. Lihat bagian "Dashboard lewat HTTP" |
 
-Musik tidak memerlukan variabel: bot memakai tiga node Lavalink publik yang tercantum di `lavalink/nodes.json` (vinster, trinium, nazha). Node itu milik pihak ketiga dan belum diuji dari bot ini; untuk menggantinya, ubah berkas itu atau isi `LAVALINK_NODES`. Nama `LAVALINK_URI` dan `LAVALINK_NODE_NAME` tidak dibaca bot.
+Musik tidak memerlukan variabel: bot memakai enam node Lavalink publik yang tercantum di `lavalink/nodes.json` (vinster, trinium, nazha, serenetia, jirayu, millohost), diambil dari daftar di `lavalink.darrennathanael.com`. Node itu milik pihak ketiga dan belum diuji dari bot ini; untuk menggantinya, ubah berkas itu atau isi `LAVALINK_NODES`. Nama `LAVALINK_URI` dan `LAVALINK_NODE_NAME` tidak dibaca bot.
 
 Opsional: `AI_IMAGE_API_KEY` + `AI_IMAGE_MODEL`, `AI_AUDIO_API_KEY` + `AI_AUDIO_MODEL`, `AI_BRAVE_SEARCH_KEY`, `HOSTING_PANEL_URL` + `HOSTING_SERVER_ID` + `HOSTING_API_KEY`, `TMDB_API_KEY`, `LOG_LEVEL`, `SENTRY_DSN`. Daftar lengkap ada di `.env.example`.
 

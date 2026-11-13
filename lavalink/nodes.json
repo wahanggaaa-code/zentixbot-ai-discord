@@ -19,5 +19,26 @@
     "password": "nazhafreelava",
     "secure": true,
     "name": "nazha"
+  },
+  {
+    "host": "lavalinkv4.serenetia.com",
+    "port": 443,
+    "password": "https://seretia.link/discord",
+    "secure": true,
+    "name": "serenetia"
+  },
+  {
+    "host": "lavalink.jirayu.net",
+    "port": 443,
+    "password": "youshallnotpass",
+    "secure": true,
+    "name": "jirayu"
+  },
+  {
+    "host": "lava-v4.millohost.my.id",
+    "port": 443,
+    "password": "https://discord.gg/mjS5J2K3ep",
+    "secure": true,
+    "name": "millohost"
   }
 ]
