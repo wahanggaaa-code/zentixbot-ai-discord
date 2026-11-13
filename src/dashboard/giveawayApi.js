@@ -35,7 +35,10 @@ function summarize(row,guildId){
  if(entries===null)warnings.push('Daftar entri tidak tersedia atau tidak valid.');
  const winnerCount=Number.isInteger(d.winnerCount)&&d.winnerCount>=1&&d.winnerCount<=100?d.winnerCount:null;
  if(winnerCount===null)warnings.push('Jumlah pemenang tidak valid.');
- return {messageId:row.message_id,channelId,hostId,prize,status,endAt,entries,winnerCount,review:warnings.length>0,warnings};
+ const delivery=d.deliveryStatus==null?'not_recorded':d.deliveryStatus==='delivered'?'delivered':d.deliveryStatus==='pending'?'pending':'review';
+ if(delivery==='pending')warnings.push('Pengiriman tertunda atau hasilnya tidak diketahui; periksa Discord.');
+ if(delivery==='review')warnings.push('Status pengiriman tidak dikenal; periksa data.');
+ return {messageId:row.message_id,channelId,hostId,prize,status,endAt,entries,winnerCount,delivery,review:warnings.length>0,warnings};
 }
 export function createGiveawayApi(client,{auth}){
  const router=express.Router();
