@@ -3,6 +3,7 @@ import { successEmbed } from '../../../utils/embeds.js';
 import { getGuildConfig, setGuildConfig } from '../../../services/config/guildConfig.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
 import { logger } from '../../../utils/logger.js';
+import { checkPremiumRole } from '../../../services/economy/premiumRole.js';
 
 import { replyUserError, ErrorTypes } from '../../../utils/errorHandler.js';
 export default {
@@ -13,6 +14,16 @@ export default {
 
         const role = interaction.options.getRole('role');
         const guildId = interaction.guildId;
+
+        // The bot hands this role to whoever pays for it, so it must be a role
+        // the bot can give and one that grants no server control.
+        const verdict = checkPremiumRole(interaction.guild, role);
+        if (!verdict.ok) {
+            return await replyUserError(interaction, {
+                type: ErrorTypes.VALIDATION,
+                message: `${role?.toString?.() ?? 'That role'} cannot be the premium role. ${verdict.message}`,
+            });
+        }
 
         try {
             const currentConfig = await getGuildConfig(client, guildId);

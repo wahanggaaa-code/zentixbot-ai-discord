@@ -1,6 +1,5 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { createEmbed, errorEmbed, successEmbed, infoEmbed, warningEmbed } from '../../utils/embeds.js';
-import { getEconomyData, addMoney, removeMoney, setEconomyData } from '../../utils/economy.js';
 import { withErrorHandling, createError, ErrorTypes } from '../../utils/errorHandler.js';
 import { logger } from '../../utils/logger.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
@@ -67,29 +66,6 @@ export default {
                 );
             }
 
-            const [senderData, receiverData] = await Promise.all([
-                getEconomyData(client, guildId, senderId),
-                getEconomyData(client, guildId, receiver.id)
-            ]);
-
-            if (!senderData) {
-                throw createError(
-                    "Failed to load sender economy data",
-                    ErrorTypes.DATABASE,
-                    "Failed to load your economy data. Please try again later.",
-                    { userId: senderId, guildId }
-                );
-            }
-            
-            if (!receiverData) {
-                throw createError(
-                    "Failed to load receiver economy data",
-                    ErrorTypes.DATABASE,
-                    "Failed to load the receiver's economy data. Please try again later.",
-                    { userId: receiver.id, guildId }
-                );
-            }
-
             const result = await EconomyService.transferMoney(
                 client, 
                 guildId, 
@@ -98,8 +74,9 @@ export default {
                 amount
             );
 
-            const updatedSenderData = await getEconomyData(client, guildId, senderId);
-            const updatedReceiverData = await getEconomyData(client, guildId, receiver.id);
+            // Balances as committed by the transfer itself.
+            const senderBalance = result.senderNewBalance;
+            const receiverBalance = result.receiverNewBalance;
 
             const embed = successEmbed(
                 'Payment Successful',
@@ -113,7 +90,7 @@ export default {
                     },
                     {
                         name: "Your New Balance",
-                        value: `$${updatedSenderData.wallet.toLocaleString()}`,
+                        value: `$${senderBalance.toLocaleString()}`,
                         inline: true,
                     },
                 )
@@ -128,8 +105,8 @@ export default {
                 senderId,
                 receiverId: receiver.id,
                 amount,
-                senderBalance: updatedSenderData.wallet,
-                receiverBalance: updatedReceiverData.wallet
+                senderBalance,
+                receiverBalance
             });
 
             try {
@@ -138,7 +115,7 @@ export default {
                     description: `${interaction.user.username} paid you **$${amount.toLocaleString()}**.` 
                 }).addFields({
                     name: "Your New Cash",
-                    value: `$${updatedReceiverData.wallet.toLocaleString()}`,
+                    value: `$${receiverBalance.toLocaleString()}`,
                     inline: true,
                 });
                 await receiver.send({ embeds: [receiverEmbed] });

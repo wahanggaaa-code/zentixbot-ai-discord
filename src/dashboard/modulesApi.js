@@ -68,6 +68,40 @@ function rewardRoleOrThrow(guild, level, id) {
     }
     return id;
 }
+
+// The premium role is given by the bot to whoever pays for it; the same rules
+// as for level reward roles apply. `ok:false` roles stay in the list so the
+// admin can see why they cannot be chosen.
+function premiumRoleChoices(guild) {
+    return listStaffRoles(guild).map(({ id, name }) => {
+        const verdict = checkRewardRole(guild, guild.roles.cache.get(id) ?? null);
+        return { id, name, ok: verdict.ok, reason: verdict.ok ? null : REWARD_ROLE_REASONS[verdict.code] ?? 'Role tidak dapat diberikan.' };
+    });
+}
+
+function premiumRoleState(guild, id) {
+    if (!id) return null;
+    const role = guild.roles.cache.get(id) ?? null;
+    const verdict = checkRewardRole(guild, role);
+    return {
+        roleId: id,
+        name: role?.name ?? null,
+        ok: verdict.ok,
+        code: verdict.ok ? null : verdict.code,
+        reason: verdict.ok ? null : REWARD_ROLE_REASONS[verdict.code] ?? 'Role tidak dapat diberikan.',
+    };
+}
+
+function premiumRoleOrThrow(guild, id) {
+    if (id === null) return null;
+    if (typeof id !== 'string') throw bad('Role premium tidak valid.');
+    const verdict = checkRewardRole(guild, guild.roles.cache.get(id) ?? null);
+    if (!verdict.ok) {
+        const reason = REWARD_ROLE_REASONS[verdict.code] ?? 'Role tidak dapat diberikan.';
+        throw bad(`Role premium tidak dapat dipakai: ${reason}`);
+    }
+    return id;
+}
 function pool(client){const db=client.db;if(!db || db.getStatus?.().isDegraded || !db.isAvailable?.() || !db.db?.isAvailable?.() || !db.db.pool) throw bad('Database persisten tidak tersedia.',503);return db.db.pool;}
 async function read(client,id){const sqlite=sqliteBackend(client);if(sqlite)return normalizeGuildConfig(unwrapReplitData(sqlite.botGet(`guild:${id}:config`)||{}),GUILD_CONFIG_DEFAULTS);const rows=await pool(client).query(`SELECT config FROM ${tables.guilds} WHERE id=$1`,[id]);return normalizeGuildConfig(unwrapReplitData(rows.rows[0]?.config || {}),GUILD_CONFIG_DEFAULTS);}
 async function transaction(client,id,fn,includeWelcome=false) {
@@ -114,7 +148,7 @@ export function createModulesApi(client,{auth,csrf}) {
   if(kind==='economy')data={premiumRoleId:cfg.premiumRoleId||null};
   if(kind==='ticket')data={channelId:cfg.ticketPanelChannelId||null,messageId:cfg.ticketPanelMessageId||null,staffRoleId:cfg.ticketStaffRoleId||null,categoryId:cfg.ticketCategoryId||null,closedCategoryId:cfg.ticketClosedCategoryId||null,message:cfg.ticketPanelMessage||'Click the button below to create a support ticket.',buttonText:cfg.ticketButtonLabel||'Create Ticket',logsChannelId:cfg.ticketLogsChannelId||null,transcriptChannelId:cfg.ticketTranscriptChannelId||null,maxTicketsPerUser:cfg.maxTicketsPerUser||3,dmOnClose:cfg.dmOnClose!==false};
   const levelingExtra=kind==='leveling'?{revision:levelingRevision(cfg),rewardRoles:rewardRoleStatus(req.guild,data),rewardSync:getRewardSyncStatus(req.guild.id)}:{};
-  res.json({settings:data,...channelsRoles(req.guild),...(['ticket','economy'].includes(kind)?{roles:listStaffRoles(req.guild)}:{}),...levelingExtra,events,groups});
+  res.json({settings:data,...channelsRoles(req.guild),...(kind==='ticket'?{roles:listStaffRoles(req.guild)}:{}),...(kind==='economy'?{roles:premiumRoleChoices(req.guild),premiumRole:premiumRoleState(req.guild,data.premiumRoleId)}:{}),...levelingExtra,events,groups});
  }catch(e){answer(res,e)}});
  router.patch('/settings/:kind',auth,csrf,async(req,res)=>{try{
   const b=req.body,g=req.guild,kind=req.params.kind;let updated;
@@ -143,7 +177,7 @@ export function createModulesApi(client,{auth,csrf}) {
    bool(b.enabled);bool(b.announce);bool(b.publicLeaderboard);number(b.min,1,10000);number(b.max,1,10000);number(b.cooldown,1,3600);channelId(g,b.channelId);if(b.min>b.max)throw bad('XP minimum melebihi maksimum.');
    updated=await transaction(client,g.id,cfg=>{if('revision' in b&&levelingRevision(cfg)!==b.revision)throw bad(LEVELING_STALE_TEXT,409);cfg.publicLeaderboard=b.publicLeaderboard;cfg.leveling={...LEVEL_DEFAULTS,...(cfg.leveling||{}),...Object.fromEntries(optional.filter(k=>k in b).map(k=>[k,b[k]])),enabled:b.enabled,xpPerMessage:{min:b.min,max:b.max},xpRange:{min:b.min,max:b.max},xpCooldown:b.cooldown,levelUpChannel:b.channelId,announceLevelUp:b.announce};return cfg.leveling});
   } else if(kind==='economy'){
-   exact(b,['premiumRoleId']);if(b.premiumRoleId!==null && !listStaffRoles(g).some(r=>r.id===b.premiumRoleId))throw bad('Role premium tidak tersedia.');
+   exact(b,['premiumRoleId']);premiumRoleOrThrow(g,b.premiumRoleId);
    updated=await transaction(client,g.id,cfg=>{cfg.premiumRoleId=b.premiumRoleId;return {premiumRoleId:cfg.premiumRoleId}});
   } else if(kind==='ticket'){
    exact(b,['channelId','staffRoleId','categoryId','closedCategoryId','message','buttonText','logsChannelId','transcriptChannelId','maxTicketsPerUser','dmOnClose']);channelId(g,b.channelId);if(b.staffRoleId!==null && !listStaffRoles(g).some(r=>r.id===b.staffRoleId))throw bad('Role staf tidak tersedia.');channelId(g,b.categoryId,ChannelType.GuildCategory);channelId(g,b.closedCategoryId,ChannelType.GuildCategory);str(b.message,1,2000);str(b.buttonText,1,80);channelId(g,b.logsChannelId);channelId(g,b.transcriptChannelId);number(b.maxTicketsPerUser,1,50);bool(b.dmOnClose);

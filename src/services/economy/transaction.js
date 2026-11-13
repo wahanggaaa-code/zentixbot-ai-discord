@@ -7,6 +7,7 @@ const err=(message,code='ECONOMY_UNAVAILABLE')=>Object.assign(new Error(message)
 const id=x=>typeof x==='string'&&/^\d{17,20}$/.test(x);
 const t=pgConfig.tables;
 function validBalance(data){if(!data||typeof data!=='object'||Array.isArray(data)||!Number.isSafeInteger(data.wallet)||data.wallet<0||!Number.isSafeInteger(data.bank)||data.bank<0)throw err('Invalid economy balance.','ECONOMY_INVALID');}
+export function decodeEconomyRow(row){return decoded(row)}
 function decoded(row){
  const raw=row.data&&typeof row.data==='object'&&!Array.isArray(row.data)&&Object.keys(row.data).length?row.data:{wallet:Number(row.balance),bank:Number(row.bank)};
  const data=normalizeEconomyData(raw,{...DEFAULT_ECONOMY_DATA,wallet:botConfig.economy?.startingBalance??DEFAULT_ECONOMY_DATA.wallet});validBalance(data);return data;

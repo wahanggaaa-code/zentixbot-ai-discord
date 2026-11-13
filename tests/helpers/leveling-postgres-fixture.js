@@ -219,6 +219,8 @@ export async function createLevelingFixture(t, leveling = {}) {
     return {
         client, guild, hooks, control, given, roles, members, me, botRole,
         addRole, addMember, setLevel, readLevel, readLeveling, patchLeveling, startApi,
+        // Direct SQL that ignores `control`, for arranging and inspecting stored data.
+        query: realQuery,
         rolesOf: (userId) => [...members.get(userId).roles.cache.keys()].sort(),
     };
 }

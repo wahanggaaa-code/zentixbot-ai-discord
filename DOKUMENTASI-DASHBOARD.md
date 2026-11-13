@@ -10,7 +10,7 @@ Inventaris kode per perubahan dashboard ini, bukan sertifikasi produksi. **Live*
 | Welcome & verification | Welcome, **Goodbye non-AI**, verification dan pengiriman panel verification | Goodbye hanya PostgreSQL; tampilan preview lokal tanpa mengirim. Perubahan pengaturan tidak membuktikan pesan berhasil dikirim saat anggota keluar. |
 | Moderation | Daftar kasus dan tindakan melalui operasi dashboard | Efek Discord dan penyimpanan bukan transaksi bersama; pemeriksaan izin/hierarki dan hasil nyata perlu diuji. |
 | Ticket | Konfigurasi, panel, daftar/detail, aksi dan transcript terbatas. Aksi yang ditolak service (tiket sudah diklaim, sudah tertutup, atau baru saja diubah) dijawab 409 dengan alasannya | Transcript bergantung channel yang tersedia; tindakan Discord dan database dapat berbeda hasilnya. Lihat `DOKUMENTASI-AUDIT-TIKET.md`. |
-| Leveling & economy | Pengaturan leveling, leaderboard, pencarian anggota serta sebagian pengelolaan | Reward role: lihat bagian "Role hadiah leveling"; belum diuji di Discord nyata. Saldo/wallet dan penulis ekonomi lain masih perlu audit. Jangan sambungkan poin Activities ke wallet. |
+| Leveling & economy | Pengaturan leveling, leaderboard, pencarian anggota serta sebagian pengelolaan | Reward role: lihat bagian "Role hadiah leveling"; belum diuji di Discord nyata. Role premium: lihat bagian "Ekonomi — role premium"; belum diuji di Discord nyata. Jangan sambungkan poin Activities ke wallet. |
 | Music | Player, antrean, pencarian dan kontrol yang didukung | Memerlukan Lavalink dan Discord; perilaku langsung dan resource hosting belum diuji. |
 | Logging | Pengaturan dan riwayat terbatas dari channel audit | Bukan riwayat lengkap semua event; bergantung pada izin dan pesan yang tersedia. |
 | Birthday | Channel pengumuman serta lihat, tambah, ubah, atau hapus tanggal pada PostgreSQL; perubahan dicatat ke channel audit bila logging aktif | Penulis lama tidak atomik dan perlu dihentikan saat upgrade. Scheduler dan Discord perlu diuji langsung; catatan audit bersifat best-effort. |
@@ -150,6 +150,17 @@ Rincian audit: `DOKUMENTASI-AUDIT-REWARD-ROLE.md`.
 - **Halaman usang:** bila pengaturan leveling berubah di tempat lain setelah halaman dimuat (misalnya hadiah ditambahkan lewat `/level dashboard`), simpan ditolak (409) dan halaman harus dimuat ulang. Tanpa ini halaman lama menghapus perubahan tersebut.
 - **Tombol "Sinkronkan role hadiah"** memberikan role yang belum dimiliki anggota yang levelnya sudah mencukupi. Meminta konfirmasi, berjalan di latar belakang, hanya menambah role, dan hasilnya (anggota diperiksa, role diberikan, role bermasalah, error) tampil di halaman. Satu sinkronisasi per server pada satu waktu; setelah selesai, tunggu satu menit sebelum mengulang. Riwayatnya hilang saat bot dinyalakan ulang.
 - **Ubah level anggota** (pencarian anggota) memberikan role hadiah setelah level tersimpan dan menampilkan jumlah role yang diberikan dan yang tidak. Menurunkan level tidak mencabut role.
+
+## Ekonomi — role premium
+
+Rincian audit: `DOKUMENTASI-AUDIT-EKONOMI.md`.
+
+- **Tab ekonomi** memuat satu pengaturan: role premium, yaitu role yang diberikan bot kepada anggota yang membeli item Premium Role dengan `/buy`.
+- **Role yang tidak dapat dijual** tetap tampil di daftar dengan keterangan "tidak dapat dijual" dan pilihannya dinonaktifkan: role dengan izin pengelolaan atau moderasi server, role yang tidak berada di bawah role bot, dan semua role bila bot tidak memiliki Manage Roles. Role integrasi dan `@everyone` tidak ditampilkan. Aturannya sama dengan role hadiah leveling.
+- **Keadaan role tersimpan** ditulis di bawah pilihan: belum dipilih (item tidak dapat dibeli), dapat diberikan, atau tidak dapat dijual beserta alasannya. Bila role tersimpan tidak dapat dijual, pembelian ditolak tanpa memotong saldo sampai role diganti. Keadaan dibaca dari cache role bot dan dimuat ulang setelah menyimpan.
+- **Menyimpan** role yang tidak dapat dijual ditolak server (400) dengan alasannya, juga bila permintaan tidak datang dari halaman ini. Mengosongkan pilihan diperbolehkan.
+- **Ubah wallet dan bank anggota** (pencarian anggota) tidak berubah dalam audit ini.
+- Simbol dan nama mata uang tidak ada di web; keduanya disetel lewat `/economy dashboard` di Discord dan hanya berlaku di panel itu.
 
 ## Pengaturan utama — pusat kendali baca-saja
 

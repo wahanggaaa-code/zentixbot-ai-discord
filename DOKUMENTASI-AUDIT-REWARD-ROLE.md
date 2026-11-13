@@ -4,7 +4,7 @@ Tanggal audit: 2026-11-13. Cakupan: `src/services/leveling/` (`xpSystem.js`, `le
 
 Audit dilakukan dengan membaca kode dan menjalankan tes terhadap PostgreSQL lokal dan Discord tiruan. **Tidak ada yang diuji pada server Discord nyata.**
 
-Dokumen ini adalah bagian kedua dari butir checklist "Audit fitur tiket, reward role dan seluruh penulis ekonomi". Tiket ada di `DOKUMENTASI-AUDIT-TIKET.md`. Penulis ekonomi belum diaudit.
+Dokumen ini adalah bagian kedua dari butir checklist "Audit fitur tiket, reward role dan seluruh penulis ekonomi". Tiket ada di `DOKUMENTASI-AUDIT-TIKET.md`, penulis ekonomi di `DOKUMENTASI-AUDIT-EKONOMI.md`.
 
 ## Ringkasan
 

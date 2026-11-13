@@ -12,48 +12,76 @@ import {
     MessageFlags,
     ComponentType,
     EmbedBuilder,
+    PermissionFlagsBits,
 } from 'discord.js';
-import { getColor, BotConfig } from '../../../config/bot.js';
+import { getColor } from '../../../config/bot.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
 import { successEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
 import { ZentixBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
 import { getEconomyPrefix } from '../../../utils/database.js';
 import { getEconomyData, addMoney, removeMoney, getMaxBankCapacity } from '../../../utils/economy.js';
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { getGuildConfig, patchGuildConfig } from '../../../services/config/guildConfig.js';
+import { economyPool, listEconomyBalances } from '../../../services/economy/accounts.js';
+import {
+    getCurrency, parseCurrencySymbol, parseCurrencyName, parseAdminAmount, MAX_ADMIN_AMOUNT,
+} from '../../../services/economy/currency.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const AMOUNT_RULE = `Amount must be a whole number from 1 to ${MAX_ADMIN_AMOUNT.toLocaleString('en-US')}, digits only.`;
+const NOT_ALLOWED = 'You need the **Manage Server** permission to use the economy dashboard.';
+
+/** Checked again on every step: the permission may be removed while the dashboard is open. */
+export function mayManageEconomy(interaction) {
+    return Boolean(interaction?.memberPermissions?.has(PermissionFlagsBits.ManageGuild));
+}
+
+// Stored with the server settings. The bot's source files are never edited:
+// text typed in Discord must not end up inside a JavaScript file.
+const CURRENCY_SCOPE = 'Saved for this server and shown on this dashboard. '
+    + 'Other economy commands still display amounts with `$`.';
+
+async function saveCurrency(client, guildId, change) {
+    await patchGuildConfig(client, guildId, { economyCurrency: change });
+}
+
+async function currencyOf(client, guildId) {
+    return getCurrency(await getGuildConfig(client, guildId));
+}
+
+/** Totals of the server: one query on PostgreSQL, no Discord request per account. */
+async function economyTotals(guild, client) {
+    const isBot = (userId) => guild.members.cache.get(userId)?.user?.bot === true;
+    const pool = economyPool(client);
+    if (pool) {
+        const { accounts } = await listEconomyBalances(pool, guild.id);
+        const people = accounts.filter((account) => !isBot(account.userId));
+        return { total: people.reduce((sum, account) => sum + account.wallet + account.bank, 0), users: people.length };
+    }
+    let total = 0;
+    let users = 0;
+    const economyKeys = await client.db.list(getEconomyPrefix(guild.id));
+    for (const key of economyKeys ?? []) {
+        if (isBot(key.split(':').pop())) continue;
+        const userData = await client.db.get(key, {});
+        if (!userData) continue;
+        total += (userData.wallet || 0) + (userData.bank || 0);
+        users++;
+    }
+    return { total, users };
+}
 
 async function buildDashboardEmbed(guild, client) {
-    const currencySymbol = BotConfig.economy.currency.symbol;
-    const currencyName = BotConfig.economy.currency.name;
+    const { symbol: currencySymbol, name: currencyName } = await currencyOf(client, guild.id);
 
-    let totalInCirculation = 0;
-    let userCount = 0;
-
+    let totals = null;
     try {
-        const economyKeys = await client.db.list(getEconomyPrefix(guild.id));
-
-        if (economyKeys && economyKeys.length > 0) {
-            for (const key of economyKeys) {
-                const userId = key.split(':').pop();
-
-                const member = await guild.members.fetch(userId).catch(() => null);
-                if (member?.user?.bot) continue;
-
-                const userData = await client.db.get(key, {});
-                if (userData) {
-                    totalInCirculation += (userData.wallet || 0) + (userData.bank || 0);
-                    userCount++;
-                }
-            }
-        }
+        totals = await economyTotals(guild, client);
     } catch (error) {
         logger.error('Error calculating economy stats:', error);
     }
+    const shown = (value, prefix = '') => (totals ? `\`${prefix}${value.toLocaleString()}\`` : '`unavailable`');
+    const totalInCirculation = totals?.total ?? 0;
+    const userCount = totals?.users ?? 0;
 
     const avgBalance = userCount > 0 ? Math.floor(totalInCirculation / userCount) : 0;
 
@@ -62,9 +90,9 @@ async function buildDashboardEmbed(guild, client) {
         .setDescription(`Manage the economy system for **${guild.name}**.\nSelect an option below to perform an action.`)
         .setColor(getColor('economy'))
         .addFields(
-            { name: '💰 Total in Circulation', value: `\`${currencySymbol}${totalInCirculation.toLocaleString()}\``, inline: true },
-            { name: '👥 Active Users', value: `\`${userCount.toLocaleString()}\``, inline: true },
-            { name: '📊 Average Balance', value: `\`${currencySymbol}${avgBalance.toLocaleString()}\``, inline: true },
+            { name: '💰 Total in Circulation', value: shown(totalInCirculation, currencySymbol), inline: true },
+            { name: '👥 Active Users', value: shown(userCount), inline: true },
+            { name: '📊 Average Balance', value: shown(avgBalance, currencySymbol), inline: true },
             { name: '💱 Currency Symbol', value: `\`${currencySymbol}\``, inline: true },
             { name: '📝 Currency Name', value: `\`${currencyName}\``, inline: true },
         )
@@ -110,35 +138,6 @@ async function refreshDashboard(rootInteraction, guild, client) {
     }).catch(() => {});
 }
 
-async function updateConfigFile(currencySymbol, currencyName) {
-    try {
-        const configPath = path.join(__dirname, '../../../config/bot.js');
-        let configContent = await fs.readFile(configPath, 'utf-8');
-
-        configContent = configContent.replace(
-            /symbol:\s*"[^"]*"/,
-            `symbol: "${currencySymbol}"`
-        );
-
-        configContent = configContent.replace(
-            /name:\s*"[^"]*",\s*\/\/\s*Currency display name/,
-            `name: "${currencyName}", // Currency display name`
-        );
-
-        configContent = configContent.replace(
-            /namePlural:\s*"[^"]*",\s*\/\/\s*Plural display name/,
-            `namePlural: "${currencyName}s", // Plural display name`
-        );
-        
-        await fs.writeFile(configPath, configContent, 'utf-8');
-        logger.info('Config file updated successfully');
-        return true;
-    } catch (error) {
-        logger.error('Error updating config file:', error);
-        return false;
-    }
-}
-
 export default {
     prefixOnly: false,
     async execute(interaction, config, client) {
@@ -162,6 +161,10 @@ export default {
             collector.on('collect', async selectInteraction => {
                 const selectedOption = selectInteraction.values[0];
                 try {
+                    if (!mayManageEconomy(selectInteraction)) {
+                        await replyUserError(selectInteraction, { type: ErrorTypes.PERMISSION, message: NOT_ALLOWED });
+                        return;
+                    }
                     switch (selectedOption) {
                         case 'add_currency':
                             await handleAddCurrency(selectInteraction, interaction, guild, client);
@@ -170,10 +173,10 @@ export default {
                             await handleRemoveCurrency(selectInteraction, interaction, guild, client);
                             break;
                         case 'change_currency':
-                            await handleChangeCurrency(selectInteraction, interaction, guild);
+                            await handleChangeCurrency(selectInteraction, interaction, guild, client);
                             break;
                         case 'change_name':
-                            await handleChangeName(selectInteraction, interaction, guild);
+                            await handleChangeName(selectInteraction, interaction, guild, client);
                             break;
                     }
                 } catch (error) {
@@ -275,13 +278,17 @@ async function handleAddCurrency(selectInteraction, rootInteraction, guild, clie
         .catch(() => null);
 
     if (!submitted) return;
+    if (!mayManageEconomy(submitted)) {
+        await replyUserError(submitted, { type: ErrorTypes.PERMISSION, message: NOT_ALLOWED });
+        return;
+    }
 
     const userId = submitted.fields.getField('target_user').values[0];
-    const amount = parseInt(submitted.fields.getTextInputValue('amount').trim(), 10);
+    const amount = parseAdminAmount(submitted.fields.getTextInputValue('amount'));
     const type = submitted.fields.getTextInputValue('type').trim().toLowerCase();
 
-    if (isNaN(amount) || amount <= 0) {
-        await replyUserError(submitted, { type: ErrorTypes.VALIDATION, message: 'Amount must be a positive number.' });
+    if (amount === null) {
+        await replyUserError(submitted, { type: ErrorTypes.VALIDATION, message: AMOUNT_RULE });
         return;
     }
 
@@ -303,7 +310,7 @@ async function handleAddCurrency(selectInteraction, rootInteraction, guild, clie
 
     const { newBalance } = await addMoney(client, guild.id, userId, amount, type);
 
-    const currencySymbol = BotConfig.economy.currency.symbol;
+    const { symbol: currencySymbol } = await currencyOf(client, guild.id);
 
     await submitted.reply({
         embeds: [successEmbed('Currency Added', `Successfully added ${currencySymbol}${amount.toLocaleString()} to ${member.user.tag}'s ${type}.\n**New Balance:** ${currencySymbol}${newBalance.toLocaleString()}`)],
@@ -372,13 +379,17 @@ async function handleRemoveCurrency(selectInteraction, rootInteraction, guild, c
         .catch(() => null);
 
     if (!submitted) return;
+    if (!mayManageEconomy(submitted)) {
+        await replyUserError(submitted, { type: ErrorTypes.PERMISSION, message: NOT_ALLOWED });
+        return;
+    }
 
     const userId = submitted.fields.getField('target_user').values[0];
-    const amount = parseInt(submitted.fields.getTextInputValue('amount').trim(), 10);
+    const amount = parseAdminAmount(submitted.fields.getTextInputValue('amount'));
     const type = submitted.fields.getTextInputValue('type').trim().toLowerCase();
 
-    if (isNaN(amount) || amount <= 0) {
-        await replyUserError(submitted, { type: ErrorTypes.VALIDATION, message: 'Amount must be a positive number.' });
+    if (amount === null) {
+        await replyUserError(submitted, { type: ErrorTypes.VALIDATION, message: AMOUNT_RULE });
         return;
     }
 
@@ -400,7 +411,7 @@ async function handleRemoveCurrency(selectInteraction, rootInteraction, guild, c
 
     const { newBalance } = await removeMoney(client, guild.id, userId, amount, type);
 
-    const currencySymbol = BotConfig.economy.currency.symbol;
+    const { symbol: currencySymbol } = await currencyOf(client, guild.id);
 
     await submitted.reply({
         embeds: [successEmbed('Currency Removed', `Successfully removed ${currencySymbol}${amount.toLocaleString()} from ${member.user.tag}'s ${type}.\n**New Balance:** ${currencySymbol}${newBalance.toLocaleString()}`)],
@@ -418,7 +429,8 @@ async function handleRemoveCurrency(selectInteraction, rootInteraction, guild, c
     await refreshDashboard(rootInteraction, guild, client);
 }
 
-async function handleChangeCurrency(selectInteraction, rootInteraction, guild) {
+async function handleChangeCurrency(selectInteraction, rootInteraction, guild, client) {
+    const current = await currencyOf(client, guild.id);
     const modal = new ModalBuilder()
         .setCustomId(`economy_change_currency_${guild.id}`)
         .setTitle('Change Currency Symbol');
@@ -427,10 +439,10 @@ async function handleChangeCurrency(selectInteraction, rootInteraction, guild) {
         .setCustomId('currency_symbol')
         .setLabel('New Currency Symbol')
         .setStyle(TextInputStyle.Short)
-        .setValue(BotConfig.economy.currency.symbol)
+        .setValue(current.symbol)
         .setPlaceholder('$')
         .setMinLength(1)
-        .setMaxLength(3)
+        .setMaxLength(6)
         .setRequired(true);
 
     modal.addComponents(new ActionRowBuilder().addComponents(symbolInput));
@@ -445,34 +457,39 @@ async function handleChangeCurrency(selectInteraction, rootInteraction, guild) {
         .catch(() => null);
 
     if (!submitted) return;
-
-    const newSymbol = submitted.fields.getTextInputValue('currency_symbol').trim();
-
-    if (newSymbol.length === 0 || newSymbol.length > 3) {
-        await replyUserError(submitted, { type: ErrorTypes.VALIDATION, message: 'Currency symbol must be 1-3 characters long.' });
+    if (!mayManageEconomy(submitted)) {
+        await replyUserError(submitted, { type: ErrorTypes.PERMISSION, message: NOT_ALLOWED });
         return;
     }
 
-    const success = await updateConfigFile(newSymbol, BotConfig.economy.currency.name);
+    const newSymbol = parseCurrencySymbol(submitted.fields.getTextInputValue('currency_symbol'));
 
-    if (!success) {
-        await replyUserError(submitted, { type: ErrorTypes.UNKNOWN, message: 'Could not update the config file. Please check the logs.' });
+    if (newSymbol === null) {
+        await replyUserError(submitted, {
+            type: ErrorTypes.VALIDATION,
+            message: 'Currency symbol must be 1-3 letters, digits, currency signs or emoji.',
+        });
         return;
     }
+
+    await saveCurrency(client, guild.id, { symbol: newSymbol });
 
     await submitted.reply({
-        embeds: [successEmbed('Currency Symbol Updated', `Currency symbol changed to **${newSymbol}**.\n\n**Note:** The bot needs to be restarted for changes to take effect.`)],
+        embeds: [successEmbed('Currency Symbol Updated', `Currency symbol changed to **${newSymbol}**.\n\n${CURRENCY_SCOPE}`)],
         flags: MessageFlags.Ephemeral,
     });
 
     logger.info(`[ECONOMY_DASHBOARD] Currency symbol changed`, {
         adminId: submitted.user.id,
-        oldSymbol: BotConfig.economy.currency.symbol,
+        oldSymbol: current.symbol,
         newSymbol
     });
+
+    await refreshDashboard(rootInteraction, guild, client);
 }
 
-async function handleChangeName(selectInteraction, rootInteraction, guild) {
+async function handleChangeName(selectInteraction, rootInteraction, guild, client) {
+    const current = await currencyOf(client, guild.id);
     const modal = new ModalBuilder()
         .setCustomId(`economy_change_name_${guild.id}`)
         .setTitle('Change Currency Name');
@@ -481,7 +498,7 @@ async function handleChangeName(selectInteraction, rootInteraction, guild) {
         .setCustomId('currency_name')
         .setLabel('New Currency Name')
         .setStyle(TextInputStyle.Short)
-        .setValue(BotConfig.economy.currency.name)
+        .setValue(current.name)
         .setPlaceholder('coins')
         .setMinLength(1)
         .setMaxLength(20)
@@ -499,29 +516,33 @@ async function handleChangeName(selectInteraction, rootInteraction, guild) {
         .catch(() => null);
 
     if (!submitted) return;
-
-    const newName = submitted.fields.getTextInputValue('currency_name').trim();
-
-    if (newName.length === 0 || newName.length > 20) {
-        await replyUserError(submitted, { type: ErrorTypes.VALIDATION, message: 'Currency name must be 1-20 characters long.' });
+    if (!mayManageEconomy(submitted)) {
+        await replyUserError(submitted, { type: ErrorTypes.PERMISSION, message: NOT_ALLOWED });
         return;
     }
 
-    const success = await updateConfigFile(BotConfig.economy.currency.symbol, newName);
+    const newName = parseCurrencyName(submitted.fields.getTextInputValue('currency_name'));
 
-    if (!success) {
-        await replyUserError(submitted, { type: ErrorTypes.UNKNOWN, message: 'Could not update the config file. Please check the logs.' });
+    if (newName === null) {
+        await replyUserError(submitted, {
+            type: ErrorTypes.VALIDATION,
+            message: 'Currency name must be 1-20 letters, digits, spaces or hyphens.',
+        });
         return;
     }
+
+    await saveCurrency(client, guild.id, { name: newName });
 
     await submitted.reply({
-        embeds: [successEmbed('Currency Name Updated', `Currency name changed to **${newName}**.\n\n**Note:** The bot needs to be restarted for changes to take effect.`)],
+        embeds: [successEmbed('Currency Name Updated', `Currency name changed to **${newName}**.\n\n${CURRENCY_SCOPE}`)],
         flags: MessageFlags.Ephemeral,
     });
 
     logger.info(`[ECONOMY_DASHBOARD] Currency name changed`, {
         adminId: submitted.user.id,
-        oldName: BotConfig.economy.currency.name,
+        oldName: current.name,
         newName
     });
+
+    await refreshDashboard(rootInteraction, guild, client);
 }

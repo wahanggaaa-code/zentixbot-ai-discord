@@ -9,6 +9,7 @@ import { DEFAULT_ECONOMY_DATA } from './constants.js';
 import { createError, ErrorTypes, wrapServiceBoundary } from './errorHandler.js';
 import { withEconomyTransaction } from '../services/economy/transaction.js';
 import { sqliteBackend } from '../services/storage/sqlite.js';
+import { economyPool, readEconomyAccount } from '../services/economy/accounts.js';
 
 const ECONOMY_CONFIG = BotConfig.economy || {};
 const BASE_BANK_CAPACITY = ECONOMY_CONFIG.baseBankCapacity || 10000;
@@ -60,6 +61,18 @@ export function formatCurrency(amount) {
 
 export async function getEconomyData(client, guildId, userId) {
     const sqlite=sqliteBackend(client);if(sqlite){const data=sqlite.getAccount(guildId,userId);if(data===null&&(sqlite.get(`economy:${guildId}:${userId}`)!==null||sqlite.get(`guild:${guildId}:economy:${userId}`)!==null||sqlite.botGet(`economy:${guildId}:${userId}`)!==null||sqlite.botGet(`guild:${guildId}:economy:${userId}`)!==null))throw Object.assign(new Error('Legacy economy data requires migration before use.'),{code:'ECONOMY_LEGACY'});return normalizeEconomyData(data||{},{...DEFAULT_ECONOMY_DATA,wallet:ECONOMY_CONFIG.startingBalance??DEFAULT_ECONOMY_DATA.wallet});}
+    // PostgreSQL: read the table directly. A failed query is an error for the
+    // caller, never an empty account.
+    const pool = economyPool(client);
+    if (pool) {
+        getEconomyKey(guildId, userId);
+        return readEconomyAccount(pool, guildId, userId);
+    }
+    if (client?.db?.db?.pool) {
+        // PostgreSQL is the store but is not usable right now. The fallback
+        // below would show an empty account.
+        throw Object.assign(new Error('Economy storage is unavailable.'), { code: 'ECONOMY_UNAVAILABLE' });
+    }
     try {
         if (!client.db || typeof client.db.get !== 'function') {
             throw new Error('Database not available');
@@ -80,7 +93,10 @@ export async function getEconomyData(client, guildId, userId) {
 }
 
 export async function setEconomyData(client, guildId, userId, data) {
+    // Whole-record writes overwrite whatever a transaction committed in between.
+    // Use withEconomyTransaction instead.
     if(sqliteBackend(client))throw Object.assign(new Error('Legacy economy write is disabled on SQLite.'),{code:'ECONOMY_LEGACY_WRITE_DISABLED'});
+    if(economyPool(client))throw Object.assign(new Error('Legacy economy write is disabled on PostgreSQL.'),{code:'ECONOMY_LEGACY_WRITE_DISABLED'});
     try {
         if (!client.db || typeof client.db.set !== 'function') {
             throw new Error('Database not available');
