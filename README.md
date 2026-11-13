@@ -2,7 +2,7 @@
 
 Bot Discord untuk satu server, dengan dashboard web di proses yang sama. Ditulis dengan discord.js, Express dan PostgreSQL.
 
-**Status:** bot ini baru diuji secara lokal dengan Discord tiruan dan PostgreSQL sementara. Ia belum pernah dijalankan pada server Discord sungguhan atau pada hosting mana pun. Rinciannya ada di [`docs/progres-proyek.md`](docs/progres-proyek.md).
+**Status:** pengujian bot ini dilakukan secara lokal dengan Discord tiruan dan PostgreSQL sementara. Di hosting sungguhan baru startup yang terlihat berjalan (13 November 2026, dari log pemilik bot); fitur-fiturnya belum diperiksa di sana. Rinciannya ada di [`docs/progres-proyek.md`](docs/progres-proyek.md) dan [`docs/hosting.md`](docs/hosting.md).
 
 ## Fitur
 

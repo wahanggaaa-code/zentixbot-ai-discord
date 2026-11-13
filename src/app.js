@@ -15,6 +15,7 @@ import cron from 'node-cron';
 
 import config from './config/application.js';
 import { resolveWebPort, WEB_PORT_VARIABLES } from './utils/webPort.js';
+import { createWebRateLimit } from './utils/webRateLimit.js';
 import { initializeDatabase } from './utils/database.js';
 import { getGuildConfig } from './services/config/guildConfig.js';
 import { maintainCounters } from './services/serverStats/manage.js';
@@ -143,29 +144,8 @@ class ZentixBot extends Client {
       next();
     });
 
-    const requestCounts = new Map();
-    const windowMs = this.config.api?.rateLimit?.windowMs || 60000;
-    const maxRequests = this.config.api?.rateLimit?.max || 100;
-    
-    app.use((req, res, next) => {
-      const ip = req.ip;
-      const now = Date.now();
-      const windowStart = now - windowMs;
-      
-      if (!requestCounts.has(ip)) {
-        requestCounts.set(ip, []);
-      }
-      
-      const times = requestCounts.get(ip).filter(t => t > windowStart);
-      
-      if (times.length >= maxRequests) {
-        return res.status(429).json({ error: 'Too many requests' });
-      }
-      
-      times.push(now);
-      requestCounts.set(ip, times);
-      next();
-    });
+    // Dashboard pages and login have their own budgets; the configured numbers apply to the rest.
+    app.use(createWebRateLimit({ general: this.config.api?.rateLimit }));
 
     app.get('/dashboard', (req, res) => res.redirect('/dashboard/'));
     app.use('/dashboard', createDashboardRouter(this));

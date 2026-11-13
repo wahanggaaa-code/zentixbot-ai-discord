@@ -6,6 +6,7 @@ import { PermissionFlagsBits } from 'discord.js';
 import { isHomeGuild } from '../utils/singleGuild.js';
 import { logger } from '../utils/logger.js';
 import { resolveDashboardOrigin, notConfiguredMessage } from './origin.js';
+import { callbackProblem, loginProblemPage } from './loginProblem.js';
 import { createBotApiRouter } from './botApi.js';
 import { createGoodbyeApi } from './goodbyeApi.js';
 import { createBirthdayApi } from './birthdayApi.js';
@@ -52,17 +53,32 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
   router.use((req,res,next) => { res.set({'Cache-Control': NO_CACHE, 'X-Content-Type-Options':'nosniff', 'Referrer-Policy':'no-referrer', 'X-Frame-Options':'DENY'}); next(); });
   router.get('/login', (req,res) => {
     if (!configured) return res.status(503).send(notConfiguredMessage(reason));
-    purge(); if (states.size >= 5000) return res.status(503).send('Terlalu banyak login yang menunggu.');
-    const state = random(); states.set(state, Date.now() + 600000);
-    res.cookie('zx_state', state, { ...options, maxAge: 600000 });
+    purge();
+    // A browser that opens the login twice (second tab, reload, prefetch) keeps its pending state.
+    // A fresh state each time would overwrite the cookie and make the login begun first fail.
+    const pending = cookie(req, 'zx_state');
+    const state = states.has(pending) ? pending : random();
+    if (state !== pending) {
+      if (states.size >= 5000) return res.status(503).send('Terlalu banyak login yang menunggu.');
+      states.set(state, Date.now() + 600000);
+    }
+    res.cookie('zx_state', state, { ...options, maxAge: Math.max(1000, states.get(state) - Date.now()) });
     const q = new URLSearchParams({ client_id: env.CLIENT_ID, redirect_uri: origin + '/dashboard/callback', response_type: 'code', scope: 'identify', state });
     res.redirect('https://discord.com/oauth2/authorize?' + q);
   });
   router.get('/callback', async (req,res) => {
-    purge(); const state = req.query.state;
-    const valid = configured && typeof state === 'string' && state === cookie(req, 'zx_state') && states.has(state);
-    if (typeof state === 'string') states.delete(state); clear(res, 'zx_state');
-    if (!valid || typeof req.query.code !== 'string' || req.query.code.length > 2048) return res.status(400).send('Login tidak valid atau kedaluwarsa.');
+    if (!configured) return res.status(503).send(notConfiguredMessage(reason));
+    purge(); const state = req.query.state, sent = cookie(req, 'zx_state');
+    const known = typeof state === 'string' && states.has(state);
+    // Only the browser that began a login spends it, and does so whether or not it then succeeds.
+    // A request without that browser's cookie (a link preview, another browser) leaves it pending.
+    if (sent === state) { states.delete(state); clear(res, 'zx_state'); }
+    const problem = callbackProblem({ state, known, sent, code: req.query.code, denied: typeof req.query.error === 'string' });
+    if (problem) {
+      // Reloading the callback after a finished login, or finishing it in a second tab.
+      if (sessions.has(cookie(req, 'zx_session'))) return res.redirect('/dashboard/');
+      return res.status(400).send(loginProblemPage(problem, origin));
+    }
     try {
       const tokenResponse = await fetchImpl('https://discord.com/api/v10/oauth2/token', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:new URLSearchParams({client_id:env.CLIENT_ID,client_secret:env.DISCORD_CLIENT_SECRET,grant_type:'authorization_code',code:req.query.code,redirect_uri:origin+'/dashboard/callback'}), signal:AbortSignal.timeout(10000) });
       if (!tokenResponse.ok) throw new Error('token exchange');

@@ -1,8 +1,15 @@
 # Hosting di panel (Wispbyte dan sejenisnya)
 
-Tanggal: 2026-11-13. Dokumen ini menjelaskan variabel lingkungan yang dibutuhkan bot, cara bot memilih port, dan cara membuka dashboard pada alamat `http://ip:port`.
+Tanggal: 2026-11-13. Dokumen ini menjelaskan variabel lingkungan yang dibutuhkan bot, cara bot memilih port, cara membuka dashboard pada alamat `http://ip:port`, batas permintaan server web, dan arti pesan saat login gagal.
 
-**Bot ini belum pernah dijalankan di Wispbyte atau panel hosting mana pun.** Yang diuji hanyalah kode di bawah ini, dengan Discord tiruan dan PostgreSQL lokal. Keterangan tentang panel Wispbyte (image Node, tempat mengisi variabel, RAM 512 MB, alamat `http://ip:port`) diambil dari panduan hosting proyek referensi `whyuangga/Zypher-AI-Bot-Discord` dan tidak diperiksa sendiri.
+**Yang sudah terlihat di hosting sungguhan.** Pada 13 November 2026 (UTC) pemilik bot menjalankannya di sebuah panel hosting dan mengirim log konsol serta dua tangkapan layar. Dari kiriman itu terlihat:
+
+- bot selesai startup dengan database tersambung, login ke Discord, dan mendaftarkan 100 perintah ke server;
+- empat dari enam node Lavalink tersambung (`vinster`, `serenetia`, `trinium`, `millohost`); `nazha` menolak dengan 403 dan `jirayu` terputus;
+- dashboard terjangkau pada `http://ip:port`, dan Discord mengembalikan peramban ke alamat callback `http://` itu;
+- login lalu gagal dengan "Login tidak valid atau kedaluwarsa.", dan halaman dashboard menjawab `Too many requests`. Dua hal ini yang diperbaiki pada bagian [Batas permintaan](#batas-permintaan) dan [Bila login gagal](#bila-login-gagal).
+
+Itu pengamatan dari kiriman pemilik, bukan pengujian yang dijalankan di sini. Perbaikannya sendiri baru diuji dengan Discord tiruan dan PostgreSQL lokal; apakah login di panel itu kini berhasil belum diketahui. Perintah, musik, fitur AI dan pemakaian memori di panel itu belum diperiksa. Keterangan tentang panel Wispbyte (image Node, tempat mengisi variabel, RAM 512 MB, alamat `http://ip:port`) diambil dari panduan hosting proyek referensi `whyuangga/Zypher-AI-Bot-Discord` dan tidak diperiksa sendiri.
 
 ## Yang dibutuhkan bot
 
@@ -111,7 +118,7 @@ Untuk panel yang hanya memberi alamat `http://ip:port`:
 3. Di Discord Developer Portal → OAuth2 → Redirects, tambahkan `http://IP:PORT/dashboard/callback`.
 4. Mulai ulang bot, lalu buka `http://IP:PORT/dashboard/`.
 
-Langkah 3 belum diuji terhadap Discord sungguhan; bahwa Discord menerima alamat pengalihan `http://` dengan IP adalah anggapan, bukan hasil uji.
+Langkah 3 terlihat bekerja pada kiriman pemilik bot tanggal 13 November 2026: setelah Authorize, Discord mengembalikan peramban ke `http://IP:PORT/dashboard/callback`. Login sampai masuk ke dashboard belum terkonfirmasi.
 
 **Risikonya.** Lewat HTTP, sesi login berjalan tanpa enkripsi. Pihak di jaringan yang sama (Wi-Fi umum, jaringan kantor) atau di antara peramban dan server dapat membaca cookie sesi dan memakai dashboard dengan hak Anda sampai sesi berakhir. Proyek referensi punya kelemahan yang sama dengan kata sandi dashboard-nya.
 
@@ -120,6 +127,7 @@ Yang tetap berlaku pada mode ini:
 - Login tetap lewat Discord; tidak ada kata sandi bersama.
 - Hanya owner server dan pemegang izin Administrator yang dapat masuk, dan izin itu diperiksa ulang ke Discord pada setiap permintaan.
 - Sesi paling lama 8 jam dan hilang saat bot dimulai ulang.
+- Login yang sedang menunggu juga hilang saat bot dimulai ulang, dan berlaku paling lama 10 menit.
 - Setiap perubahan tetap memerlukan token sesi dan harus datang dari alamat dashboard yang sama.
 
 Yang ditambahkan agar mode ini tidak aktif tanpa disadari:
@@ -128,6 +136,45 @@ Yang ditambahkan agar mode ini tidak aktif tanpa disadari:
 - Halaman Pengaturan menampilkan catatan "Tanpa enkripsi" pada bagian akses.
 
 Saran pemakaian: buka dashboard dari jaringan yang dipercaya, tekan KELUAR setelah selesai, dan pindah ke alamat `https://` bila hosting menyediakannya. Setelah pindah, kosongkan `DASHBOARD_ALLOW_HTTP`.
+
+## Batas permintaan
+
+Server web membatasi jumlah permintaan per alamat IP. Ada tiga hitungan terpisah, sehingga membuka dashboard tidak menghabiskan jatah login dan sebaliknya:
+
+| Hitungan | Berlaku untuk | Batas |
+| --- | --- | --- |
+| Login | `/dashboard/login` dan `/dashboard/callback` | 30 per 15 menit |
+| Dashboard | Semua alamat lain di bawah `/dashboard` | 600 per menit |
+| Umum | Alamat lain: `/`, `/health`, `/ready` | 100 per 15 menit (dari `src/config/application.js`) |
+
+Sebelumnya hanya ada satu hitungan, 100 per 15 menit untuk semuanya. Satu kali membuka dashboard mengambil 31 berkas yang tidak di-cache, ditambah panggilan data, sehingga jatah itu habis setelah dua atau tiga kali buka dan peramban menerima `{"error":"Too many requests"}`.
+
+Permintaan yang ditolak mendapat status 429 dan header `Retry-After`. Di bawah `/dashboard` isinya kalimat berbahasa Indonesia yang menyebut berapa lama harus menunggu. Permintaan yang ditolak tidak memperpanjang waktu tunggu. Hitungan disimpan di memori dan kembali nol saat bot dimulai ulang. Angka login dan dashboard tetap di `src/utils/webRateLimit.js`; tidak ada variabel lingkungan untuk mengubahnya.
+
+Hitungan memakai alamat IP yang tersambung langsung ke bot. Di belakang reverse proxy, semua pengunjung terhitung sebagai satu alamat.
+
+## Bila login gagal
+
+Halaman callback kini menyebut sebabnya dan memberi tautan "Mulai login lagi".
+
+| Pesan | Artinya | Yang dilakukan |
+| --- | --- | --- |
+| "Browser ini tidak mengirim cookie login." | Callback tiba tanpa cookie yang dipasang saat login dimulai | Mulai login di peramban yang sama dan bukan tab private; buka dashboard lewat alamat yang sama persis dengan `DASHBOARD_URL`; izinkan cookie untuk alamat itu. Di ponsel, aplikasi Discord dapat mengembalikan Anda ke peramban bawaan, jadi mulailah dari peramban itu |
+| "Login ini sudah tidak berlaku." | Server tidak lagi menyimpan login itu: halaman callback dimuat ulang, lebih dari 10 menit berlalu, atau bot dimulai ulang di tengah login | Mulai login lagi |
+| "Ada login lain yang dimulai lebih baru di browser ini" | Cookie di peramban milik login yang lain | Mulai login lagi dan selesaikan yang itu |
+| "Login dibatalkan di halaman Discord." | Tombol Cancel ditekan di Discord | Mulai login lagi dan tekan Authorize |
+| "Alamat ini tidak lengkap." | Alamat callback dibuka tanpa kode dari Discord | Buka `/dashboard/` |
+| "Login Discord gagal. Coba lagi." | Discord menolak penukaran kode | Periksa `DISCORD_CLIENT_SECRET` |
+| "Akses hanya untuk owner atau administrator server." | Akun itu bukan owner atau Administrator di server `GUILD_ID` | Login dengan akun yang berhak |
+| "Terlalu banyak percobaan login dari alamat ini." | Batas login di atas tercapai | Tunggu selama yang disebut pesan itu |
+
+Tiga hal dibuat lebih longgar agar pesan-pesan itu jarang muncul:
+
+- Membuka halaman login dua kali di peramban yang sama (tab kedua, muat ulang) memakai login yang sama selama masih menunggu. Sebelumnya login kedua menimpa cookie login pertama, sehingga login pertama gagal.
+- Memuat ulang halaman callback setelah login berhasil kini membawa ke dashboard, bukan ke pesan kesalahan.
+- Callback yang tiba tanpa cookie dari peramban yang memulai login (pratinjau tautan, peramban lain) ditolak tanpa menghabiskan login itu. Peramban yang memulainya masih dapat menyelesaikannya. Sebelumnya permintaan seperti itu menghanguskan login.
+
+Setiap login tetap hanya dapat dipakai satu kali: percobaan pertama dari peramban yang memulainya menghabiskannya, berhasil atau tidak.
 
 ## Langkah di panel (dari panduan referensi, belum diperiksa)
 
@@ -143,11 +190,14 @@ Saran pemakaian: buka dashboard dari jaringan yang dipercaya, tekan KELUAR setel
 - `dashboard-preview/settings-live.js`: catatan "Tanpa enkripsi".
 - `.env.example`: `DASHBOARD_ALLOW_HTTP`, `WEB_PORT`, keterangan `SERVER_PORT`.
 - `tests/hosting-port-http.test.js` (baru) dan tambahan di `tests/dashboard-settings-control-center.test.js`.
+- `src/utils/webRateLimit.js`: tiga hitungan batas permintaan. Dipakai `src/app.js`.
+- `src/dashboard/loginProblem.js`: sebab login gagal di callback dan halamannya. Dipakai `src/dashboard/router.js`.
+- `tests/dashboard-login-and-limits.test.js`: tes untuk keduanya.
 
 ## Yang belum diuji
 
-- Bot di Wispbyte atau panel lain: instalasi, port yang diteruskan, batas RAM, perilaku saat restart.
-- Login Discord sungguhan pada alamat `http://ip:port`.
-- Koneksi dari panel ke penyedia PostgreSQL.
-- Dashboard di peramban sungguhan; tesnya memakai jsdom.
+- Tidak ada yang dijalankan di sini pada panel sungguhan. Yang diketahui tentang panel hanyalah kiriman pemilik bot di awal dokumen ini; batas RAM, perilaku saat restart dan pemakaian memori belum diperiksa.
+- Login Discord sungguhan sampai masuk ke dashboard pada alamat `http://ip:port`, termasuk setelah perbaikan batas permintaan dan pesan login.
+- Sebab login pemilik bot gagal pada 13 November 2026 tidak diketahui; pesan lama tidak membedakan sebabnya.
+- Dashboard di peramban sungguhan; tesnya memakai jsdom dan permintaan HTTP langsung. Jumlah panggilan data per halaman tidak diukur; angka 31 hanya menghitung berkas yang disebut `index.html`.
 - Groq (transkripsi), Tavily, Cloudflare Workers AI dan Pollinations yang sesungguhnya. Tesnya memakai penyedia tiruan: yang terbukti adalah permintaan yang disusun bot dan cara bot membaca jawaban, bukan bahwa layanan itu menerimanya. Bentuk permintaan diambil dari dokumentasi tiap layanan.
