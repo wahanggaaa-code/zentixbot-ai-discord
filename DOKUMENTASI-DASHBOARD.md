@@ -63,3 +63,5 @@ Data adalah inventaris tersimpan, **bukan status Discord aktual**: channel bisa 
 Konfigurasi dan channel sementara masih ditulis sebagai satu objek read-modify-write oleh beberapa jalur bot tanpa penguncian bersama; perubahan bersamaan dapat saling menimpa. Jangan menambahkan mutasi dashboard sebelum semua jalur penulis dimigrasikan dan diuji untuk concurrency, termasuk event dan command; SQL langsung dan instance lama juga perlu ditangani dalam rencana cutover. Halaman ini tidak memperbaiki atau memulihkan data yang telah hilang. Pengujian menggunakan PostgreSQL lokal dan Discord mock, bukan deployment atau Discord live.
 
 Audit jalur penulis dan prototipe transaksi yang masih terisolasi: lihat `DOKUMENTASI-JOIN-TO-CREATE-PG.md`. Prototipe belum diaktifkan pada bot atau dashboard.
+
+Inventaris Join to Create juga memperingatkan metadata create tertunda berformat prototipe bila ditemukan, dengan ID channel hanya bila sudah tercatat dan tanpa token atau ID pemilik. Status ini bukan verifikasi Discord; metadata yang tidak valid ditolak. Prototipe penulis masih terisolasi, dan web tidak menyediakan pembatalan atau rekonsiliasi.

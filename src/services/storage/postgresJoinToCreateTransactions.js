@@ -1,6 +1,7 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {pgConfig} from '../../config/database/postgres.js';
 import {getJoinToCreateConfigKey,getJoinToCreateChannelsKey} from '../../utils/database/keys.js';
+import {parseJoinToCreatePending} from '../../utils/joinToCreatePending.js';
 
 // PROTOTYPE ONLY: no bot/dashboard writer uses this yet. All participating
 // writers MUST use the same advisory lock. Older instances and SQL bypass it.
@@ -23,13 +24,14 @@ function validate(data){
  if(!plain(data)||(Object.hasOwn(data,'ok')&&Object.hasOwn(data,'value')))throw invalid();
  const d={...defaults(),...data};
  if(typeof d.enabled!=='boolean'||!Array.isArray(d.triggerChannels)||d.triggerChannels.length>100||!d.triggerChannels.every(id)||new Set(d.triggerChannels).size!==d.triggerChannels.length||(d.categoryId!==null&&!id(d.categoryId))||typeof d.channelNameTemplate!=='string'||d.channelNameTemplate.length>1000||!Number.isInteger(d.userLimit)||d.userLimit<0||d.userLimit>99||!Number.isInteger(d.bitrate)||d.bitrate<8000||d.bitrate>384000||!plain(d.channelOptions)||!plain(d.temporaryChannels)||!plain(d.pendingCreates))throw invalid();
- const opts=Object.entries(d.channelOptions),temps=Object.entries(d.temporaryChannels),pending=Object.entries(d.pendingCreates);
+ const opts=Object.entries(d.channelOptions),temps=Object.entries(d.temporaryChannels);let pending;
+ try{pending=parseJoinToCreatePending(d.pendingCreates)}catch{throw invalid();}
  if(opts.length>100||temps.length+pending.length>5000||pending.length>1)throw invalid();
  for(const [key,v] of opts){if(!id(key)||!plain(v)||(v.nameTemplate!==undefined&&(typeof v.nameTemplate!=='string'||v.nameTemplate.length>1000))||(v.userLimit!==undefined&&(!Number.isInteger(v.userLimit)||v.userLimit<0||v.userLimit>99))||(v.bitrate!==undefined&&(!Number.isInteger(v.bitrate)||v.bitrate<8000||v.bitrate>384000))||(v.categoryId!=null&&!id(v.categoryId)))throw invalid();}
  for(const [key,v] of temps){if(!id(key)||!plain(v)||!id(v.ownerId)||!id(v.triggerChannelId)||(v.createdAt!==undefined&&(!Number.isSafeInteger(v.createdAt)||v.createdAt<0||Number.isNaN(new Date(v.createdAt).getTime()))))throw invalid();}
  const owners=new Set();
  for(const [,v] of temps){if(owners.has(v.ownerId))throw invalid();owners.add(v.ownerId);}
- for(const [token,v] of pending){if(!tokenPattern.test(token)||!plain(v)||Object.keys(v).sort().join(',')!=='createdAt,ownerId,triggerId'||!id(v.ownerId)||!id(v.triggerId)||!Number.isSafeInteger(v.createdAt)||v.createdAt<0||Number.isNaN(new Date(v.createdAt).getTime())||owners.has(v.ownerId))throw invalid();owners.add(v.ownerId);}
+ for(const [,v] of pending){if(owners.has(v.ownerId))throw invalid();owners.add(v.ownerId);}
  return d;
 }
 function requireId(...ids){if(!ids.every(id))throw invalid();}
@@ -66,8 +68,9 @@ async function transaction(client,guildId,fn,{allowPending=false}={}){
     // Other participating writes remain blocked until acknowledgement.
     const future=JSON.parse(text),[token,item]=pending[0];let candidate=99999999999999999999n;
     while(Object.hasOwn(future.temporaryChannels,String(candidate)))candidate--;
+    const recorded=JSON.parse(text);recorded.pendingCreates[token]={...item,stage:'created',channelId:String(candidate)};
     delete future.pendingCreates[token];future.temporaryChannels[String(candidate)]={ownerId:item.ownerId,triggerChannelId:item.triggerId,createdAt:8640000000000000};
-    const futureSize=await conn.query('SELECT octet_length($1::jsonb::text) AS bytes',[JSON.stringify(future)]);if(futureSize.rows[0].bytes>limit)throw invalid();
+    const futureSize=await conn.query('SELECT octet_length($1::jsonb::text) AS recorded,octet_length($2::jsonb::text) AS completed',[JSON.stringify(recorded),JSON.stringify(future)]);if(futureSize.rows[0].recorded>limit||futureSize.rows[0].completed>limit)throw invalid();
    }
    if(row){const updated=await conn.query(`UPDATE ${pgConfig.tables.temp_data} SET value=$2::jsonb WHERE key=$1 AND expires_at IS NULL RETURNING key`,[key,text]);if(updated.rowCount!==1)throw fail('JTC_STALE','Record changed');}
    else await conn.query(`INSERT INTO ${pgConfig.tables.temp_data} (key,value,expires_at) VALUES ($1,$2::jsonb,NULL)`,[key,text]);
@@ -138,16 +141,27 @@ export async function reserveJoinToCreatePrototype(client,guildId,ownerId,trigge
   if(state.revision!==revision)throw fail('JTC_STALE','Configuration changed');
   if(!d.enabled||!d.triggerChannels.includes(triggerId))throw fail('JTC_STALE','Trigger no longer active');
   if(Object.hasOwn(d.pendingCreates,token)||Object.values(d.pendingCreates).some(v=>v.ownerId===ownerId)||Object.values(d.temporaryChannels).some(v=>v.ownerId===ownerId))throw fail('JTC_CONFLICT','Owner already has a channel or pending create');
-  const createdAt=Date.now();d.pendingCreates[token]={ownerId,triggerId,createdAt};return {write:true,value:{token}};
+  const createdAt=Date.now();d.pendingCreates[token]={ownerId,triggerId,createdAt,stage:'reserved'};return {write:true,value:{token}};
  });
+}
+// Record the adapter's returned ID without claiming Discord is still present.
+// An uncertain COMMIT stops the flow; it is never retried automatically.
+export async function recordJoinToCreateCreatedPrototype(client,guildId,ownerId,triggerId,token,channelId){
+ requireId(ownerId,triggerId,channelId);if(typeof token!=='string'||!tokenPattern.test(token))throw invalid();
+ return transaction(client,guildId,d=>{
+  const pending=d.pendingCreates[token];
+  if(!pending||pending.stage!=='reserved'||pending.ownerId!==ownerId||pending.triggerId!==triggerId||!d.enabled||!d.triggerChannels.includes(triggerId))throw fail('JTC_STALE','Reservation or trigger changed');
+  if(Object.hasOwn(d.temporaryChannels,channelId))throw fail('JTC_CONFLICT','Channel already registered');
+  d.pendingCreates[token]={...pending,stage:'created',channelId};return {write:true,value:true};
+ },{allowPending:true});
 }
 export async function completeJoinToCreatePrototype(client,guildId,ownerId,triggerId,token,channelId){
  requireId(ownerId,triggerId,channelId);if(typeof token!=='string'||!tokenPattern.test(token))throw invalid();
  return transaction(client,guildId,d=>{
   const pending=d.pendingCreates[token];
-  if(!pending||pending.ownerId!==ownerId||pending.triggerId!==triggerId||!d.enabled||!d.triggerChannels.includes(triggerId))throw fail('JTC_STALE','Reservation or trigger changed');
+  if(!pending||pending.stage!=='created'||pending.channelId!==channelId||pending.ownerId!==ownerId||pending.triggerId!==triggerId||!d.enabled||!d.triggerChannels.includes(triggerId))throw fail('JTC_STALE','Reservation or trigger changed');
   if(Object.hasOwn(d.temporaryChannels,channelId)||Object.values(d.temporaryChannels).some(v=>v.ownerId===ownerId))throw fail('JTC_CONFLICT','Channel or owner already registered');
-    d.temporaryChannels[channelId]={ownerId,triggerChannelId:triggerId,createdAt:Date.now()};delete d.pendingCreates[token];
+  d.temporaryChannels[channelId]={ownerId,triggerChannelId:triggerId,createdAt:Date.now()};delete d.pendingCreates[token];
   return {write:true,value:true};
  },{allowPending:true});
 }

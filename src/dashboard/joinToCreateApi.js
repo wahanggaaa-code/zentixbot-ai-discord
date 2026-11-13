@@ -1,6 +1,7 @@
 import express from 'express';
 import {pgConfig} from '../config/database/postgres.js';
 import {getJoinToCreateConfigKey,getJoinToCreateChannelsKey} from '../utils/database/keys.js';
+import {parseJoinToCreatePending} from '../utils/joinToCreatePending.js';
 
 const id=x=>typeof x==='string'&&/^\d{17,20}$/.test(x);
 const obj=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
@@ -13,11 +14,13 @@ function validate(raw){
  if(typeof cfg.enabled!=='boolean'||!Array.isArray(cfg.triggerChannels)||cfg.triggerChannels.length>100||!cfg.triggerChannels.every(id)||new Set(cfg.triggerChannels).size!==cfg.triggerChannels.length||(cfg.categoryId!==null&&!id(cfg.categoryId))||typeof cfg.channelNameTemplate!=='string'||cfg.channelNameTemplate.length>1000||!Number.isInteger(cfg.userLimit)||cfg.userLimit<0||cfg.userLimit>99||!Number.isInteger(cfg.bitrate)||cfg.bitrate<8000||cfg.bitrate>384000||!obj(cfg.channelOptions)||!obj(cfg.temporaryChannels))throw fail(409,'Data Join to Create perlu diperiksa.');
  const channels=Object.entries(cfg.temporaryChannels);if(channels.length>5000)throw fail(409,'Daftar channel sementara terlalu besar untuk ditampilkan.');
  for(const [channelId,v] of channels)if(!id(channelId)||!obj(v)||!id(v.ownerId)||!id(v.triggerChannelId)||(v.createdAt!==undefined&&(!Number.isSafeInteger(v.createdAt)||v.createdAt<0||Number.isNaN(new Date(v.createdAt).getTime()))))throw fail(409,'Data channel sementara perlu diperiksa.');
+ let pending;try{pending=parseJoinToCreatePending(raw.pendingCreates)}catch{throw fail(409,'Data operasi tertunda Join to Create perlu diperiksa.')};
+ const pendingCreate=pending.length?{stage:pending[0][1].stage,channelId:pending[0][1].channelId??null}:null;
  const triggers=cfg.triggerChannels.map(channelId=>{
   const v=cfg.channelOptions[channelId]??{};if(!obj(v)||(v.nameTemplate!==undefined&&(typeof v.nameTemplate!=='string'||v.nameTemplate.length>1000))||(v.userLimit!==undefined&&(!Number.isInteger(v.userLimit)||v.userLimit<0||v.userLimit>99))||(v.bitrate!==undefined&&(!Number.isInteger(v.bitrate)||v.bitrate<8000||v.bitrate>384000))||(v.categoryId!=null&&!id(v.categoryId)))throw fail(409,'Opsi channel Join to Create perlu diperiksa.');
   return {channelId,nameTemplate:v.nameTemplate??null,userLimit:v.userLimit??null,bitrate:v.bitrate??null,categoryId:v.categoryId??null};
  });
- return {enabled:cfg.enabled,categoryId:cfg.categoryId,channelNameTemplate:cfg.channelNameTemplate,userLimit:cfg.userLimit,bitrate:cfg.bitrate,triggers,channels};
+ return {enabled:cfg.enabled,categoryId:cfg.categoryId,channelNameTemplate:cfg.channelNameTemplate,userLimit:cfg.userLimit,bitrate:cfg.bitrate,triggers,channels,pendingCreate};
 }
 export function createJoinToCreateApi(client,{auth}){
  const router=express.Router();
@@ -30,7 +33,7 @@ export function createJoinToCreateApi(client,{auth}){
   if(!row)return res.json({state:'missing',otherData});
   if(row.expired)return res.json({state:'expired',otherData});
   const config=validate(row.value),after=req.query.after||'',ordered=config.channels.sort(([a],[b])=>a<b?-1:a>b?1:0),filtered=ordered.filter(([channelId])=>channelId>after),page=filtered.slice(0,50);
-  res.json({state:'stored',otherData,hasExpiry:row.has_expiry,enabled:config.enabled,categoryId:config.categoryId,channelNameTemplate:config.channelNameTemplate,userLimit:config.userLimit,bitrate:config.bitrate,triggers:config.triggers,totalTemporaryChannels:ordered.length,temporaryChannels:page.map(([channelId,v])=>({channelId,triggerChannelId:v.triggerChannelId,createdAt:v.createdAt??null})),next:filtered.length>50?page.at(-1)[0]:null});
+  res.json({state:'stored',otherData,hasExpiry:row.has_expiry,enabled:config.enabled,categoryId:config.categoryId,channelNameTemplate:config.channelNameTemplate,userLimit:config.userLimit,bitrate:config.bitrate,triggers:config.triggers,totalTemporaryChannels:ordered.length,pendingCreate:config.pendingCreate,temporaryChannels:page.map(([channelId,v])=>({channelId,triggerChannelId:v.triggerChannelId,createdAt:v.createdAt??null})),next:filtered.length>50?page.at(-1)[0]:null});
  }catch(e){res.status(e.status||503).json({error:e.status?e.message:'Gagal membaca Join to Create dari database.'})}});
  return router;
 }

@@ -1,4 +1,4 @@
-import {reserveJoinToCreatePrototype,completeJoinToCreatePrototype} from './storage/postgresJoinToCreateTransactions.js';
+import {reserveJoinToCreatePrototype,recordJoinToCreateCreatedPrototype,completeJoinToCreatePrototype} from './storage/postgresJoinToCreateTransactions.js';
 
 // Experimental orchestration, not wired into Discord or the dashboard.
 // createChannel is an injected adapter; callers must preflight guild/channel,
@@ -15,6 +15,7 @@ export async function createJoinToCreatePrototype({client,guildId,ownerId,trigge
   const channel=await createChannel(Object.freeze({guildId,ownerId,triggerId}));
   channelId=channel?.id;const actualGuildId=channel?.guildId;
   if(typeof channelId!=='string'||!/^\d{17,20}$/.test(channelId)||actualGuildId!==guildId)throw new Error('Invalid adapter response');
+  await recordJoinToCreateCreatedPrototype(client,guildId,ownerId,triggerId,reservation.token,channelId);
   await completeJoinToCreatePrototype(client,guildId,ownerId,triggerId,reservation.token,channelId);
  }catch{throw failure('JTC_CREATE_UNCERTAIN','Channel creation or registration may have succeeded; inspect Discord and storage before any retry.')}
  return {channelId};
