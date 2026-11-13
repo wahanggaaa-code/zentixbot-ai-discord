@@ -27,6 +27,7 @@ import { createSettingsApi } from '../src/dashboard/settingsApi.js';
 import { createServerStatsApi } from '../src/dashboard/serverStatsApi.js';
 import { createReactionRolesApi } from '../src/dashboard/reactionRolesApi.js';
 import { createCountingApi } from '../src/dashboard/countingApi.js';
+import { createApplicationsApi } from '../src/dashboard/applicationsApi.js';
 
 const dir = 'dashboard-preview/';
 const raw = fs.readFileSync(dir + 'index.html', 'utf8');
@@ -90,6 +91,19 @@ async function openDashboard(t) {
     await fx.query('INSERT INTO temp_data (key, value) VALUES ($1, $2::jsonb)', [`countingGame:${guild.id}`, JSON.stringify({
         enabled: true, channelId: '623456789012345004', system: 'decimal', nextNumber: 4, lastUserId: null, currentStreak: 3, bestStreak: 3, leaderboard: {},
     })]);
+    // Two application forms, so the page has forms to change, and two more roles, so its role picker has another
+    // role to switch to. Creating a form must be refused throughout: a form that really got created would change the
+    // page between the two submits of a comparison. It is: the picker's first role is the bot's own, which cannot be
+    // applied for, and with another role the name this walk types ("uji") is taken. The walk checks this at its end.
+    fx.addRole('623456789012345006', { name: 'Helper', position: 4 });
+    fx.addRole('623456789012345007', { name: 'Staff', position: 3 });
+    const applications = `guild:${guild.id}:applications:`;
+    for (const [key, value] of [
+        ['settings', { enabled: true }],
+        ['roles', [{ roleId: '623456789012345006', name: 'uji', enabled: true }, { roleId: '623456789012345007', name: 'ujiz', enabled: true }]],
+        ['role:623456789012345006:settings', { questions: ['Why?'], logChannelId: null }],
+        ['role:623456789012345007:settings', { questions: ['Why?'], logChannelId: null }],
+    ]) await fx.query('INSERT INTO temp_data (key, value) VALUES ($1, $2::jsonb)', [applications + key, JSON.stringify(value)]);
     client.commands = new Map([
         ['ping', { data: { name: 'ping', description: 'Ping' }, category: 'Core' }],
         ['balance', { data: { name: 'balance', description: 'Balance' }, category: 'Economy' }],
@@ -103,7 +117,7 @@ async function openDashboard(t) {
     };
     const csrf = (req, res, next) => next();
     app.get('/dashboard/api/me', (req, res) => res.json({ user: { username: 'Tester' }, guild: { name: 'Home' }, csrf: 'c', botOwner: true }));
-    for (const create of [createBotApiRouter, createGoodbyeApi, createBirthdayApi, createCoreApi, createGiveawayApi, createJoinToCreateSettingsApi, createServerStatsApi, createReactionRolesApi, createCountingApi, createModulesApi, createOperationsApi]) {
+    for (const create of [createBotApiRouter, createGoodbyeApi, createBirthdayApi, createCoreApi, createGiveawayApi, createJoinToCreateSettingsApi, createServerStatsApi, createReactionRolesApi, createCountingApi, createApplicationsApi, createModulesApi, createOperationsApi]) {
         app.use('/dashboard/api/bot', create(client, { auth, csrf }));
     }
     app.use('/dashboard/api/bot', createJoinToCreateApi(client, { auth }));
@@ -182,7 +196,7 @@ async function listTabs(page) {
 test('live dashboard: every tab loads from the bot, without mock forms or script errors', async (t) => {
     const page = await openDashboard(t);
     const tabs = await listTabs(page);
-    assert.equal(tabs.length, 20 + 12 + 1);
+    assert.equal(tabs.length, 21 + 12 + 1);
     let seenReportChannel = 0;
 
     for (const { hash, attr, tab, where } of tabs) {
@@ -285,6 +299,7 @@ test('live dashboard: every control of every form changes the request that is se
                 fill(form);
                 const name = `${where} ${id}.${control.name || '#' + control.id}${control.type === 'checkbox' && control.value !== 'on' ? '=' + control.value : ''}`;
                 checked++;
+                if (process.env.WALK_LIST) console.log(`WALK ${name}`); // lists what was walked, for when the count below changes
                 if (!flip(control)) { unsent.push(`${name} (no other value)`); continue; }
                 const after = await submit(n);
                 if (after === before) unsent.push(name);
@@ -293,7 +308,9 @@ test('live dashboard: every control of every form changes the request that is se
     }
 
     assert.deepEqual(unsent.sort(), Object.keys(NEEDS_PRECONDITION).sort());
-    assert.equal(formCount, 31, 'forms on the live dashboard');
-    assert.equal(checked, 187, 'controls on the live dashboard');
+    assert.equal(formCount, 35, 'forms on the live dashboard');
+    assert.equal(checked, 214, 'controls on the live dashboard');
     assert.deepEqual(state.errors, []);
+    const applications = await (await w.fetch('/dashboard/api/bot/applications')).json();
+    assert.equal(applications.forms.length, 2, 'no application form was created along the way');
 });

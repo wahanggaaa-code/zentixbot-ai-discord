@@ -66,24 +66,9 @@ export const botConfig = {
       { question: "Why do you want to join?", required: true },
     ],
 
-    // Embed colors by application status.
-    statusColors: {
-      pending: "#FFA500",
-      approved: "#00FF00",
-      denied: "#FF0000",
-    },
-
-    // How long users must wait before submitting another application (hours).
+    // How long a member waits after an application before the next one (hours); 0 for no wait.
+    // The wait counts from the submission and is per server.
     applicationCooldown: 24,
-
-    // Auto-delete denied applications after this many days.
-    deleteDeniedAfter: 7,
-
-    // Auto-delete approved applications after this many days.
-    deleteApprovedAfter: 30,
-
-    // Role IDs allowed to manage applications.
-    managerRoles: [], // Will be populated from environment or database
   },
 
   // =========================
@@ -607,12 +592,6 @@ export function isCommandCategoryEnabled(category) {
   }
 
   return isFeatureEnabled(featureKey);
-}
-
-export function getApplicationStatusColor(status) {
-  const colors = botConfig.applications?.statusColors || {};
-  const hex = colors[status];
-  return hex ? getColor(hex) : getColor(status === "approved" ? "success" : status === "denied" ? "error" : "warning");
 }
 
 export function getDefaultApplicationQuestions() {

@@ -158,6 +158,21 @@ export async function enforceDefaultCommandPermissions(interaction, command, con
     return true;
   }
 
+  // A command may say that it checks this use itself, for access that is not a Discord
+  // permission (a role chosen in the bot's own settings). The command then must refuse
+  // on its own whoever it does not accept.
+  if (typeof command?.checksOwnAccess === 'function') {
+    let own = false;
+    try {
+      own = command.checksOwnAccess(interaction) === true;
+    } catch {
+      own = false;
+    }
+    if (own) {
+      return true;
+    }
+  }
+
   const member = interaction.member;
   if (memberMeetsCommandPermissions(member, requiredPermissions, {
     guildConfig: context.guildConfig ?? null,

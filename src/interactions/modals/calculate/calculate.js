@@ -1,10 +1,6 @@
-import calculateModalHandler from '../../../handlers/calculateModals.js';
-
-const execute = typeof calculateModalHandler === 'function'
-  ? calculateModalHandler
-  : calculateModalHandler.execute;
+import { calculatorModal } from '../../../handlers/calculateHandlers.js';
 
 export default {
-  name: 'calc_modal',
-  execute,
+  name: 'calc',
+  execute: calculatorModal,
 };

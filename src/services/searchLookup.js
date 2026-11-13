@@ -62,6 +62,37 @@ export async function getJson(url, { timeoutMs = LOOKUP_TIMEOUT_MS, deadlineMs =
     return data;
 }
 
+/** How much of a plain-text answer is read; the services asked this way answer with one short line. */
+export const TEXT_MAX_BYTES = 4 * 1024;
+
+/**
+ * GET a short plain-text answer. Returns `{ status, text }` for every answer the service gives,
+ * whatever its status, because some services explain a refusal in the body of an error status.
+ * Throws a LookupError when there is no answer (UNREACHABLE), too many requests (RATE_LIMITED),
+ * or an answer larger than `maxBytes` (BAD_RESPONSE).
+ */
+export async function getText(url, { timeoutMs = LOOKUP_TIMEOUT_MS, deadlineMs = LOOKUP_DEADLINE_MS, maxBytes = TEXT_MAX_BYTES } = {}) {
+    let response;
+    try {
+        response = await axios.get(url, {
+            timeout: timeoutMs,
+            signal: AbortSignal.timeout(deadlineMs),
+            maxContentLength: maxBytes,
+            maxRedirects: 0,
+            responseType: 'text',
+            validateStatus: () => true,
+            headers: { Accept: 'text/plain' },
+        });
+    } catch (error) {
+        if (/maxContentLength/i.test(String(error?.message))) throw new LookupError(LookupFailure.BAD_RESPONSE, { cause: error });
+        throw new LookupError(LookupFailure.UNREACHABLE, { cause: error });
+    }
+    const status = response?.status ?? null;
+    if (status === 429) throw new LookupError(LookupFailure.RATE_LIMITED, { status });
+    if (typeof response?.data !== 'string' || response.data.length > maxBytes) throw new LookupError(LookupFailure.BAD_RESPONSE, { status });
+    return { status, text: response.data };
+}
+
 /** The message a member sees for a failed lookup; `service` is how the service is called in a sentence. */
 export function lookupFailureMessage(error, service) {
     switch (error?.kind) {

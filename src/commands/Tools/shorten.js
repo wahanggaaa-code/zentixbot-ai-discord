@@ -1,122 +1,94 @@
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
-import { createEmbed, successEmbed, infoEmbed, warningEmbed } from '../../utils/embeds.js';
+import { createEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 import { replyUserError, ErrorTypes } from '../../utils/errorHandler.js';
-import { getColor } from '../../config/bot.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+import { LookupError, codeSpan, getText, lookupFailureMessage } from '../../services/searchLookup.js';
+
+const SHORTENER_URL = 'https://is.gd/create.php';
+const SERVICE = 'The URL shortener (is.gd)';
+export const URL_LIMIT = 2000;
+// is.gd accepts custom endings of 5 to 30 letters, digits and underscores.
+const CUSTOM_ENDING = /^[A-Za-z0-9_]{5,30}$/;
+// The only thing accepted as a result: one is.gd link, nothing before or after it.
+const SHORT_LINK = /^https:\/\/is\.gd\/[A-Za-z0-9_-]{1,40}$/;
+
+/** A web address a member may shorten: http or https, with a host, no credentials. Returns the URL or null. */
+export function shortenableUrl(input) {
+    if (typeof input !== 'string' || input.length > URL_LIMIT) return null;
+    let url;
+    try {
+        url = new URL(input.trim());
+    } catch {
+        return null;
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    if (!url.hostname || url.username || url.password) return null;
+    return url;
+}
+
+/** What is.gd's one-line answer means: `{ link }`, or `{ refusal }` with the sentence for the member. */
+export function readShortenerAnswer(text) {
+    const answer = String(text ?? '').trim();
+    if (SHORT_LINK.test(answer)) return { link: answer };
+    if (/already exists|already taken|not available/i.test(answer)) return { refusal: 'That custom ending is already taken. Try a different one.' };
+    if (/^Error:/i.test(answer)) return { refusal: `The shortener refused this address: ${codeSpan(answer.replace(/^Error:\s*/i, ''), 200)}` };
+    return { refusal: null };
+}
 
 export default {
     data: new SlashCommandBuilder()
-        .setName("shorten")
-        .setDescription("Shorten a URL using is.gd")
-        .addStringOption(option =>
+        .setName('shorten')
+        .setDescription('Shorten a URL using is.gd')
+        .addStringOption((option) =>
             option
-                .setName("url")
-                .setDescription("The URL to shorten")
-                .setRequired(true)
+                .setName('url')
+                .setDescription('The URL to shorten, starting with http:// or https://')
+                .setMaxLength(URL_LIMIT)
+                .setRequired(true),
         )
-        .addStringOption(option =>
+        .addStringOption((option) =>
             option
-                .setName("custom")
-                .setDescription("Custom URL ending (optional)")
-                .setRequired(false)
+                .setName('custom')
+                .setDescription('Custom ending: 5 to 30 letters, digits or underscores (optional)')
+                .setMinLength(5)
+                .setMaxLength(30)
+                .setRequired(false),
         )
         .setDMPermission(false),
-    category: "Tools",
+    category: 'Tools',
 
     async execute(interaction) {
-        const deferSuccess = await InteractionHelper.safeDefer(interaction, {
-            flags: MessageFlags.Ephemeral
-        });
+        const deferSuccess = await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
         if (!deferSuccess) {
-            logger.warn(`Shorten interaction defer failed`, {
-                userId: interaction.user.id,
-                guildId: interaction.guildId,
-                commandName: 'shorten'
-            });
+            logger.warn('Shorten interaction defer failed', { userId: interaction.user.id, guildId: interaction.guildId, commandName: 'shorten' });
             return;
         }
+        const refuse = (message, type = ErrorTypes.VALIDATION) => replyUserError(interaction, { type, message });
 
-        const url = interaction.options.getString("url");
-        const custom = interaction.options.getString("custom");
+        const url = shortenableUrl(interaction.options.getString('url'));
+        if (!url) return refuse(`Please give a web address that starts with http:// or https://, at most ${URL_LIMIT} characters.`);
+        const custom = interaction.options.getString('custom');
+        if (custom && !CUSTOM_ENDING.test(custom)) return refuse('A custom ending has 5 to 30 characters: letters, digits and underscores only.');
 
+        let answer;
         try {
-            new URL(url);
-        } catch (e) {
-            return replyUserError(interaction, {
-                type: ErrorTypes.VALIDATION,
-                message: 'Invalid URL format. Include http:// or https://',
-            });
+            const query = `format=simple&url=${encodeURIComponent(url.href)}${custom ? `&shorturl=${encodeURIComponent(custom)}` : ''}`;
+            answer = await getText(`${SHORTENER_URL}?${query}`);
+        } catch (error) {
+            if (!(error instanceof LookupError)) throw error;
+            logger.warn(`URL shortener request failed: ${error.message}`, { userId: interaction.user.id, guildId: interaction.guildId, reason: error.reason });
+            return refuse(lookupFailureMessage(error, SERVICE), ErrorTypes.NETWORK);
         }
 
-        if (custom && !/^[a-zA-Z0-9_-]+$/.test(custom)) {
-            return replyUserError(interaction, {
-                type: ErrorTypes.VALIDATION,
-                message: 'Custom URL can only contain letters, numbers, underscores, and hyphens.',
-            });
+        const { link, refusal } = readShortenerAnswer(answer.text);
+        if (!link) {
+            logger.warn('URL shortener gave no link', { userId: interaction.user.id, guildId: interaction.guildId, status: answer.status });
+            return refuse(refusal ?? lookupFailureMessage(null, SERVICE), refusal ? ErrorTypes.VALIDATION : ErrorTypes.NETWORK);
         }
 
-        let apiUrl = `https://is.gd/create.php?format=simple&url=${encodeURIComponent(url)}`;
-        if (custom) {
-            apiUrl += `&shorturl=${encodeURIComponent(custom)}`;
-        }
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-
-        let response;
-        try {
-            response = await fetch(apiUrl, {
-                signal: controller.signal,
-                headers: {
-                    'User-Agent': 'ZentixBot URL Shortener/1.0'
-                }
-            });
-        } catch (networkError) {
-            const message = networkError?.name === 'AbortError'
-                ? 'The URL shortener timed out. Please try again in a moment.'
-                : 'Unable to reach the URL shortener service right now. Please try again later.';
-            return replyUserError(interaction, {
-                type: ErrorTypes.NETWORK,
-                message,
-            });
-        } finally {
-            clearTimeout(timeout);
-        }
-
-        if (!response.ok) {
-            return replyUserError(interaction, {
-                type: ErrorTypes.UNKNOWN,
-                message: `Shortener service returned HTTP ${response.status}. Please try again later.`,
-            });
-        }
-
-        const shortUrl = await response.text();
-
-        try {
-            new URL(shortUrl);
-        } catch (e) {
-            if (shortUrl.includes("already exists")) {
-                return replyUserError(interaction, {
-                    type: ErrorTypes.VALIDATION,
-                    message: 'That custom URL is already taken. Try a different one.',
-                });
-            } else if (shortUrl.includes("invalid")) {
-                return replyUserError(interaction, {
-                    type: ErrorTypes.VALIDATION,
-                    message: 'Invalid URL. Include http:// or https://',
-                });
-            }
-            return replyUserError(interaction, {
-                type: ErrorTypes.UNKNOWN,
-                message: `URL shortening failed: ${shortUrl}`,
-            });
-        }
-
-        const embed = successEmbed('URL Shortened', `Here's your shortened URL: ${shortUrl}`);
-        embed.setColor(getColor('success'));
         await InteractionHelper.safeEditReply(interaction, {
-            embeds: [embed],
+            embeds: [createEmbed({ title: 'URL Shortened', description: `Short link: ${link}\nPoints to: ${codeSpan(url.href, 300)}`, color: 'success' })],
         });
     },
 };

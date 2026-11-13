@@ -1,40 +1,62 @@
-import { SlashCommandBuilder, PermissionFlagsBits, PermissionsBitField, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle, ComponentType, LabelBuilder, RoleSelectMenuBuilder } from 'discord.js';
-import { createEmbed, successEmbed } from '../../utils/embeds.js';
-import { getColor, getApplicationStatusColor } from '../../config/bot.js';
+import { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { logger } from '../../utils/logger.js';
-import { withErrorHandling, createError, ErrorTypes, replyUserError } from '../../utils/errorHandler.js';
-import ApplicationService from '../../services/applicationService.js';
-import { 
-    getApplicationSettings, 
-    saveApplicationSettings, 
-    getApplication, 
-    getApplications, 
-    updateApplication,
-    getApplicationRoles,
-    saveApplicationRoles,
-    getApplicationRoleSettings,
-    saveApplicationRoleSettings
-} from '../../utils/database.js';
-import { InteractionHelper } from '../../utils/interactionHelper.js';
-import appDashboard from './modules/app_dashboard.js';
+import { withErrorHandling, ErrorTypes, replyUserError } from '../../utils/errorHandler.js';
+import { isApplicationId, purgeExpired, readAll, readConfig } from '../../services/applications/store.js';
+import { canConfigure, canReview } from '../../services/applications/service.js';
+import { adminListEmbed, newFormModal, refusalMessage, reviewPayload } from '../../services/applications/view.js';
+import { refuse, showDashboard } from '../../handlers/applicationHandlers.js';
 
-function getApplicationStatusPresentation(statusValue) {
-    const normalized = typeof statusValue === 'string' ? statusValue.trim().toLowerCase() : 'unknown';
-    const statusLabel =
-        normalized === 'pending' ? 'In Progress' :
-        normalized === 'approved' ? 'Accepted' :
-        normalized === 'denied' ? 'Denied' :
-        'Unknown';
-    const statusEmoji =
-        normalized === 'pending' ? '🟡' :
-        normalized === 'approved' ? '🟢' :
-        normalized === 'denied' ? '🔴' :
-        '⚪';
+const PRIVATE = MessageFlags.Ephemeral;
+const say = (interaction, message, type = ErrorTypes.VALIDATION) => replyUserError(interaction, { type, message });
+const forbidden = (interaction) => say(interaction, refusalMessage({ code: 'APP_FORBIDDEN' }), ErrorTypes.PERMISSION);
 
-    return { normalized, statusLabel, statusEmoji };
+async function handleReview(interaction) {
+    const { settings, applications } = await readAll(interaction.client, interaction.guild.id);
+    if (!canReview(interaction.guild, interaction.member, settings)) return forbidden(interaction);
+    const id = String(interaction.options.getString('id') ?? '').trim();
+    const application = isApplicationId(id) ? applications.find((entry) => entry.id === id) : null;
+    if (!application) return say(interaction, refusalMessage({ code: 'APP_NOT_FOUND' }));
+    // An application that was already decided is shown as decided, without buttons.
+    return interaction.editReply(reviewPayload(application));
+}
+
+async function handleList(interaction) {
+    const { client, guild } = interaction;
+    const { settings, forms, applications } = await readAll(client, guild.id);
+    if (!canReview(guild, interaction.member, settings)) return forbidden(interaction);
+
+    const status = interaction.options.getString('status') ?? 'pending';
+    const user = interaction.options.getUser('user');
+    const roleFilter = String(interaction.options.getString('role') ?? '').trim();
+    const limit = Math.min(Math.max(Math.trunc(interaction.options.getNumber('limit') ?? 10), 1), 25);
+
+    const filters = [status];
+    let found = applications.filter((application) => application.status === status);
+    if (user) {
+        found = found.filter((application) => application.userId === user.id);
+        filters.push(`user <@${user.id}>`);
+    }
+    if (roleFilter) {
+        // A role id, a role mention, or the name of an application.
+        const roleId = roleFilter.replace(/^<@&(\d+)>$/, '$1');
+        const byName = forms.find((form) => form.name.toLowerCase() === roleFilter.toLowerCase());
+        found = found.filter((application) => application.roleId === roleId || application.roleId === byName?.roleId);
+        filters.push(`role ${byName ? byName.name : roleFilter.slice(0, 40)}`);
+    }
+
+    // Applications past their retention were already left out; remove them for good while we are here.
+    purgeExpired(client, guild.id).catch((error) => logger.warn('Could not remove expired applications', { guildId: guild.id, code: error?.code }));
+
+    if (found.length === 0) {
+        const hint = forms.length === 0 ? '\nNo application is set up yet. Use `/app-admin setup` to create one.' : '';
+        return say(interaction, `No ${status} applications found${filters.length > 1 ? ' for this filter' : ''}.${hint}`);
+    }
+    return interaction.editReply({ embeds: [adminListEmbed(found.slice(0, limit), { total: found.length, filters })] });
 }
 
 export default {
+    // Forms and private replies only exist for slash commands; as a prefix command the list of applicants would be posted in the channel.
+    slashOnly: true,
     data: new SlashCommandBuilder()
     .setName("app-admin")
     .setDescription("Manage staff applications")
@@ -70,7 +92,7 @@ export default {
                     ),
             )
             .addStringOption((option) =>
-                option.setName("role").setDescription("Filter by role ID"),
+                option.setName("role").setDescription("Filter by role ID or application name"),
             )
             .addUserOption((option) =>
                 option.setName("user").setDescription("Filter by user"),
@@ -97,473 +119,61 @@ export default {
                     .setAutocomplete(true),
             ),
     ),
-
     category: "Community",
+
+    /**
+     * Discord shows this command to Manage Server only, unless the server allows a role under
+     * Integrations. Reading and deciding applications is also open to the manager roles chosen in the
+     * application settings, so those two subcommands decide for themselves (`canReview`).
+     */
+    checksOwnAccess(interaction) {
+        return ['review', 'list'].includes(interaction.options.getSubcommand());
+    },
 
     execute: withErrorHandling(async (interaction) => {
         if (!interaction.inGuild()) {
             return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'This command can only be used in a server.' });
         }
-
-        const { options, guild, member } = interaction;
-        const subcommand = options.getSubcommand();
-
-        if (subcommand !== 'dashboard' && subcommand !== 'setup') {
-            await InteractionHelper.safeDefer(interaction, { flags: ['Ephemeral'] });
-        }
-
-        logger.info(`App-admin command executed: ${subcommand}`, {
-            userId: interaction.user.id,
-            guildId: guild.id,
-            subcommand
-        });
-
-        await ApplicationService.checkManagerPermission(interaction.client, guild.id, member);
-
-        if (subcommand === "setup") {
-            await handleSetup(interaction);
-        } else if (subcommand === "review") {
-            await handleReview(interaction);
-        } else if (subcommand === "list") {
-            await handleList(interaction);
-        } else if (subcommand === "dashboard") {
-            const selectedAppName = interaction.options.getString("application");
-            await appDashboard.execute(interaction, null, interaction.client, selectedAppName);
-        }
-    }, { type: 'command', commandName: 'app-admin' })
-};
-
-async function handleSetup(interaction) {
-    
-    if (interaction.deferred || interaction.replied) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'This interaction has already been processed. Please try the command again.' });
-    }
-
-    const modal = new ModalBuilder()
-        .setCustomId('app_setup_modal')
-        .setTitle('Set Up New Application');
-
-    const roleSelect = new RoleSelectMenuBuilder()
-        .setCustomId('role_id')
-        .setPlaceholder('Select the role users will apply for')
-        .setRequired(true);
-
-    const roleLabel = new LabelBuilder()
-        .setLabel('Application Role')
-        .setDescription('The role that users will be applying for')
-        .setRoleSelectMenuComponent(roleSelect);
-
-    const appNameInput = new TextInputBuilder()
-        .setCustomId('app_name')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g., Moderator, Helper, Developer')
-        .setMaxLength(50)
-        .setMinLength(1)
-        .setRequired(true);
-
-    const appNameLabel = new LabelBuilder()
-        .setLabel('Application Name')
-        .setTextInputComponent(appNameInput);
-
-    const q1Input = new TextInputBuilder()
-        .setCustomId('app_question_1')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('Why do you want this role?')
-        .setMaxLength(100)
-        .setMinLength(1)
-        .setRequired(true);
-
-    const q1Label = new LabelBuilder()
-        .setLabel('Question 1 (required)')
-        .setTextInputComponent(q1Input);
-
-    const q2Input = new TextInputBuilder()
-        .setCustomId('app_question_2')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('What experience do you have?')
-        .setMaxLength(100)
-        .setRequired(false);
-
-    const q2Label = new LabelBuilder()
-        .setLabel('Question 2 (optional)')
-        .setTextInputComponent(q2Input);
-
-    const q3Input = new TextInputBuilder()
-        .setCustomId('app_question_3')
-        .setStyle(TextInputStyle.Short)
-        .setMaxLength(100)
-        .setRequired(false);
-
-    const q3Label = new LabelBuilder()
-        .setLabel('Question 3 (optional)')
-        .setTextInputComponent(q3Input);
-
-    modal.addLabelComponents(roleLabel, appNameLabel, q1Label, q2Label, q3Label);
-
-    await interaction.showModal(modal);
-
-    const submitted = await interaction.awaitModalSubmit({
-        time: 15 * 60 * 1000, 
-        filter: (i) =>
-            i.customId === 'app_setup_modal' &&
-            i.user.id === interaction.user.id,
-    }).catch(() => null);
-
-    if (!submitted) {
-        logger.info('App setup modal dismissed or timed out', { guildId: interaction.guild.id, userId: interaction.user.id });
-        return;
-    }
-
-    const appName = submitted.fields.getTextInputValue('app_name').trim();
-    const selectedRoles = submitted.fields.getSelectedRoles('role_id');
-    const roleId = selectedRoles.first()?.id;
-
-    if (!roleId) {
-        await replyUserError(submitted, { type: ErrorTypes.USER_INPUT, message: 'You must select a role for the application.' });
-        return;
-    }
-
-    const questions = [
-        submitted.fields.getTextInputValue('app_question_1').trim(),
-        submitted.fields.getTextInputValue('app_question_2').trim(),
-        submitted.fields.getTextInputValue('app_question_3').trim(),
-    ].filter(q => q.length > 0);
-
-    const role = await interaction.guild.roles.fetch(roleId).catch(() => null);
-    if (!role) {
-        await replyUserError(submitted, { type: ErrorTypes.VALIDATION, message: 'The selected role could not be found.' });
-        return;
-    }
-
-    const existingRoles = await getApplicationRoles(interaction.client, interaction.guild.id);
-    if (existingRoles.some(r => r.roleId === roleId)) {
-        await replyUserError(submitted, { type: ErrorTypes.CONFIGURATION, message: `The role ${role} is already configured as an application.` });
-        return;
-    }
-
-    existingRoles.push({
-        roleId: roleId,
-        name: appName,
-        enabled: true,  
-    });
-
-    await saveApplicationRoles(interaction.client, interaction.guild.id, existingRoles);
-
-    const settings = await getApplicationSettings(interaction.client, interaction.guild.id);
-    if (!settings.enabled) {
-        await ApplicationService.updateSettings(interaction.client, interaction.guild.id, { enabled: true });
-    }
-
-    await saveApplicationRoleSettings(interaction.client, interaction.guild.id, roleId, { questions });
-
-    await submitted.reply({
-        embeds: [successEmbed(
-            '✅ Application Created',
-            `**${appName}** application has been created for ${role}.\n\nYou can customize the log channel, manager roles, questions, and retention period in the dashboard.`,
-        )],
-        flags: ['Ephemeral'],
-    });
-
-    setTimeout(() => {
-        appDashboard.execute(submitted, null, interaction.client, appName);
-    }, 500);
-}
-
-async function handleReview(interaction) {
-    const appId = interaction.options.getString("id");
-
-    const application = await getApplication(
-        interaction.client,
-        interaction.guild.id,
-        appId,
-    );
-    if (!application) {
-        return await replyUserError(interaction, { type: ErrorTypes.USER_INPUT, message: 'Application not found.' });
-    }
-
-    if (application.status !== "pending") {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'This application has already been processed.' });
-    }
-
-    const appEmbed = createEmbed({
-        title: `Review Application`,
-        description: `**User:** <@${application.userId}>\n**Application:** ${application.roleName}\n**Application ID:** \`${appId}\``,
-        color: 'info',
-    });
-
-    if (application.answers && application.answers.length > 0) {
-        application.answers.forEach((item, index) => {
-            appEmbed.addFields({
-                name: `Q${index + 1}: ${item.question}`,
-                value: item.answer || '*No answer provided*',
-                inline: false
-            });
-        });
-    }
-
-    const buttonRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId(`app_review_approve_${appId}`)
-            .setLabel('Approve')
-            .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-            .setCustomId(`app_review_deny_${appId}`)
-            .setLabel('Deny')
-            .setStyle(ButtonStyle.Danger),
-    );
-
-    await InteractionHelper.safeEditReply(interaction, {
-        embeds: [appEmbed],
-        components: [buttonRow],
-        flags: ["Ephemeral"],
-    });
-
-    const collector = interaction.channel.createMessageComponentCollector({
-        componentType: ComponentType.Button,
-        filter: i =>
-            i.user.id === interaction.user.id &&
-            (i.customId.startsWith(`app_review_approve_${appId}`) ||
-             i.customId.startsWith(`app_review_deny_${appId}`)),
-        time: 300_000, 
-        max: 1,
-    });
-
-    collector.on('collect', async buttonInteraction => {
-        const isApprove = buttonInteraction.customId.includes('approve');
-
-        const reasonModal = new ModalBuilder()
-            .setCustomId(`app_review_reason_${appId}_${isApprove ? 'approve' : 'deny'}`)
-            .setTitle(`${isApprove ? 'Approve' : 'Deny'} Application - Reason`);
-
-        reasonModal.addComponents(
-            new ActionRowBuilder().addComponents(
-                new TextInputBuilder()
-                    .setCustomId('review_reason')
-                    .setLabel('Reason (optional)')
-                    .setStyle(TextInputStyle.Paragraph)
-                    .setPlaceholder('Provide a reason for this decision...')
-                    .setMaxLength(500)
-                    .setRequired(false),
-            ),
-        );
-
-        await buttonInteraction.showModal(reasonModal);
+        const { guild, client } = interaction;
+        const subcommand = interaction.options.getSubcommand();
+        logger.info(`App-admin command executed: ${subcommand}`, { userId: interaction.user.id, guildId: guild.id, subcommand });
 
         try {
-            const reasonSubmit = await buttonInteraction.awaitModalSubmit({
-                time: 5 * 60 * 1000, 
-                filter: i =>
-                    i.customId === `app_review_reason_${appId}_${isApprove ? 'approve' : 'deny'}` &&
-                    i.user.id === buttonInteraction.user.id,
-            }).catch(() => null);
-
-            if (!reasonSubmit) return;
-
-            const reason = reasonSubmit.fields.getTextInputValue('review_reason').trim() || "No reason provided.";
-            const action = isApprove ? 'approve' : 'deny';
-            const status = isApprove ? 'approved' : 'denied';
-
-            const updatedApplication = await ApplicationService.reviewApplication(
-                reasonSubmit.client,
-                interaction.guild.id,
-                appId,
-                {
-                    action,
-                    reason,
-                    reviewerId: reasonSubmit.user.id
-                }
-            );
-
-            try {
-                const user = await reasonSubmit.client.users.fetch(application.userId);
-                const statusColor = getApplicationStatusColor(status);
-                const reviewStatus = getApplicationStatusPresentation(status);
-                const dmEmbed = createEmbed({
-                    title: `${reviewStatus.statusEmoji} Application ${reviewStatus.statusLabel}`,
-                    description: `Your application for **${application.roleName}** has been **${status}**\n` +
-                        `**Note:** ${reason}\n\n` +
-                        `Use \`/apply status id:${appId}\` to view details.`
-                }).setColor(statusColor);
-
-                await user.send({ embeds: [dmEmbed] });
-            } catch (error) {
-                logger.warn('Failed to send DM to user for application review', {
-                    error: error.message,
-                    userId: application.userId,
-                    applicationId: appId
-                });
+            if (subcommand === 'setup') {
+                // Settings and forms are for Manage Server; a manager role only reviews.
+                if (!canConfigure(guild, interaction.member)) return await forbidden(interaction);
+                return await interaction.showModal(newFormModal());
             }
-
-            if (application.logMessageId && application.logChannelId) {
-                try {
-                    const statusColor = getApplicationStatusColor(status);
-                    const logChannel = interaction.guild.channels.cache.get(
-                        application.logChannelId,
-                    );
-                    if (logChannel) {
-                        const logMessage = await logChannel.messages.fetch(
-                            application.logMessageId,
-                        );
-                        if (logMessage) {
-                            const embed = logMessage.embeds[0];
-                            if (embed) {
-                                const reviewStatus = getApplicationStatusPresentation(status);
-                                const newEmbed = EmbedBuilder.from(embed)
-                                    .setColor(statusColor)
-                                    .spliceFields(0, 1, {
-                                        name: "Status",
-                                        value: `${reviewStatus.statusEmoji} ${reviewStatus.statusLabel}`,
-                                    });
-
-                                await logMessage.edit({
-                                    embeds: [newEmbed],
-                                    components: [],
-                                });
-                            }
-                        }
-                    }
-                } catch (error) {
-                    logger.warn('Failed to update log message for application', {
-                        error: error.message,
-                        applicationId: appId,
-                        logMessageId: application.logMessageId
-                    });
+            if (subcommand === 'dashboard') {
+                if (!canConfigure(guild, interaction.member)) return await forbidden(interaction);
+                await interaction.deferReply({ flags: PRIVATE });
+                const wanted = String(interaction.options.getString('application') ?? '').trim().toLowerCase();
+                let scope = 'global';
+                if (wanted) {
+                    const { forms } = await readConfig(client, guild.id);
+                    scope = forms.find((form) => form.name.toLowerCase() === wanted)?.roleId ?? 'global';
                 }
+                return await showDashboard(interaction, client, scope, wanted && scope === 'global' ? 'There is no application with that name; this is the overview.' : null);
             }
-
-            if (isApprove) {
-                try {
-                    const member = await interaction.guild.members.fetch(
-                        application.userId,
-                    );
-                    await member.roles.add(application.roleId);
-                } catch (error) {
-                    logger.error('Failed to assign role to approved applicant', {
-                        error: error.message,
-                        userId: application.userId,
-                        roleId: application.roleId,
-                        applicationId: appId
-                    });
-                }
-            }
-
-            await reasonSubmit.reply({
-                embeds: [
-                    successEmbed(
-                        `Application ${status}`,
-                        `The application has been **${status}**.`,
-                    ),
-                ],
-                flags: ["Ephemeral"],
-            });
-
+            await interaction.deferReply({ flags: PRIVATE });
+            if (subcommand === 'review') return await handleReview(interaction);
+            return await handleList(interaction);
         } catch (error) {
-            logger.error('Error reviewing application:', error);
-            await replyUserError(buttonInteraction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while reviewing the application.' });
+            return await refuse(interaction, error, `app-admin ${subcommand}`);
         }
-    });
+    }, { type: 'command', commandName: 'app-admin' }),
 
-    collector.on('end', async (collected, reason) => {
-        if (reason === 'time') {
-            const timeoutEmbed = createEmbed({
-                title: 'Review Timeout',
-                description: 'The review buttons have timed out.',
-                color: 'warning',
-            });
-
-            await InteractionHelper.safeEditReply(interaction, {
-                embeds: [timeoutEmbed],
-                components: [],
-            }).catch(() => {});
+    /** Every application of the server, open or closed. A failed read offers nothing. */
+    async autocomplete(interaction, client) {
+        let choices = [];
+        try {
+            const typed = String(interaction.options.getFocused() ?? '').toLowerCase();
+            const { forms } = await readConfig(client, interaction.guildId);
+            choices = forms.filter((form) => form.name.toLowerCase().includes(typed)).slice(0, 25)
+                .map((form) => ({ name: `${form.name}${form.enabled ? '' : ' (closed)'}`.slice(0, 100), value: form.name }));
+        } catch (error) {
+            logger.warn('App-admin autocomplete failed', { guildId: interaction.guildId, code: error?.code });
         }
-    });
-}
-
-async function handleList(interaction) {
-    const status = interaction.options.getString("status");
-    const user = interaction.options.getUser("user");
-    const limit = interaction.options.getNumber("limit") || 10;
-
-    const filters = {};
-    
-    if (status) {
-        filters.status = status;
-    } else {
-        filters.status = 'pending';
-    }
-
-    let applications = await getApplications(
-        interaction.client,
-        interaction.guild.id,
-        filters,
-    );
-
-    // A Discord lookup failure is not proof that an applicant left. Listing
-    // must not delete applications merely because Discord is unavailable.
-    if (user) {
-        applications = applications.filter((app) => app.userId === user.id);
-    }
-
-    if (applications.length === 0) {
-        const applicationRoles = await getApplicationRoles(interaction.client, interaction.guild.id);
-        
-        if (applicationRoles.length > 0) {
-            const embed = createEmbed({ 
-                title: "No Applications Found", 
-                description: "No submitted applications found matching the specified criteria.\n\nHowever, the following application roles are configured:" 
-            });
-
-            applicationRoles.forEach((appRole, index) => {
-                const role = interaction.guild.roles.cache.get(appRole.roleId);
-                embed.addFields({
-                    name: `${index + 1}. ${appRole.name}`,
-                    value: `**Role:** ${role ?`<@&${appRole.roleId}>`: 'Role not found'}\n**Available for applications:** Yes`,
-                    inline: false
-                });
-            });
-
-            embed.setFooter({
-                text: "Users can apply with /apply submit or see available roles with /apply list"
-            });
-
-            return InteractionHelper.safeEditReply(interaction, { embeds: [embed], flags: ["Ephemeral"] });
-        } else {
-            return await replyUserError(interaction, {
-                type: ErrorTypes.CONFIGURATION,
-                message: 'No applications found and no application roles configured.\n' +
-                    'Use `/app-admin roles add` to configure application roles first.'
-            });
-        }
-    }
-
-    applications = applications
-        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-        .slice(0, limit);
-
-    const embed = createEmbed({ title: "Submitted Applications", description: `Showing ${applications.length} applications.`, });
-
-    applications.forEach((app) => {
-        const statusView = getApplicationStatusPresentation(app?.status);
-        const roleName = app?.roleName || 'Unknown Role';
-        const username = app?.username || 'Unknown User';
-        const createdAt = app?.createdAt ? new Date(app.createdAt) : null;
-        const createdAtDisplay = createdAt && !Number.isNaN(createdAt.getTime())
-            ? createdAt.toLocaleString()
-            : 'Unknown date';
-
-        embed.addFields({
-            name: `${statusView.statusEmoji} ${roleName} - ${username}`,
-            value:
-                `**ID:** \`${app.id}\`\n` +
-                `**Status:** ${statusView.statusEmoji} ${statusView.statusLabel}\n` +
-                `**Date:** ${createdAtDisplay}`,
-            inline: true,
-        });
-    });
-
-    await InteractionHelper.safeEditReply(interaction, {
-        embeds: [embed],
-        flags: ["Ephemeral"],
-    });
-}
-
+        await interaction.respond(choices).catch(() => {});
+    },
+};

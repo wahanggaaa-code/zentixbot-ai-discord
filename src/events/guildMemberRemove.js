@@ -1,6 +1,7 @@
 import { Events, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { getColor, botConfig } from '../config/bot.js';
-import { getWelcomeConfig, getUserApplications, deleteApplication } from '../utils/database.js';
+import { getWelcomeConfig } from '../utils/database.js';
+import { deleteApplicationsOf } from '../services/applications/store.js';
 import { formatWelcomeMessage } from '../utils/welcome.js';
 import { deliverLeaveGoodbye } from '../services/ai/welcome.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
@@ -73,12 +74,9 @@ export default {
         }
 
         try {
-            const userApplications = await getUserApplications(member.client, guild.id, user.id);
-            if (userApplications && userApplications.length > 0) {
-                for (const app of userApplications) {
-                    await deleteApplication(member.client, guild.id, app.id, user.id);
-                }
-                logger.debug(`Removed ${userApplications.length} applications for user ${user.id} in guild ${guild.id}`);
+            const removed = await deleteApplicationsOf(member.client, guild.id, user.id);
+            if (removed > 0) {
+                logger.debug(`Removed ${removed} applications for user ${user.id} in guild ${guild.id}`);
             }
         } catch (error) {
             logger.debug('Error handling applications on member leave:', error);

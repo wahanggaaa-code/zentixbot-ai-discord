@@ -61,7 +61,9 @@ const PROTOCOL_ONLY_KEY_TYPES = [
 ];
 // To-do lists have no key type of their own; they are written by src/services/todo/store.js
 // (lock from read to write, failures thrown instead of answered with "no data").
-const PROTOCOL_ONLY_KEY_PATTERN = /^(?:todo_|shared_todo_|user_shared_lists_)/;
+// Role applications (settings, forms, per-form settings, applications) are written by
+// src/services/applications/store.js under one lock per server.
+const PROTOCOL_ONLY_KEY_PATTERN = /^(?:todo_|shared_todo_|user_shared_lists_|guild:[^:]+:applications:)/;
 
 function isProtocolOnlyKey(key) {
     if (typeof key !== 'string') return false;
