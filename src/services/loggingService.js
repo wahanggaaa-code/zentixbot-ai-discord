@@ -206,6 +206,7 @@ export async function logEvent({
   attachments = [],
   content = null,
   channelId: overrideChannelId = null,
+  components = [],
 }) {
   try {
     const guild = client.guilds.cache.get(guildId) ||
@@ -257,6 +258,9 @@ export async function logEvent({
     }
     if (attachments.length > 0) {
       messageOptions.files = attachments;
+    }
+    if (components.length > 0) {
+      messageOptions.components = components;
     }
 
     const sent = await channel.send(messageOptions);
