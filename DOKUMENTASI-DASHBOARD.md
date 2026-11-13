@@ -16,7 +16,8 @@ Inventaris kode per perubahan dashboard ini, bukan sertifikasi produksi. **Live*
 | Birthday | Channel pengumuman serta lihat, ubah, atau hapus tanggal yang sudah tersimpan pada PostgreSQL | Penulis lama tidak atomik dan perlu dihentikan saat upgrade. Tidak ada penambahan entri baru melalui web; scheduler dan Discord perlu diuji langsung. |
 | AI Studio | Jalur untuk welcome/goodbye AI, Activities, chat, pengetahuan, tools, gambar, builder dan fondasi provider | Fitur dan opsi parsial, beberapa fungsi memerlukan provider/biaya/izin dan konfirmasi. Lihat `DOKUMENTASI-TAHAP-8.md`; label live tidak membuktikan provider sehat. |
 | Pengaturan utama | Halaman utama pengaturan masih placeholder | Server, akses/izin dan kartu pengaturan belum menjadi panel pengelolaan umum. Pengaturan provider AI ada di AI Studio. |
-| Kategori lainnya | Community, Core, Fun, Giveaway, Join to Create, Reaction Roles, Search, Server Stats, Tools, Utility masih berupa daftar rencana | Belum ada halaman dashboard terpadu untuk setiap kategori; integrasikan dan uji satu per satu. |
+| Core | Akses perintah dan kategori dari registry bot; baca dan ubah pada PostgreSQL | Tidak mengelola data atau konfigurasi setiap fitur; lihat `DOKUMENTASI-CORE-DASHBOARD.md`. |
+| Kategori lainnya | Community, Fun, Giveaway, Join to Create, Reaction Roles, Search, Server Stats, Tools, Utility masih berupa daftar rencana | Belum ada halaman dashboard terpadu untuk setiap kategori; integrasikan dan uji satu per satu. |
 
 ## Goodbye non-AI
 
@@ -41,3 +42,7 @@ Transaksi Birthday PostgreSQL mengunci guild dan memperbarui satu anggota. Saat 
 Saat edit/hapus tanggal, API menolak jika entri sudah berubah atau hilang sejak daftar dimuat, jika backup anggota keluar masih ada, atau jika data legacy ambigu. Setelah konflik, muat ulang; jangan menimpa tanpa pemeriksaan. Pemeriksaan tanggal berbasis nilai tidak mendeteksi perubahan A→B→A. Pengecekan anggota Discord tidak atomik dengan transaksi database; anggota dapat keluar sesudah pemeriksaan. Event keluar/bergabung dan operasi dashboard yang memakai versi ini berbagi kunci transaksi; instans lama atau SQL langsung tidak dilindungi. Hasil commit yang terputus bisa tidak diketahui. Halaman daftar memeriksa konflik legacy dalam snapshot baca per halaman, tetapi bukan snapshot stabil antarhalaman.
 
 Web menerima 29 Februari. Scheduler hanya mengumumkannya pada 29 Februari UTC; tidak ada pengumuman otomatis pada tahun non-kabisat. Perintah `/birthday set` masih mempunyai validasi berbeda untuk tanggal tersebut dan perhitungan upcoming lama dapat berbeda; jangan menganggap perilakunya seragam.
+
+### Audit awal Giveaway untuk integrasi berikutnya
+
+Aksi Giveaway melalui web belum tersedia. Jalur PostgreSQL lama `saveGiveaway`/`deleteGiveaway` membaca seluruh map lalu menyimpannya kembali; adapter `guild_giveaways` menghapus dan memasukkan kembali seluruh baris guild. Dua penulis bersamaan dapat menimpa perubahan, dan kesalahan di antara operasi dapat meninggalkan data tidak lengkap. Efek edit/kirim pesan Discord juga terpisah dari commit database; helper penanda delivery saat ini khusus SQLite. Karena itu jangan membuka tombol create/end/reroll/delete di web sebelum menata ulang semua penulis PostgreSQL yang relevan, menyelesaikan strategi konflik dan rekonsiliasi efek Discord, dan menguji perlombaan/kegagalan. Ini temuan audit awal, bukan jaminan daftar seluruh masalah Giveaway sudah lengkap.

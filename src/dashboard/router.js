@@ -7,6 +7,7 @@ import { isHomeGuild } from '../utils/singleGuild.js';
 import { createBotApiRouter } from './botApi.js';
 import { createGoodbyeApi } from './goodbyeApi.js';
 import { createBirthdayApi } from './birthdayApi.js';
+import { createCoreApi } from './coreApi.js';
 import { createModulesApi } from './modulesApi.js';
 import { createOperationsApi } from './operationsApi.js';
 import { createHostingApi } from './hostingApi.js';
@@ -85,6 +86,7 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
   router.use('/api/bot', createBotApiRouter(client, {auth, csrf}));
   router.use('/api/bot', createGoodbyeApi(client, {auth, csrf}));
   router.use('/api/bot', createBirthdayApi(client, {auth, csrf}));
+  router.use('/api/bot', createCoreApi(client, {auth, csrf}));
   router.use('/api/bot', createModulesApi(client, {auth, csrf}));
   router.use('/api/bot', createOperationsApi(client, {auth, csrf}));
   router.use('/api/bot', createHostingApi({auth, env}));

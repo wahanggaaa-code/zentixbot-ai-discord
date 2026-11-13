@@ -1,6 +1,7 @@
 // commandAccessService.js
 
 import { getGuildConfig, updateGuildConfig } from './config/guildConfig.js';
+import {isPostgresCommandAccess,mutatePostgresCommandAccess} from './config/commandAccessPostgres.js';
 import {
   normalizeCategoryKey,
   formatCategoryName,
@@ -232,6 +233,10 @@ export async function disableCommand(client, guildId, commandName, context = {})
     throw new Error(`The \`${normalizedName}\` command cannot be disabled.`);
   }
 
+  if (isPostgresCommandAccess(client)) {
+    await mutatePostgresCommandAccess(client,guildId,{field:'disabledCommands',targets:[normalizedName],disabled:true});
+    return { commandName: normalizedName, enabled: false };
+  }
   const config = await getGuildConfig(client, guildId, context);
   const disabledCommands = normalizeToggleRecord(config?.disabledCommands);
   disabledCommands[normalizedName] = true;
@@ -248,6 +253,10 @@ export async function enableCommand(client, guildId, commandName, context = {}) 
     throw new Error(`Unknown command: \`${normalizedName}\`.`);
   }
 
+  if (isPostgresCommandAccess(client)) {
+    await mutatePostgresCommandAccess(client,guildId,{field:'disabledCommands',targets:[normalizedName],disabled:false});
+    return { commandName: normalizedName, enabled: true };
+  }
   const config = await getGuildConfig(client, guildId, context);
   const disabledCommands = normalizeToggleRecord(config?.disabledCommands);
   delete disabledCommands[normalizedName];
@@ -264,6 +273,10 @@ export async function disableCategory(client, guildId, categoryKey, context = {}
     throw new Error(`Unknown category: \`${categoryKey}\`.`);
   }
 
+  if (isPostgresCommandAccess(client)) {
+    await mutatePostgresCommandAccess(client,guildId,{field:'disabledCategories',targets:[normalizedKey],disabled:true});
+    return { categoryKey: normalizedKey, displayName: category.displayName, enabled: false };
+  }
   const config = await getGuildConfig(client, guildId, context);
   const disabledCategories = normalizeToggleRecord(config?.disabledCategories);
   disabledCategories[normalizedKey] = true;
@@ -280,6 +293,10 @@ export async function enableCategory(client, guildId, categoryKey, context = {})
     throw new Error(`Unknown category: \`${categoryKey}\`.`);
   }
 
+  if (isPostgresCommandAccess(client)) {
+    await mutatePostgresCommandAccess(client,guildId,{field:'disabledCategories',targets:[normalizedKey],disabled:false});
+    return { categoryKey: normalizedKey, displayName: category.displayName, enabled: true };
+  }
   const config = await getGuildConfig(client, guildId, context);
   const disabledCategories = normalizeToggleRecord(config?.disabledCategories);
   delete disabledCategories[normalizedKey];
@@ -296,6 +313,10 @@ export async function resetCategoryCommands(client, guildId, categoryKey, contex
     throw new Error(`Unknown category: \`${categoryKey}\`.`);
   }
 
+  if (isPostgresCommandAccess(client)) {
+    await mutatePostgresCommandAccess(client,guildId,{field:'disabledCommands',targets:category.commands.map(c=>c.name),disabled:false});
+    return { categoryKey: normalizedKey, displayName: category.displayName };
+  }
   const config = await getGuildConfig(client, guildId, context);
   const disabledCommands = normalizeToggleRecord(config?.disabledCommands);
 
