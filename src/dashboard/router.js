@@ -99,7 +99,9 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
   router.use('/api/bot', createHostingApi({auth, env}));
   router.use('/api/bot', createSettingsApi(client, {auth, env}));
   router.use('/api/ai', createAIApi(client, {auth, csrf, env}));
-  router.get('/api/me', auth, (req,res) => res.json({user:req.session.user, guild:{id:req.guild.id,name:req.guild.name}, csrf:req.session.csrf, botReady:client.isReady()}));
+  // botOwner lets AI Studio say up front that its routes will refuse this account (see `owner` in aiApi.js).
+  const botOwners = () => String(env.OWNER_IDS || '').split(',').map((x) => x.trim()).filter((x) => /^\d{17,20}$/.test(x));
+  router.get('/api/me', auth, (req,res) => res.json({user:req.session.user, guild:{id:req.guild.id,name:req.guild.name}, csrf:req.session.csrf, botReady:client.isReady(), botOwner:botOwners().includes(req.session.user.id)}));
   router.post('/api/logout', auth, (req,res) => {
     if (req.get('origin') !== origin || req.get('x-csrf-token') !== req.session.csrf) return res.status(403).json({error:'Permintaan tidak valid.'});
     sessions.delete(cookie(req,'zx_session')); clear(res,'zx_session'); res.json({ok:true});

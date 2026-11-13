@@ -1,4 +1,4 @@
-/* Connected bot overview and welcome. All other modules remain simulation. */
+/* Dashboard mode switch, shared request helper, connected overview and welcome. Other pages have their own *-live.js module. */
 (() => {
   const enabled=location.pathname.startsWith('/dashboard/');
   if (enabled) document.querySelector('.demo-strip').textContent = 'TAHAP 08 / INTEGRASI AI · PERIKSA LABEL TIAP MODUL';
@@ -44,14 +44,15 @@
     window.ZentixHostingTimer=setInterval(()=>{if(resource?.isConnected)updateHosting();else clearInterval(window.ZentixHostingTimer)},30000);
     const label=root.querySelector('.small-badge');if(label)label.textContent='✳ MEMUAT STATUS';
     const lamp=root.querySelector('.lamp');if(lamp)lamp.textContent='● MEMUAT';
+    const status=root.querySelector('.card-bottomline strong');if(status)status.textContent=' / MEMUAT';
     request('overview').then(data=>{
       if(!root.querySelector('.metrics'))return;
       const values=root.querySelectorAll('.metric strong');
       const duration=ms=>{let n=Math.floor(ms/60000);return `${Math.floor(n/60)}j ${n%60}m`};
       [data.online?'ONLINE':'OFFLINE', data.guild.memberCount??'—',data.ping===null?'—':data.ping,data.uptime===null?'—':duration(data.uptime)].forEach((v,i)=>{if(values[i])values[i].textContent=v});
       if(label)label.textContent='✳ DATA BOT';if(lamp)lamp.textContent=data.online?'● ONLINE':'○ OFFLINE';
-      const status=root.querySelector('.card-bottomline strong');if(status)status.textContent=` / ${data.online?'ONLINE':'OFFLINE'} · DB ${data.database==='connected'?'TERHUBUNG':'TIDAK TERSEDIA'}`;
-    }).catch(()=>{if(label)label.textContent='✳ STATUS TIDAK TERSEDIA';if(lamp)lamp.textContent='○ TIDAK TERSEDIA';});
+      if(status)status.textContent=` / ${data.online?'ONLINE':'OFFLINE'} · DB ${data.database==='connected'?'TERHUBUNG':'TIDAK TERSEDIA'}`;
+    }).catch(()=>{if(label)label.textContent='✳ STATUS TIDAK TERSEDIA';if(lamp)lamp.textContent='○ TIDAK TERSEDIA';if(status)status.textContent=' / TIDAK TERSEDIA';});
   }
   window.ZentixLive={enabled,welcome,bindWelcome,afterRender};
 })();

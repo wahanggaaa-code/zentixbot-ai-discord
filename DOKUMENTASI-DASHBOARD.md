@@ -14,12 +14,12 @@ Inventaris kode per perubahan dashboard ini, bukan sertifikasi produksi. **Live*
 | Music | Player, antrean, pencarian dan kontrol yang didukung | Memerlukan Lavalink dan Discord; perilaku langsung dan resource hosting belum diuji. |
 | Logging | Pengaturan dan riwayat terbatas dari channel audit | Bukan riwayat lengkap semua event; bergantung pada izin dan pesan yang tersedia. |
 | Birthday | Channel pengumuman serta lihat, tambah, ubah, atau hapus tanggal pada PostgreSQL; perubahan dicatat ke channel audit bila logging aktif | Penulis lama tidak atomik dan perlu dihentikan saat upgrade. Scheduler dan Discord perlu diuji langsung; catatan audit bersifat best-effort. |
-| AI Studio | Jalur untuk welcome/goodbye AI, Activities, chat, pengetahuan, tools, gambar, builder dan fondasi provider | Fitur dan opsi parsial, beberapa fungsi memerlukan provider/biaya/izin dan konfirmasi. Lihat `DOKUMENTASI-TAHAP-8.md`; label live tidak membuktikan provider sehat. |
+| AI Studio | Jalur untuk welcome/goodbye AI, Activities, chat, pengetahuan, tools, gambar, builder dan fondasi provider. Semua khusus owner bot; akun lain diberi label | Beberapa fungsi memerlukan provider/biaya/izin dan konfirmasi. Tidak ada opsi simulasi di dashboard login (lihat "Audit simulasi"). Lihat `DOKUMENTASI-TAHAP-8.md`; label live tidak membuktikan provider sehat. |
 | Pengaturan utama | Pusat kendali baca-saja: kondisi server dan izin bot di Discord, penyimpanan, dasar akses sesi, status konfigurasi hosting, pintasan ke halaman fitur | Tidak menyimpan atau mengubah apa pun. Izin yang ditampilkan adalah izin tingkat server. Lihat bagian "Pengaturan utama" di bawah. |
 | Core | Akses perintah dan kategori dari registry bot; baca dan ubah pada PostgreSQL | Tidak mengelola data atau konfigurasi setiap fitur; lihat `DOKUMENTASI-CORE-DASHBOARD.md`. |
 | Giveaway | Daftar PostgreSQL; buat, akhiri, undi ulang, hapus; perbaikan pengiriman yang tertunda (tandai terkirim atau kirim ulang) | Discord dan database bukan satu transaksi; setiap aksi bisa terhenti di tengah dan perlu dilanjutkan manual. Belum diuji di Discord nyata. `/gcreate` belum memakai pembersihan pesan yatim. |
 | Join to Create | Pengaturan trigger, inventaris PostgreSQL baca-saja dan pemeriksaan Discord untuk ID pending yang tercatat | Web hanya mengubah pengaturan tersimpan; pengelolaan channel sementara dan rekonsiliasi tidak tersedia di web. |
-| Kategori lainnya | Community, Fun, Reaction Roles, Search, Server Stats, Tools, Utility masih berupa daftar rencana | Belum ada halaman dashboard terpadu untuk setiap kategori; integrasikan dan uji satu per satu. |
+| Kategori lainnya | Community, Fun, Reaction Roles, Search, Server Stats, Tools, Utility ditampilkan sebagai daftar berlabel "belum ada halaman" | Belum ada halaman dashboard terpadu untuk setiap kategori; integrasikan dan uji satu per satu. |
 
 ## Goodbye non-AI
 
@@ -190,3 +190,56 @@ Nilai yang tidak dapat dibaca dikembalikan sebagai `null` dan ditampilkan sebaga
 - Halaman tidak memperbarui diri; gunakan "Muat ulang".
 - Prefix perintah tidak ditampilkan dan tidak dapat diubah dari halaman ini.
 - Diuji dengan Discord tiruan dan jsdom saja, belum pada server Discord atau browser nyata.
+
+## Audit simulasi — halaman fitur dan AI Studio
+
+Pertanyaan audit: di dashboard yang sudah login (`/dashboard/`), opsi mana yang masih simulasi, dan opsi mana yang terhubung tetapi diberi label simulasi.
+
+**Hasil singkat.** Tidak ada opsi simulasi yang tersisa di dashboard login. Semua formulir simulasi hanya dirender di preview statis, dan di sana sudah berlabel. Yang salah di dashboard login adalah **keterangannya**: halaman yang terhubung masih menyebut dirinya "mungkin simulasi", beberapa tab membuka formulir yang sama dengan nama berbeda, dan AI Studio menampilkan formulir yang tampak dapat dipakai kepada admin yang bukan owner bot.
+
+### Cara mengukur
+
+| Pengukuran | Hasil |
+|---|---|
+| Elemen simulasi (`data-form`, `data-ai-form`, `data-sim-action`, `data-ai-action`) di setiap tab dashboard login | 0 di 30 tab (17 tab fitur, 12 tab AI, halaman provider) |
+| Setiap tab dimuat dari router dashboard yang asli dengan PostgreSQL | Semua pembacaan dijawab 200, kecuali riwayat logging (404 karena channel audit tidak dikonfigurasi di lingkungan tes) |
+| Setiap kontrol formulir diubah satu per satu, lalu permintaan yang terkirim dibandingkan | 27 formulir, 174 kontrol: 168 mengubah permintaan; 6 tidak dapat ditunjukkan di jsdom (lihat di bawah) |
+
+Enam kontrol yang tidak dapat ditunjukkan otomatis, masing-masing sudah diperiksa di kode:
+
+- Music, **Mode 24/7**: dikirim sebagai permintaan kedua setelah permintaan loop berhasil, jadi memerlukan player aktif.
+- Pengetahuan, **OCR satu halaman PDF** dan **nomor halaman**: formulir tidak mengirim apa pun sebelum file dipilih.
+- Image studio tab edit, **instruksi, ukuran, gaya**: sama, memerlukan gambar yang dipilih. Ketiga kontrol yang sama pada tab buat terbukti terkirim.
+
+Formulir Join to Create tidak ikut pengukuran kontrol ini karena formulir setup berubah menjadi formulir trigger setelah simpan pertama; isi permintaannya sudah diuji tersendiri di `tests/dashboard-jointocreate-settings-ui.test.js`.
+
+Dua kontrol hanya berlaku pada pilihan lain di formulir yang sama, dan halaman sudah menyebutkannya: **bahasa terjemahan** di AI tools ("Hanya untuk terjemahan") dan **izin dasar role** di Server builder ("hanya tindakan atur izin").
+
+### Yang diperbaiki
+
+| Sebelum | Sesudah |
+|---|---|
+| Semua tab fitur yang terhubung berlabel "PENGATURAN INI TERHUBUNG KE BOT · BAGIAN LAIN MUNGKIN MASIH SIMULASI"; Giveaway "… BAGIAN LAIN BELUM TERHUBUNG" | Label per tab yang menyebut apa yang dilakukan tab itu: hanya baca, tersimpan, atau langsung berlaku di Discord |
+| Ticket: tab **Kotak masuk** dan **Transcript** membuka daftar tiket yang sama. Music: tab **Player** dan **Pengaturan** membuka halaman yang sama | Satu tab per tampilan: "Tiket & transcript", "Player & pengaturan" |
+| AI Studio: **Agent channel / Chat DM / Persona & memori** membuka satu formulir; **Rangkuman / Bahasa & fakta** satu formulir; **Rancang / Preview struktur** satu formulir | "Channel, DM & persona"; "Tools teks" dan "Pencarian web"; "Rancang & terapkan". Activities: "Preview ronde" menjadi "Status ronde" |
+| Indeks AI Studio: tujuh kartu "LIHAT PREVIEW", "BEBERAPA FITUR AI MASIH SIMULASI", dan catatan "beberapa opsi masih simulasi" | "BUKA FITUR" untuk ruang yang modulnya termuat, "FITUR AI TERHUBUNG · KHUSUS OWNER BOT", dan catatan yang menjelaskan arti kedua label |
+| Indeks fitur: "TERHUBUNG SEBAGIAN"; tujuh kategori tanpa halaman ditampilkan dengan panah seperti tautan dan disebut "rencana" | "10 FITUR TERHUBUNG KE BOT"; kategori tanpa halaman berlabel "BELUM ADA HALAMAN", tanpa panah, dengan keterangan bahwa perintahnya tersedia di Discord |
+| Admin yang bukan owner bot melihat formulir AI lengkap; penolakan baru muncul setelah menekan simpan | Setiap halaman AI Studio berlabel "KHUSUS OWNER BOT · AKUN INI BUKAN OWNER BOT · SIMPAN DAN UJI DITOLAK". `/dashboard/api/me` kini menyertakan `botOwner` |
+| Overview: baris status tetap "BOT STATUS / BELUM TERHUBUNG" selama memuat dan saat gagal | "MEMUAT", lalu status bot, atau "TIDAK TERSEDIA" bila gagal |
+| Deskripsi Moderation "rancang tindakan moderator", padahal tindakan langsung dijalankan | "Tinjau kasus dan tindakan moderator"; label tab menyebut tindakan langsung dijalankan di Discord |
+
+Bila skrip sebuah ruang AI gagal dimuat, ruang itu tetap menampilkan formulir contoh dengan label simulasi, kartunya berlabel "LIHAT PREVIEW", dan indeks menyebut "SEBAGIAN RUANG AI TIDAK TERMUAT".
+
+Preview statis tidak berubah perilakunya: semua tab lama tetap ada, semua berlabel simulasi, dan tidak ada permintaan ke API.
+
+### Batas
+
+- Label "terhubung" berarti halaman mengirim ke bot dan bot menjawab. Itu bukan bukti Discord, Lavalink atau provider AI berfungsi; semuanya tiruan atau tidak tersedia dalam tes.
+- Formulir AI tetap ditampilkan kepada admin yang bukan owner bot, hanya diberi label. Penolakannya dilakukan server, seperti sebelumnya.
+- `botOwner` dibaca dari `OWNER_IDS` saat permintaan; label mengikuti nilai saat halaman dimuat.
+- Tujuh kategori tanpa halaman (Community, Fun, Reaction Roles, Search, Server Stats, Tools, Utility) belum dikerjakan.
+
+### Tes
+
+- `tests/dashboard-simulation-labels.test.js` (10, jsdom): tidak ada elemen atau label simulasi di dashboard login, satu tab per tampilan, isi label per tab, halaman indeks, ruang yang skripnya tidak termuat, akun bukan owner, baris status overview, preview statis, dan `botOwner` di `/api/me`.
+- `tests/postgres-dashboard-live-walk.test.js` (2, memerlukan PostgreSQL): setiap tab dimuat dari router asli tanpa galat skrip, dan setiap kontrol mengubah permintaan yang terkirim. Daftar pengecualian di atas tertulis di tes beserta alasannya; kontrol baru yang tidak terkirim membuat tes gagal.
