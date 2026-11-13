@@ -26,6 +26,7 @@ import { createAIApi } from '../src/dashboard/aiApi.js';
 import { createSettingsApi } from '../src/dashboard/settingsApi.js';
 import { createServerStatsApi } from '../src/dashboard/serverStatsApi.js';
 import { createReactionRolesApi } from '../src/dashboard/reactionRolesApi.js';
+import { createCountingApi } from '../src/dashboard/countingApi.js';
 
 const dir = 'dashboard-preview/';
 const raw = fs.readFileSync(dir + 'index.html', 'utf8');
@@ -85,6 +86,10 @@ async function openDashboard(t) {
         id: '623456789012345004', name: 'umum', type: ChannelType.GuildText, permissionsFor: () => ({ has: () => true }),
         send: async () => { throw new Error('sending is not available in this walk'); },
     });
+    // A running counting game, so that the page offers its reset form as well as its settings form.
+    await fx.query('INSERT INTO temp_data (key, value) VALUES ($1, $2::jsonb)', [`countingGame:${guild.id}`, JSON.stringify({
+        enabled: true, channelId: '623456789012345004', system: 'decimal', nextNumber: 4, lastUserId: null, currentStreak: 3, bestStreak: 3, leaderboard: {},
+    })]);
     client.commands = new Map([
         ['ping', { data: { name: 'ping', description: 'Ping' }, category: 'Core' }],
         ['balance', { data: { name: 'balance', description: 'Balance' }, category: 'Economy' }],
@@ -98,7 +103,7 @@ async function openDashboard(t) {
     };
     const csrf = (req, res, next) => next();
     app.get('/dashboard/api/me', (req, res) => res.json({ user: { username: 'Tester' }, guild: { name: 'Home' }, csrf: 'c', botOwner: true }));
-    for (const create of [createBotApiRouter, createGoodbyeApi, createBirthdayApi, createCoreApi, createGiveawayApi, createJoinToCreateSettingsApi, createServerStatsApi, createReactionRolesApi, createModulesApi, createOperationsApi]) {
+    for (const create of [createBotApiRouter, createGoodbyeApi, createBirthdayApi, createCoreApi, createGiveawayApi, createJoinToCreateSettingsApi, createServerStatsApi, createReactionRolesApi, createCountingApi, createModulesApi, createOperationsApi]) {
         app.use('/dashboard/api/bot', create(client, { auth, csrf }));
     }
     app.use('/dashboard/api/bot', createJoinToCreateApi(client, { auth }));
@@ -177,7 +182,7 @@ async function listTabs(page) {
 test('live dashboard: every tab loads from the bot, without mock forms or script errors', async (t) => {
     const page = await openDashboard(t);
     const tabs = await listTabs(page);
-    assert.equal(tabs.length, 19 + 12 + 1);
+    assert.equal(tabs.length, 20 + 12 + 1);
 
     for (const { hash, attr, tab, where } of tabs) {
         page.state.reads.length = 0;
@@ -282,7 +287,7 @@ test('live dashboard: every control of every form changes the request that is se
     }
 
     assert.deepEqual(unsent.sort(), Object.keys(NEEDS_PRECONDITION).sort());
-    assert.equal(formCount, 29, 'forms on the live dashboard');
-    assert.equal(checked, 181, 'controls on the live dashboard');
+    assert.equal(formCount, 31, 'forms on the live dashboard');
+    assert.equal(checked, 187, 'controls on the live dashboard');
     assert.deepEqual(state.errors, []);
 });

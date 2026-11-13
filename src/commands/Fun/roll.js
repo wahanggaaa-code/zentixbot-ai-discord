@@ -41,7 +41,7 @@ export default {
 
     if (numDice < 1 || numDice > 20) {
       throw new ZentixBotError(
-        `Too many dice requested: ${numDice}`,
+        `Number of dice out of range: ${numDice}`,
         ErrorTypes.VALIDATION,
         'Please keep the number of dice between 1 and 20.'
       );
@@ -68,10 +68,10 @@ export default {
 
     const resultsDetail =
       numDice > 1 ? `**Rolls:** ${rolls.join(" + ")}\n` : "";
-    const modifierText = modifier !== 0 ? `+ (${modifier})` : "";
+    const modifierText = modifier === 0 ? "" : ` ${modifier > 0 ? "+" : "-"} ${Math.abs(modifier)}`;
 
     const embed = successEmbed(
-      `🎲 Rolling ${numDice}d${numSides}${modifier !== 0 ? match[3] : ""}`,
+      `🎲 Rolling ${numDice}d${numSides}${modifier === 0 ? "" : `${modifier > 0 ? "+" : "-"}${Math.abs(modifier)}`}`,
       `${resultsDetail}**Total Roll:** ${totalRoll}${modifierText} = **${finalTotal}**`,
     );
 

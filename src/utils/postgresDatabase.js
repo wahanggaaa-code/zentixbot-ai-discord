@@ -57,6 +57,7 @@ const PROTOCOL_ONLY_KEY_TYPES = [
     'counters',
     // Written by src/services/reactionRoles/store.js (per-guild lock, validated panels).
     'reaction_role',
+    'counting_game',
 ];
 
 class PostgreSQLDatabase {
