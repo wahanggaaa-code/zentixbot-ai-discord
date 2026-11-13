@@ -115,6 +115,7 @@
    line('Sesi berakhir',time(access.sessionExpiresAt)),
   ])
    +`<p class="f-muted">Dashboard terbuka untuk owner server dan siapa pun yang memiliki izin Administrator. Izin diperiksa ulang ke Discord pada setiap permintaan; mencabut peran langsung mencabut akses.</p>`
+   +(dashboard?.insecureHttp===true?`<p class="f-callout" id="settingsHttpNote"><b>Tanpa enkripsi.</b> Dashboard ini dibuka lewat HTTP biasa. Sesi login Anda dapat dibaca oleh pihak di jaringan yang sama atau di antara Anda dan server. Hindari Wi-Fi umum, dan tekan KELUAR setelah selesai.</p>`:'')
    +(dashboard?.sessionStore==='process'?`<p class="f-muted" id="settingsSessionNote">Sesi disimpan di memori proses bot. Saat bot dimulai ulang, semua orang harus login lagi.</p>`:'')
    +`<p><b>Peran dengan izin Administrator</b></p>${roles}`
    +`<button type="button" class="f-outline" id="settingsLogout">KELUAR</button>`;

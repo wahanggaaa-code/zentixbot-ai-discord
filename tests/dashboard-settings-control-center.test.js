@@ -133,8 +133,18 @@ test('the control center reports Discord, storage and access as they are now', a
         { id: '600000000000000003', name: 'ZentixBot', managed: true },
     ]);
     assert.equal(data.access.adminRolesTruncated, false);
-    assert.deepEqual(data.dashboard, { origin: 'https://dash.example.com', sessionStore: 'process' });
+    assert.deepEqual(data.dashboard, { origin: 'https://dash.example.com', sessionStore: 'process', insecureHttp: false });
     assert.ok(Math.abs(data.readAt - Date.now()) < 5000);
+});
+
+test('the control center says when the dashboard is served over plain HTTP on a public address', async (t) => {
+    const address = 'http://203.0.113.5:16954';
+    const read = async (env) => (await (await (await serve(t, createFixture(), { env })).get()).json()).dashboard.insecureHttp;
+    assert.equal(await read({ DASHBOARD_URL: address, DASHBOARD_ALLOW_HTTP: 'true' }), true);
+    // Without the switch there is no login at that address at all, so nothing is served unencrypted.
+    assert.equal(await read({ DASHBOARD_URL: address }), false);
+    assert.equal(await read({ DASHBOARD_URL: 'http://localhost:9999', DASHBOARD_ALLOW_HTTP: 'true' }), false);
+    assert.equal(await read({ DASHBOARD_URL: 'https://dash.example.com', DASHBOARD_ALLOW_HTTP: 'true' }), false);
 });
 
 test('an Administrator bot is reported as holding every checked permission', async (t) => {
@@ -339,12 +349,25 @@ test('the settings page shows live values as text and marks missing permissions'
     assert.equal(page.$('#settingsAccessBasis').textContent, 'Memiliki izin Administrator');
     assert.match(access.textContent, /<u>Staff<\/u>/);
     assert.match(page.$('#settingsSessionNote').textContent, /harus login lagi/);
+    assert.equal(page.$('#settingsHttpNote'), null, 'no warning on an encrypted or local address');
     assert.match(page.$('#settingsHosting').textContent, /Hanya owner bot/);
     assert.match(page.$('#settingsReadAt').textContent, /Halaman tidak memperbarui diri/);
 
     // The page only reads.
     assert.equal(state.calls.every(([, method]) => method === 'GET'), true);
     assert.equal(page.w.document.querySelector('.placeholder-card'), null);
+});
+
+test('the settings page warns when it is opened over plain HTTP', async (t) => {
+    const center = sample();
+    center.dashboard = { origin: 'http://203.0.113.5:16954', sessionStore: 'process', insecureHttp: true };
+    const page = await open(t, { center: ok(center) });
+    assert.match(page.$('#settingsHttpNote').textContent, /Tanpa enkripsi\. Dashboard ini dibuka lewat HTTP biasa/);
+    assert.match(page.$('#settingsHttpNote').textContent, /KELUAR/);
+    // Anything but an explicit true shows no warning.
+    center.dashboard.insecureHttp = 'true';
+    const other = await open(t, { center: ok(center) });
+    assert.equal(other.$('#settingsHttpNote'), null);
 });
 
 test('unknown values and a disconnected bot are shown as such', async (t) => {

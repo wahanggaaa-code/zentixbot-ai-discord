@@ -131,6 +131,8 @@ Untuk basis kode `98b2bee`:
 | Tes Community dengan Node 20.20 (2026-11-13) | **68/68 lulus** | Lima berkas: lamaran (28), pengaturan dan router interaksi (16), API dan halaman dashboard (12), label simulasi (10), penelusuran dashboard dengan router asli (2). Berkas penjaga SQLite (3 tes) hanya berjalan di Node 22.5 ke atas. |
 | Regresi Node 22 setelah audit Tools (2026-11-13) | **1062 lulus, 0 gagal, 4 dilewati** dari 1066 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. Layanan is.gd tidak dihubungi; tes memakai server HTTP lokal. |
 | Tes Tools dengan Node 20.20 (2026-11-13) | **77/77 lulus** | Enam berkas: kalkulator (10), hitung mundur dan poll (19), perintah lain dan akses perintah (22), embed builder (14), label simulasi (10), penelusuran dashboard dengan router asli (2). |
+| Regresi Node 22 setelah perubahan port dan dashboard HTTP (2026-11-13) | **1073 lulus, 0 gagal, 4 dilewati** dari 1077 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. Bukan panel hosting sungguhan. |
+| Tes port dan dashboard HTTP dengan Node 20.20 (2026-11-13) | **31/31 lulus** | Tiga berkas: port dan login HTTP (9), halaman pengaturan (17), login dan CSRF (5). |
 | `npm audit --omit=dev` | **0 kerentanan dilaporkan** | Saat pengujian; hanya dependency produksi dan hasil advisory dapat berubah. |
 | Git diff check | **Bersih** sebelum dokumentasi ini | Pemeriksaan whitespace, bukan audit kode/keamanan. |
 
@@ -179,6 +181,7 @@ Jangan arahkan tes ke database produksi. Sertifikat dan direktori `/tmp` bersifa
 ### Prioritas 3 — deployment dan pemulihan
 
 - [ ] Uji end-to-end dengan server Discord uji, OAuth, PostgreSQL/Neon, provider AI, Lavalink, browser dan lingkungan hosting yang dipilih, termasuk izin, rate limit, restart dan putus koneksi.
+  - Persiapan hosting panel: bot menerima port dari `WEB_PORT`, `PORT` atau `SERVER_PORT`, dan dashboard dapat dibuka pada `http://ip:port` bila `DASHBOARD_ALLOW_HTTP=true` (sesi tidak terenkripsi; bawaan tetap HTTPS). Rincian dan daftar variabel di `DOKUMENTASI-HOSTING.md`. Belum dijalankan di panel sungguhan.
 - [ ] Selesaikan prosedur backup terenkripsi/offsite, retensi, restore produksi yang aman dan latihan pemulihan; uji lagi dengan akun/target terisolasi.
 - [ ] Audit seluruh jalur yang masih mengembalikan default saat database gagal, key legacy, skema, data pribadi serta keamanan multi-instance.
 - [ ] Bila SQLite masih menjadi tujuan, selesaikan kompatibilitas runtime, migrasi data, backup/WAL/TTL dan tes beban sebelum mempertimbangkan cutover. Sampai itu selesai gunakan PostgreSQL yang dikonfigurasi dan diverifikasi dengan benar.

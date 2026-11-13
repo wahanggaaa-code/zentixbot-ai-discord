@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PermissionFlagsBits } from 'discord.js';
 import { isHomeGuild } from '../utils/singleGuild.js';
+import { logger } from '../utils/logger.js';
+import { resolveDashboardOrigin, notConfiguredMessage } from './origin.js';
 import { createBotApiRouter } from './botApi.js';
 import { createGoodbyeApi } from './goodbyeApi.js';
 import { createBirthdayApi } from './birthdayApi.js';
@@ -30,11 +32,9 @@ const NO_CACHE = 'no-store';
 export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, env = process.env } = {}) {
   const router = express.Router();
   const states = new Map(), sessions = new Map();
-  let origin = null;
-  try {
-    const u = new URL(env.DASHBOARD_URL);
-    if ((u.protocol === 'https:' || (u.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(u.hostname))) && !u.username && !u.password && u.pathname === '/' && !u.search && !u.hash) origin = u.origin;
-  } catch { /* disabled until correctly configured */ }
+  // Login stays disabled until DASHBOARD_URL is usable; see origin.js for what counts as usable.
+  const { origin, insecure, reason } = resolveDashboardOrigin(env);
+  if (insecure) logger.warn(`Dashboard is served over plain HTTP at ${origin} (DASHBOARD_ALLOW_HTTP). Login sessions are not encrypted in transit.`);
   const configured = Boolean(origin && /^\d{17,20}$/.test(env.CLIENT_ID || '') && env.DISCORD_CLIENT_SECRET && client.homeGuildId);
   const options = { httpOnly: true, secure: origin?.startsWith('https:') || false, sameSite: 'lax', path: '/dashboard' };
   const clear = (res, name) => res.clearCookie(name, options);
@@ -51,7 +51,7 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
   }
   router.use((req,res,next) => { res.set({'Cache-Control': NO_CACHE, 'X-Content-Type-Options':'nosniff', 'Referrer-Policy':'no-referrer', 'X-Frame-Options':'DENY'}); next(); });
   router.get('/login', (req,res) => {
-    if (!configured) return res.status(503).send('Login belum dikonfigurasi. Atur CLIENT_ID, DISCORD_CLIENT_SECRET, DASHBOARD_URL dan GUILD_ID.');
+    if (!configured) return res.status(503).send(notConfiguredMessage(reason));
     purge(); if (states.size >= 5000) return res.status(503).send('Terlalu banyak login yang menunggu.');
     const state = random(); states.set(state, Date.now() + 600000);
     res.cookie('zx_state', state, { ...options, maxAge: 600000 });
@@ -115,7 +115,7 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
     sessions.delete(cookie(req,'zx_session')); clear(res,'zx_session'); res.json({ok:true});
   });
   router.get(['/', '/index.html'], (req,res,next) => {
-    if (!configured) return res.status(503).send('Dashboard belum dikonfigurasi. Lihat DOKUMENTASI-TAHAP-5.md.');
+    if (!configured) return res.status(503).send(notConfiguredMessage(reason));
     purge(); if (!sessions.has(cookie(req,'zx_session'))) return res.redirect('/dashboard/login');
     auth(req,res,() => res.sendFile(path.join(preview,'index.html')));
   });
