@@ -29,7 +29,7 @@ class DatabaseWrapper {
         let connected = false;
         let connectionError = null;
         try {
-            logger.info('Attempting to connect to PostgreSQL...');
+            logger.debug('Attempting to connect to PostgreSQL...');
             connected = await pgDb.connect();
         } catch (error) {
             connectionError = error;
@@ -53,7 +53,7 @@ class DatabaseWrapper {
         this.connectionType = 'postgresql';
         this.degradedReason = null;
         this.initialized = true;
-        logger.info('PostgreSQL Database initialized - using persistent database');
+        logger.debug('PostgreSQL Database initialized - using persistent database');
     }
 
     async set(key, value, ttl = null) {
@@ -148,9 +148,9 @@ export const db = new DatabaseWrapper();
 
 export async function initializeDatabase() {
     try {
-        logger.info('Initializing persistent database (PostgreSQL)...');
+        logger.debug('Initializing persistent database (PostgreSQL)...');
         await db.initialize();
-        logger.info('Database initialized');
+        logger.debug('Database initialized');
         return { db };
     } catch (error) {
         logger.error('Database initialization failed:', error.message);

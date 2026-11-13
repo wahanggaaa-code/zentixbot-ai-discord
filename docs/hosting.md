@@ -176,6 +176,55 @@ Tiga hal dibuat lebih longgar agar pesan-pesan itu jarang muncul:
 
 Setiap login tetap hanya dapat dipakai satu kali: percobaan pertama dari peramban yang memulainya menghabiskannya, berhasil atau tidak.
 
+## Log di konsol
+
+Setiap baris berbentuk `jam  TANDA  pesan`. Tanda selalu selebar enam huruf, sehingga pesan mulai di kolom yang sama; baris lanjutan dan jejak kesalahan menjorok ke kolom itu.
+
+| Tanda | Arti |
+| --- | --- |
+| `START` | Laporan saat bot menyala. |
+| `STATUS` | Bot berhenti atau menyala ulang. |
+| `INFO` | Kejadian biasa. |
+| `WARN` | Ada yang tidak beres tetapi bot tetap berjalan. Pemeriksaan saat menyala yang menemui kesalahan juga dicetak dengan tanda ini. |
+| `ERROR` | Ada yang gagal; baris di bawahnya menunjukkan tempatnya di kode. |
+| `DEBUG` | Rincian, hanya dengan `LOG_LEVEL=debug`. |
+
+Contoh saat menyala (dari menjalankan bot di lingkungan uji dengan Discord tiruan; nama server dan alamat adalah contoh):
+
+```text
+21:20:35  START  ZentixBot 2.1.0 starting (Node v22.22.3, production mode, log level info)
+21:20:35  START  Database: PostgreSQL connected, data is persistent
+21:20:35  START  Web port 39117 taken from WEB_PORT
+21:20:35  START  Web server: listening on 0.0.0.0:39117 (/health, /ready, /dashboard/)
+21:20:35  START  Commands: 100 loaded in 20 categories, 84 subcommands
+21:20:35  START    AI 1 · Birthday 1 · Community 2 · Core 7 · Economy 19 · Fun 4 · Giveaway 4 · JoinToCreate 1
+21:20:35  START    Leveling 6 · Logging 1 · Moderation 16 · Music 5 · Reaction_roles 1 · Search 1 · ServerStats 1
+21:20:35  START    Ticket 4 · Tools 11 · Utility 8 · Verification 3 · Welcome 4
+21:20:35  START  Events: 14 registered
+21:20:35  START  Interactions: 60 buttons, 5 select menus, 12 modals
+21:20:35  START  Music: 6 Lavalink nodes configured (vinster, trinium, nazha, serenetia, jirayu, millohost)
+21:20:35  START  Discord: logging in...
+21:20:35  START  Slash commands: 100 registered for server 123456789012345678
+21:20:35  START  ────────────────────────────────────────────────────────────
+21:20:35  START  ZentixBot 2.1.0 is ONLINE (startup took 2.3 s)
+21:20:35  START    Bot        zentix#0667
+21:20:35  START    Server     Zentix Community (123456789012345678)
+21:20:35  START    Loaded     100 commands, 60 buttons, 5 select menus, 12 modals
+21:20:35  START    Database   PostgreSQL, persistent
+21:20:35  START    Web        port 39117
+21:20:35  START    Dashboard  http://203.0.113.5:39117/dashboard/ (plain HTTP)
+21:20:35  START    Memory     174 MB
+21:20:35  START  ────────────────────────────────────────────────────────────
+21:20:35  START  Check, ticket panels: healthy 0, deleted 0, channel missing 0, recovered 0, errors 0
+```
+
+- Baris `Dashboard` pada rangkuman menyebut alamat dashboard, atau sebab login dashboard mati (misalnya `login off: DASHBOARD_URL is not set`).
+- Bila Discord menolak pendaftaran slash command, rangkuman memuat baris `Warning`.
+- Bila ada berkas command, event atau interaksi yang gagal dimuat, baris ringkasannya menyebut jumlahnya (`… ; 1 file not loaded, see the messages above`) dan berkasnya disebut pada baris `WARN` atau `ERROR` di atasnya.
+- `LOG_LEVEL=warn` (isi `.env.example`) menampilkan `START`, `STATUS`, `WARN` dan `ERROR`. `LOG_LEVEL=info` menambah kejadian biasa, misalnya node Lavalink yang tersambung. `LOG_LEVEL=debug` menambah satu baris per command, event dan handler yang dimuat serta langkah-langkah database.
+- Warna dipakai untuk jam dan tanda saja. Bila konsol panel menampilkan kode seperti `[32m`, isi `NO_COLOR=1`.
+- Isi objek yang ikut dicatat (misalnya ID server pada sebuah peringatan) tidak dicetak di konsol.
+
 ## Langkah di panel (dari panduan referensi, belum diperiksa)
 
 1. Buat server dengan egg Node.js, image Node 22.
@@ -199,5 +248,6 @@ Setiap login tetap hanya dapat dipakai satu kali: percobaan pertama dari peramba
 - Tidak ada yang dijalankan di sini pada panel sungguhan. Yang diketahui tentang panel hanyalah kiriman pemilik bot di awal dokumen ini; batas RAM, perilaku saat restart dan pemakaian memori belum diperiksa.
 - Login Discord sungguhan sampai masuk ke dashboard pada alamat `http://ip:port`, termasuk setelah perbaikan batas permintaan dan pesan login.
 - Sebab login pemilik bot gagal pada 13 November 2026 tidak diketahui; pesan lama tidak membedakan sebabnya.
+- Tampilan log di konsol panel: apakah warnanya tampil, dan baris-baris setelah login Discord sungguhan (pendaftaran slash command, rangkuman ONLINE, pemeriksaan saat menyala, node Lavalink). Di sini baris-baris itu hanya dihasilkan dengan Discord tiruan.
 - Dashboard di peramban sungguhan; tesnya memakai jsdom dan permintaan HTTP langsung. Jumlah panggilan data per halaman tidak diukur; angka 31 hanya menghitung berkas yang disebut `index.html`.
 - Groq (transkripsi), Tavily, Cloudflare Workers AI dan Pollinations yang sesungguhnya. Tesnya memakai penyedia tiruan: yang terbukti adalah permintaan yang disusun bot dan cara bot membaca jawaban, bukan bahwa layanan itu menerimanya. Bentuk permintaan diambil dari dokumentasi tiap layanan.

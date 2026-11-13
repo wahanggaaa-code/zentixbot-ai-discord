@@ -173,7 +173,7 @@ class PostgreSQLDatabase {
                             );
                             await this.runStartupKeyMigration();
                             this.isConnected = true;
-                            logger.info('PostgreSQL Database initialized successfully');
+                            logger.debug('PostgreSQL Database initialized successfully');
                             return true;
                         }
 
@@ -187,7 +187,7 @@ class PostgreSQLDatabase {
 
                 await this.runStartupKeyMigration();
                 this.isConnected = true;
-                logger.info('PostgreSQL Database initialized successfully');
+                logger.debug('PostgreSQL Database initialized successfully');
                 return true;
             } catch (error) {
                 this.isConnected = false;
@@ -322,7 +322,7 @@ class PostgreSQLDatabase {
             }
         }
         
-        logger.info('Database tables created/verified');
+        logger.debug('Database tables created/verified');
         
         await this.createIndexes();
         await this.createAuditTriggers();
@@ -337,7 +337,7 @@ class PostgreSQLDatabase {
             }
         }
         
-        logger.info('Performance indexes created/verified');
+        logger.debug('Performance indexes created/verified');
     }
 
     async createAuditTriggers() {
@@ -374,7 +374,7 @@ class PostgreSQLDatabase {
                 }
             }
             
-            logger.info('Audit triggers created/verified');
+            logger.debug('Audit triggers created/verified');
         } catch (error) {
             logger.warn('Error creating audit triggers:', error.message);
         }

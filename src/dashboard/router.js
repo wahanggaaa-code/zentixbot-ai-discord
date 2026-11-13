@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { PermissionFlagsBits } from 'discord.js';
 import { isHomeGuild } from '../utils/singleGuild.js';
 import { logger } from '../utils/logger.js';
-import { resolveDashboardOrigin, notConfiguredMessage } from './origin.js';
+import { dashboardLoginStatus, notConfiguredMessage } from './origin.js';
 import { callbackProblem, loginProblemPage } from './loginProblem.js';
 import { createBotApiRouter } from './botApi.js';
 import { createGoodbyeApi } from './goodbyeApi.js';
@@ -34,9 +34,8 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
   const router = express.Router();
   const states = new Map(), sessions = new Map();
   // Login stays disabled until DASHBOARD_URL is usable; see origin.js for what counts as usable.
-  const { origin, insecure, reason } = resolveDashboardOrigin(env);
+  const { origin, insecure, reason, configured } = dashboardLoginStatus(env, client.homeGuildId);
   if (insecure) logger.warn(`Dashboard is served over plain HTTP at ${origin} (DASHBOARD_ALLOW_HTTP). Login sessions are not encrypted in transit.`);
-  const configured = Boolean(origin && /^\d{17,20}$/.test(env.CLIENT_ID || '') && env.DISCORD_CLIENT_SECRET && client.homeGuildId);
   const options = { httpOnly: true, secure: origin?.startsWith('https:') || false, sameSite: 'lax', path: '/dashboard' };
   const clear = (res, name) => res.clearCookie(name, options);
   const purge = () => { const now = Date.now(); for (const [k,v] of states) if (v < now) states.delete(k); for (const [k,v] of sessions) if (v.expires < now) sessions.delete(k); };

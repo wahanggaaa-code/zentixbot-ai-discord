@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { AsyncLocalStorage } from 'async_hooks';
 import crypto from 'crypto';
+import { consoleColorEnabled, formatConsoleLine } from './consoleFormat.js';
 
 const traceStorage = new AsyncLocalStorage();
 
@@ -51,7 +52,7 @@ export function getTraceId() {
 }
 
 const { createLogger, format, transports } = winston;
-const { combine, timestamp, printf, colorize, errors, json } = format;
+const { combine, timestamp, printf, errors } = format;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -86,11 +87,8 @@ const LOG_SCHEMA_DEFAULTS = Object.freeze({
   traceId: null,
 });
 
-const logFormat = printf(({ level, message, timestamp, stack, displayLevel }) => {
-  const visibleLevel = displayLevel || level;
-  const logMessage = `[${timestamp}] [${visibleLevel}]: ${stack || message}`;
-  return logMessage;
-});
+const consoleColor = consoleColorEnabled();
+const logFormat = printf((info) => formatConsoleLine({ ...info, extras: info[Symbol.for('splat')] }, { color: consoleColor }));
 
 const attachTraceContext = format((info) => {
   const traceContext = getTraceContext();
@@ -197,27 +195,14 @@ const logger = createLogger({
   ],
 });
 
-if (process.env.NODE_ENV !== 'production') {
-  logger.add(new transports.Console({
-    format: combine(
-      colorize(),
-      timestamp({ format: 'HH:mm:ss' }),
-      errors({ stack: true }),
-      logFormat
-    ),
-    level: resolvedLogLevel,
-  }));
-} else {
-  logger.add(new transports.Console({
-    format: combine(
-      colorize(),
-      timestamp({ format: 'HH:mm:ss' }),
-      errors({ stack: true }),
-      logFormat
-    ),
-    level: resolvedLogLevel,
-  }));
-}
+logger.add(new transports.Console({
+  format: combine(
+    timestamp({ format: 'HH:mm:ss' }),
+    errors({ stack: true }),
+    logFormat
+  ),
+  level: resolvedLogLevel,
+}));
 
 logger.stream = {
   write: (message) => {
