@@ -1,5 +1,6 @@
 import express from 'express';
 import { PermissionFlagsBits } from 'discord.js';
+import { resolveDashboardOrigin } from './origin.js';
 
 /**
  * Read-only "control center" for the main settings page.
@@ -136,6 +137,8 @@ export function createSettingsApi(client, { auth, env = process.env }) {
         try {
             origin = new URL(env.DASHBOARD_URL).origin;
         } catch { /* reported as not available */ }
+        // True when the dashboard is reached over plain HTTP on a public address.
+        const insecureHttp = resolveDashboardOrigin(env).insecure;
 
         res.json({
             readAt: Date.now(),
@@ -160,7 +163,7 @@ export function createSettingsApi(client, { auth, env = process.env }) {
             },
             // Whether a panel is configured is itself owner-only information.
             hosting: { configured: isBotOwner ? hostingConfigured(env) : null },
-            dashboard: { origin, sessionStore: 'process' },
+            dashboard: { origin, sessionStore: 'process', insecureHttp },
         });
     });
     return router;

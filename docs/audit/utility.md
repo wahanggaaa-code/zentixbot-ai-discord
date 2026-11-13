@@ -137,7 +137,7 @@ Baru:
 - `src/services/todo/lists.js`: semua operasi daftar (pribadi dan bersama), batas, alasan penolakan.
 - `src/services/todo/view.js`: tampilan daftar, halaman, kalimat penolakan dan kegagalan.
 - `tests/postgres-todo.test.js`, `tests/postgres-report.test.js`, `tests/utility-commands.test.js`, `tests/helpers/utility-fixture.js`.
-- `DOKUMENTASI-AUDIT-UTILITY.md`.
+- `docs/audit/utility.md`.
 
 Diubah:
 

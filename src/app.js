@@ -7,12 +7,14 @@ import { createAIFoundation } from './services/ai/foundation.js';
 import { createAudioService } from './services/ai/audio.js';
 import { createImageService } from './services/ai/images.js';
 import { createSearchService } from './services/ai/search.js';
+import { describeExtraProviders } from './services/ai/extraProviders.js';
 import { runProactiveAgent } from './services/ai/chat.js';
 import { runScheduledActivity } from './services/ai/activities.js';
 import { requireHomeGuildId, isHomeGuild } from './utils/singleGuild.js';
 import cron from 'node-cron';
 
 import config from './config/application.js';
+import { resolveWebPort, WEB_PORT_VARIABLES } from './utils/webPort.js';
 import { initializeDatabase } from './utils/database.js';
 import { getGuildConfig } from './services/config/guildConfig.js';
 import { maintainCounters } from './services/serverStats/manage.js';
@@ -76,6 +78,11 @@ class ZentixBot extends Client {
       }
       startupLog(`Database Status: ${dbStatus.connectionType} (persistent)`);
 
+      for (const line of describeExtraProviders(process.env)) {
+        if (line.level === 'warn') logger.warn(line.text);
+        else startupLog(line.text);
+      }
+
       startupLog('Starting web server...');
       this.startWebServer();
       
@@ -112,7 +119,9 @@ class ZentixBot extends Client {
 
   startWebServer() {
     const app = express();
-    const configuredPort = Number(this.config.api?.port || process.env.PORT || 3000);
+    const { port: configuredPort, source: portSource, ignored: ignoredPortVariables } = resolveWebPort(process.env);
+    if (ignoredPortVariables.length) logger.warn(`Ignored ${ignoredPortVariables.join(', ')}: not a port number between 1 and 65535.`);
+    startupLog(portSource ? `Web port ${configuredPort} taken from ${portSource}` : `Web port ${configuredPort} (default; none of ${WEB_PORT_VARIABLES.join(', ')} is set)`);
     const maxPortRetryAttempts = Number(process.env.PORT_RETRY_ATTEMPTS || 5);
     const host = process.env.WEB_HOST || '0.0.0.0';
     const corsOrigin = this.config.api?.cors?.origin || '*';

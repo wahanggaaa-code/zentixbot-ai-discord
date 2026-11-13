@@ -1,5 +1,6 @@
 import {readDiscordAttachment} from './attachments.js';
 import {validateSettings} from './foundation.js';
+import {resolveAudioProvider} from './extraProviders.js';
 const error=(message,status=400)=>Object.assign(new Error(message),{status});
 const MAX_AUDIO=2*1024*1024;
 let active=0;
@@ -21,15 +22,17 @@ export function createAudioService({client,foundation=client.aiFoundation,env=pr
  return {async transcribe({guildId,userId,attachment,consent}){
   if(guildId!==client.homeGuildId||!/^\d{17,20}$/.test(userId||''))throw error('Akses server tidak valid.',403);
   if(consent!==true)throw error('Persetujuan audio diperlukan.',403);
-  const key=env.AI_AUDIO_API_KEY?.trim(),model=env.AI_AUDIO_MODEL?.trim();
-  if(!key||!model||!/^[\w.-]{1,100}$/.test(model))throw error('Kredensial/model audio belum dikonfigurasi.',503);
+  // OpenAI unless AI_AUDIO_PROVIDER names another provider; an unknown name or a missing key keeps the feature off.
+  const provider=resolveAudioProvider(env);
+  if(provider.unknown||provider.missing.length)throw error('Kredensial/model audio belum dikonfigurasi.',503);
+  const {key,model}=provider;
   if(active>=2)throw error('Transkripsi sedang sibuk.',429);active++;
   try{
    const cfg=validateSettings(await foundation.store.read(guildId));if(!cfg.enabled||!cfg.providerDataConsent)throw error('AI belum diaktifkan.',403);
    const data=await download(attachment,MAX_AUDIO,fetchImpl);const [mime,extension]=audioType(data);
    await foundation.store.reserve(guildId,userId,cfg);
    const body=new FormData();body.append('model',model);body.append('file',new Blob([data],{type:mime}),`audio.${extension}`);
-   const response=await fetchImpl('https://api.openai.com/v1/audio/transcriptions',{method:'POST',headers:{Authorization:`Bearer ${key}`},body,redirect:'error',signal:AbortSignal.timeout(60000)});
+   const response=await fetchImpl(provider.url,{method:'POST',headers:{Authorization:`Bearer ${key}`},body,redirect:'error',signal:AbortSignal.timeout(60000)});
    if(!response.ok){await response.body?.cancel().catch(()=>{});throw error('Provider transkripsi tidak tersedia.',502);}
    const result=await readJSON(response);if(typeof result.text!=='string'||!result.text.trim()||result.text.length>1500)throw error('Transkripsi kosong atau lebih dari 1500 karakter.',502);
    return result.text.trim();

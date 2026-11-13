@@ -4,7 +4,7 @@ Tanggal audit: 2026-11-13. Cakupan: seluruh kode yang mengubah saldo atau isi ak
 
 Audit dilakukan dengan membaca kode dan menjalankan tes terhadap PostgreSQL lokal, SQLite dan Discord tiruan. **Tidak ada yang diuji pada server Discord nyata.**
 
-Dokumen ini adalah bagian ketiga dan terakhir dari butir checklist "Audit fitur tiket, reward role dan seluruh penulis ekonomi". Tiket ada di `DOKUMENTASI-AUDIT-TIKET.md`, reward role di `DOKUMENTASI-AUDIT-REWARD-ROLE.md`.
+Dokumen ini adalah bagian ketiga dan terakhir dari butir checklist "Audit fitur tiket, reward role dan seluruh penulis ekonomi". Tiket ada di [`docs/audit/tiket.md`](tiket.md), reward role di [`docs/audit/reward-role.md`](reward-role.md).
 
 ## Ringkasan
 
@@ -129,7 +129,7 @@ Yang **tidak** diuji: seluruh perilaku pada Discord nyata (urutan role, rate lim
 
 Hasil pada 2026-11-13, PostgreSQL 16 sekali pakai tanpa TLS, Discord tiruan:
 
-- regresi penuh Node 22: lihat tabel di `DOKUMENTASI-PROGRES-PROYEK.md` bagian 6;
+- regresi penuh Node 22: lihat tabel di [`docs/progres-proyek.md`](../progres-proyek.md) bagian 6;
 - Node 20.20: 64 dari 64 tes lulus (`postgres-economy-writers`, `dashboard-economy-ui`, `tahap8-economy-transaction`, `postgres-economy-audit`, `tahap6-modules`, `tahap6-operations`).
 
 PostgreSQL untuk tes dapat disiapkan dengan `source scripts/setup-test-postgres.sh`.

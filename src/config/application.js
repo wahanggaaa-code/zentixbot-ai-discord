@@ -3,6 +3,7 @@ import path from "path";
 import botConfig, { validateConfig } from "./bot.js";
 import { shopConfig as shop } from "./shop/index.js";
 import { pgConfig } from "./database/postgres.js";
+import { resolveWebPort } from "../utils/webPort.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -58,7 +59,7 @@ const appConfig = {
   },
 
   api: {
-    port: process.env.PORT || 3000,
+    port: resolveWebPort(process.env).port,
     cors: {
       origin: process.env.CORS_ORIGIN?.split(",") || "*",
       methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],

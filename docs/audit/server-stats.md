@@ -105,7 +105,7 @@ Hasil penyegaran per counter: `current`, `renamed`, `deferred` (dengan `retryAt`
 
 Pemeriksaan mutasi: 22 perubahan yang sengaja merusak kode (antara lain menghapus kunci baris, jeda ganti nama, pemeriksaan izin tombol, pemeriksaan `revision`, escape nama channel, CSRF pada PATCH) masing-masing membuat sedikitnya satu tes gagal, lalu dikembalikan.
 
-Hasil terakhir ada di tabel pemeriksaan `DOKUMENTASI-PROGRES-PROYEK.md`.
+Hasil terakhir ada di tabel pemeriksaan [`docs/progres-proyek.md`](../progres-proyek.md).
 
 ## Yang belum diuji
 

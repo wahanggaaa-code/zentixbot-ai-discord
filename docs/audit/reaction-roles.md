@@ -137,7 +137,7 @@ Status panel: `ok`, `message_missing`, `channel_missing`, `unknown`. Keadaan pes
 
 Pemeriksaan mutasi: 36 perubahan yang sengaja merusak kode dijalankan satu per satu terhadap dua berkas tes di atas, lalu dikembalikan. 35 membuat sedikitnya satu tes gagal. Satu tidak tertangkap: mengubah penangkap galat di `audit.js` agar melempar ulang. Penangkap itu tidak pernah tercapai karena `logEvent` sudah menangkap galatnya sendiri; perilaku "log gagal tidak membatalkan perubahan" tetap diuji lewat channel log yang menolak tulisan.
 
-Hasil terakhir ada di tabel pemeriksaan `DOKUMENTASI-PROGRES-PROYEK.md`.
+Hasil terakhir ada di tabel pemeriksaan [`docs/progres-proyek.md`](../progres-proyek.md).
 
 ## Yang belum diuji
 
