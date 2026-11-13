@@ -1,0 +1,29 @@
+# Join to Create PostgreSQL: inventaris dan prototipe transaksi
+
+## Status
+
+Dashboard hanya membaca. `postgresJoinToCreateTransactions.js` adalah **prototipe yang tidak dipanggil oleh runtime bot, perintah Discord, ataupun API dashboard**. Ia belum membuat operasi aktif aman, bukan migrasi, dan bukan izin mengaktifkan tombol edit. Semua instans bot yang ada masih dapat menulis objek lama tanpa protokol; jangan menjalankan prototipe bersamaan dengan penulis itu atau pada data produksi. Tidak ada perubahan skema dalam tahap ini.
+
+## Temuan audit penulis
+
+- `database.js`: `saveJoinToCreateConfig`, `updateJoinToCreateConfig`, tambah/hapus trigger, daftar dan pelepasan channel sementara membaca dan menulis ulang seluruh objek. Sebagian pembacaan/gagal simpan dikonversi menjadi default atau `false`; beberapa pemanggil tidak memeriksa `false`.
+- `joinToCreateService.js` melakukan read-modify-write untuk setup, pengaturan per trigger dan penghapusan. Salah satu jalur penghapusan menghapus entri channel sementara dari penyimpanan tanpa menghapus channel Discord.
+- `config_setup.js` menyimpan ulang seluruh `channelOptions` yang bisa berasal dari snapshot lama hingga 10 menit. Migrasi harus memakai patch spesifik bidang, plus pemeriksaan revisi yang sesuai.
+- `voiceStateUpdate.js` membuat channel di Discord sebelum mendaftarkannya; hasil registrasi `false` tidak diperiksa. Delete melepas record sebelum menghapus channel Discord. Transfer pemilik menulis seluruh objek dan lalu mengganti nama Discord. Database dan Discord tidak atomik; kegagalan dapat menyisakan channel atau data yang tidak sinkron. Cooldown di memori bukan lock lintas instans.
+- `channelDelete.js` membaca snapshot, memanggil helper penghapusan lalu dapat menyimpan kembali snapshot lama saat kategori dihapus. Event cleanup dilewati jika fitur nonaktif. `voiceStateUpdate` juga melewati cleanup saat nonaktif/tanpa trigger. Kategori konfigurasi saat ini tidak dipakai saat membuat channel (parent trigger yang dipakai).
+- `postgresDatabase.js` generic `set`/`delete` masih mengizinkan penulisan key Join to Create, termasuk dari penulis lama. Audit key lain, jalur migrasi/restore, dan instance lain harus diperhitungkan sebelum cutover; hanya menambahkan lock pada dashboard tidak cukup.
+
+## Prototipe terisolasi
+
+Setiap operasi mengambil advisory transaction lock berbasis key guild yang sama, lalu membaca baris `temp_data` dengan `FOR UPDATE`; lock advisory juga melindungi kasus record belum ada di antara penulis peserta. Konfigurasi valid berukuran paling besar 512 KiB; data invalid, wrapper legacy, key cache atau channel terpisah yang konflik, serta record dengan TTL (termasuk belum kedaluwarsa) ditolak untuk pemeriksaan. Tidak ada reset TTL atau penghapusan otomatis. Cek ukuran memakai representasi `jsonb` PostgreSQL juga. Default untuk bidang yang hilang hanya berlaku pada objek valid.
+
+Eksperimen mencakup setup tunggal, patch opsi trigger, hapus trigger sambil mempertahankan record channel, registrasi channel, transfer pemilik berdasarkan pemilik sebelumnya, serta pelepasan berdasarkan pemilik dan trigger sebelumnya. Setup, transfer, dan registrasi memiliki pemeriksaan konflik; patch dan penghapusan trigger memerlukan revisi isi. Pengujian PostgreSQL lokal mencakup operasi bersamaan pada record kosong, puluhan registrasi, stale edit, transfer/delete, konflik, kerusakan, TTL, rollback, dan scope guild. Ini hanya menjamin penulis yang mengikuti protokol tersebut. Revisi hash berbasis isi tidak mendeteksi A→B→A; timestamp dan payload tanpa batas monotonic version tidak menjamin urutan event Discord.
+
+Jika COMMIT gagal setelah dikirim, hasil bisa tidak diketahui. Jangan retry operasi otomatis atau berasumsi rollback berhasil; periksa database dan Discord. Prototipe tidak mengirim permintaan Discord, tidak memverifikasi channel/permission/voice state, dan tidak merekonsiliasi efek yang gagal. Validasi template prototipe masih harus diselaraskan dengan jalur command dan renderer sebelum dihubungkan. Batas 100 trigger, 5.000 channel sementara, 512 KiB dan satu channel per pemilik adalah pembatas konservatif; data di luar batas memerlukan review, bukan overwrite.
+
+## Sebelum cutover
+
+1. Rancang alur Discord/DB untuk create, delete dan transfer termasuk kegagalan dan hasil tidak pasti; jangan hapus channel secara otomatis saat hasil database ambigu. Tinjau izin, membership dan peristiwa yang terlambat/tidak berurutan.
+2. Pindahkan semua penulis command, collector dan event secara serentak ke protokol yang sama; hilangkan full-object save dan snapshot collector lama. Blokir generic writer setelah semua jalur sudah dipindahkan, uji kegagalan tanpa mengumumkan sukses palsu. Tangani cleanup saat disabled dan channel yang tersisa.
+3. Uji contention berbagai instans, error/timeout/commit tak pasti dan Discord mock sebelum menyediakan mutasi dashboard dengan autentikasi, CSRF, konfirmasi dan kontrol stale. Backup, audit data legacy/TTL, hentikan seluruh penulis versi lama, dan uji restore pada lingkungan terpisah sebelum cutover. SQL langsung, migrasi, restore dan bot lama tidak menghormati advisory lock.
+4. Uji Discord serta deployment nyata secara terpisah. Tidak ada pengujian live dalam tahap ini.
