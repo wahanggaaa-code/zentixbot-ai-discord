@@ -12,14 +12,14 @@ function pool(client,guild,user){
  return client.db.db.pool;
 }
 function date(value){if(!obj(value)||!validBirthday(value.month,value.day))throw failure('Invalid stored birthday');return {month:value.month,day:value.day};}
-async function legacy(conn,guild){
+export async function assertNoPostgresBirthdayLegacy(conn,guild){
  const key=getGuildBirthdaysKey(guild),keys=[key,...getLegacyVariantsForCanonical(key)];
  for(const table of [t.temp_data,t.cache_data]){const result=await conn.query(`SELECT 1 FROM ${table} WHERE key=ANY($1::text[]) LIMIT 1`,[keys]);if(result.rowCount)throw failure('Legacy birthday data needs review','BIRTHDAY_LEGACY_CONFLICT');}
 }
 async function locked(client,guild,user,fn){
  const p=pool(client,guild,user),conn=await p.connect();try{
   await conn.query('BEGIN');await conn.query(`INSERT INTO ${t.guilds}(id) VALUES($1) ON CONFLICT(id) DO NOTHING`,[guild]);
-  await conn.query(`SELECT id FROM ${t.guilds} WHERE id=$1 FOR UPDATE`,[guild]);await legacy(conn,guild);
+  await conn.query(`SELECT id FROM ${t.guilds} WHERE id=$1 FOR UPDATE`,[guild]);await assertNoPostgresBirthdayLegacy(conn,guild);
   const result=await fn(conn);await conn.query('COMMIT');return result;
  }catch(e){await conn.query('ROLLBACK').catch(()=>{});throw e}finally{conn.release()}
 }
@@ -34,7 +34,7 @@ async function backup(conn,guild,user){
 }
 const same=(a,b)=>a.month===b.month&&a.day===b.day;
 export async function readPostgresBirthdays(client,guild){
- const p=pool(client,guild),conn=await p.connect();try{await conn.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await legacy(conn,guild);const rows=(await conn.query(`SELECT user_id,month,day FROM ${t.birthdays} WHERE guild_id=$1`,[guild])).rows;const result={};for(const row of rows){if(!validId(row.user_id))throw failure('Invalid stored birthday user');result[row.user_id]=date(row)}await conn.query('COMMIT');return result}catch(e){await conn.query('ROLLBACK').catch(()=>{});throw e}finally{conn.release()}
+ const p=pool(client,guild),conn=await p.connect();try{await conn.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await assertNoPostgresBirthdayLegacy(conn,guild);const rows=(await conn.query(`SELECT user_id,month,day FROM ${t.birthdays} WHERE guild_id=$1`,[guild])).rows;const result={};for(const row of rows){if(!validId(row.user_id))throw failure('Invalid stored birthday user');result[row.user_id]=date(row)}await conn.query('COMMIT');return result}catch(e){await conn.query('ROLLBACK').catch(()=>{});throw e}finally{conn.release()}
 }
 export async function setPostgresBirthday(client,guild,user,month,day){if(!validBirthday(month,day))throw failure('Invalid birthday');return locked(client,guild,user,async conn=>{await current(conn,guild,user);await put(conn,guild,user,{month,day});return true})}
 export async function deletePostgresBirthday(client,guild,user){return locked(client,guild,user,async conn=>{const row=await current(conn,guild,user);if(!row)return false;await conn.query(`DELETE FROM ${t.birthdays} WHERE guild_id=$1 AND user_id=$2`,[guild,user]);return true})}
@@ -47,3 +47,18 @@ export async function restorePostgresBirthdayOnJoin(client,guild,user){return lo
  const row=await current(conn,guild,user),saved=await backup(conn,guild,user);if(!saved.exists)return false;if(row&&!same(row,saved.value))throw failure('Birthday backup conflicts','BIRTHDAY_BACKUP_CONFLICT');if(!row)await put(conn,guild,user,saved.value);
  await conn.query(`UPDATE ${t.temp_data} SET value=value-$2::text WHERE key=$1`,[saved.key,user]);return true;
 })}
+
+// Existing records only: never resurrect a missing record or bypass a leave backup.
+// All participating birthday writers lock the guild row before these checks.
+export async function updatePostgresBirthdayFromDashboard(client,guild,user,expected,next){
+ if(!obj(expected)||Object.keys(expected).sort().join(',')!=='day,month'||!validBirthday(expected.month,expected.day)||
+    (next!==null&&(!obj(next)||Object.keys(next).sort().join(',')!=='day,month'||!validBirthday(next.month,next.day))))throw failure('Invalid birthday input');
+ return locked(client,guild,user,async conn=>{
+  const row=await current(conn,guild,user);
+  if(!row||!same(row,expected))throw failure('Birthday changed; reload before saving','BIRTHDAY_STALE');
+  const saved=await backup(conn,guild,user);if(saved.exists)throw failure('Birthday leave backup requires review','BIRTHDAY_BACKUP_CONFLICT');
+  if(next===null)await conn.query(`DELETE FROM ${t.birthdays} WHERE guild_id=$1 AND user_id=$2`,[guild,user]);
+  else await conn.query(`UPDATE ${t.birthdays} SET month=$3,day=$4,updated_at=CURRENT_TIMESTAMP WHERE guild_id=$1 AND user_id=$2`,[guild,user,next.month,next.day]);
+  return true;
+ });
+}

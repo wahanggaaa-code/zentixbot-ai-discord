@@ -2,6 +2,7 @@ import express from 'express';
 import {ChannelType, PermissionFlagsBits} from 'discord.js';
 import {pgConfig} from '../config/database/postgres.js';
 import {validBirthday} from '../services/storage/sqliteBirthdays.js';
+import {assertNoPostgresBirthdayLegacy,updatePostgresBirthdayFromDashboard} from '../services/storage/postgresBirthdays.js';
 import {assertOnboardingCompatible,assertOnboardingShape} from '../services/config/onboardingConflict.js';
 
 const tables=pgConfig.tables;
@@ -15,7 +16,7 @@ function channelValue(config){
  if(value!==null&&!id(value))throw err(409,'Channel ulang tahun tersimpan perlu diperiksa.');
  return value;
 }
-function respond(res,e){res.status(e.status||503).json({error:e.status?e.message:'Gagal mengakses database persisten.'});}
+function respond(res,e){const conflict=['BIRTHDAY_STALE','BIRTHDAY_BACKUP_CONFLICT','BIRTHDAY_LEGACY_CONFLICT','BIRTHDAY_INVALID'].includes(e.code);res.status(e.status||(conflict?409:503)).json({error:e.status?e.message:conflict?'Data berubah atau memerlukan pemeriksaan. Muat ulang dan periksa cadangan.':'Gagal mengakses database persisten; hasil penyimpanan mungkin tidak diketahui. Muat ulang sebelum mencoba lagi.'});}
 function parseCursor(raw){
  if(raw===undefined)return null;
  if(typeof raw!=='string')throw err(400,'Halaman tidak valid.');
@@ -52,14 +53,25 @@ export function createBirthdayApi(client,{auth,csrf}){
    await conn.query('COMMIT');res.json({ok:true,channelId:b.channelId});
   }catch(e){if(conn)await conn.query('ROLLBACK').catch(()=>{});respond(res,e)}finally{conn?.release()}
  });
- router.get('/birthday/list',auth,async(req,res)=>{try{
+ router.get('/birthday/list',auth,async(req,res)=>{let conn;try{
   if(Object.keys(req.query).some(k=>k!=='after'))throw err(400,'Parameter daftar tidak valid.');
   const after=parseCursor(req.query.after),args=after?[req.guild.id,after.month,after.day,after.userId]:[req.guild.id];
   const filter=after?' AND (month,day,user_id)>($2,$3,$4)':'';
-  const result=await pool(client).query(`SELECT user_id,month,day FROM ${tables.birthdays} WHERE guild_id=$1${filter} ORDER BY month,day,user_id LIMIT 51`,args);
+  conn=await pool(client).connect();await conn.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  await assertNoPostgresBirthdayLegacy(conn,req.guild.id);
+  const result=await conn.query(`SELECT user_id,month,day FROM ${tables.birthdays} WHERE guild_id=$1${filter} ORDER BY month,day,user_id LIMIT 51`,args);
   for(const row of result.rows)if(!id(row.user_id)||!validBirthday(row.month,row.day))throw err(409,'Data ulang tahun pada halaman ini perlu diperiksa.');
-  const rows=result.rows.slice(0,50);
+  const rows=result.rows.slice(0,50);await conn.query('COMMIT');
   res.json({birthdays:rows.map(r=>({userId:r.user_id,month:r.month,day:r.day})),next:result.rows.length>50?cursor(rows[rows.length-1]):null});
+ }catch(e){if(conn)await conn.query('ROLLBACK').catch(()=>{});respond(res,e)}finally{conn?.release()}});
+ router.patch('/birthday/member/:userId',auth,csrf,async(req,res)=>{try{
+  const b=req.body,validDate=x=>object(x)&&Object.keys(x).sort().join(',')==='day,month'&&validBirthday(x.month,x.day);
+  if(!id(req.params.userId)||!object(b)||Object.keys(b).sort().join(',')!=='expected,next'||!validDate(b.expected)||(b.next!==null&&!validDate(b.next)))throw err(400,'Tanggal ulang tahun tidak valid.');
+  if(b.next!==null){
+   let member;try{member=await req.guild.members.fetch({user:req.params.userId,force:true})}catch{throw err(409,'Keanggotaan tidak dapat diverifikasi. Coba lagi atau tinjau data anggota.')}
+   if(!member||member.id!==req.params.userId)throw err(409,'Keanggotaan tidak dapat diverifikasi. Coba lagi atau tinjau data anggota.');
+  }
+  await updatePostgresBirthdayFromDashboard(client,req.guild.id,req.params.userId,b.expected,b.next);res.json({ok:true});
  }catch(e){respond(res,e)}});
  return router;
 }
