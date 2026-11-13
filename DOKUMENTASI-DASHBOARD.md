@@ -20,7 +20,8 @@ Inventaris kode per perubahan dashboard ini, bukan sertifikasi produksi. **Live*
 | Giveaway | Daftar PostgreSQL; buat, akhiri, undi ulang, hapus; perbaikan pengiriman yang tertunda (tandai terkirim atau kirim ulang) | Discord dan database bukan satu transaksi; setiap aksi bisa terhenti di tengah dan perlu dilanjutkan manual. Belum diuji di Discord nyata. `/gcreate` belum memakai pembersihan pesan yatim. |
 | Join to Create | Pengaturan trigger, inventaris PostgreSQL baca-saja dan pemeriksaan Discord untuk ID pending yang tercatat | Web hanya mengubah pengaturan tersimpan; pengelolaan channel sementara dan rekonsiliasi tidak tersedia di web. |
 | Server Stats | Counter jumlah anggota: daftar PostgreSQL dengan status nama channel; buat, ubah jenis dan hapus | **Bertindak di Discord**: membuat dan menghapus channel. Discord dan database bukan satu transaksi. Tidak ada tombol segarkan. Belum diuji di Discord nyata. Lihat `DOKUMENTASI-AUDIT-SERVER-STATS.md`. |
-| Kategori lainnya | Community, Fun, Reaction Roles, Search, Tools, Utility ditampilkan sebagai daftar berlabel "belum ada halaman" | Belum ada halaman dashboard terpadu untuk setiap kategori; integrasikan dan uji satu per satu. |
+| Reaction Roles | Panel pilih role: daftar PostgreSQL dengan status pesan; buat, ubah teks, tambah/lepas role, gambar ulang, pasang ulang dan hapus | **Bertindak di Discord**: mengirim, mengubah dan menghapus pesan. Discord dan database bukan satu transaksi; pesan dapat tertinggal dari catatan sampai digambar ulang. Belum diuji di Discord nyata. Lihat `DOKUMENTASI-AUDIT-REACTION-ROLES.md`. |
+| Kategori lainnya | Community, Fun, Search, Tools, Utility ditampilkan sebagai daftar berlabel "belum ada halaman" | Belum ada halaman dashboard terpadu untuk setiap kategori; integrasikan dan uji satu per satu. |
 
 ## Goodbye non-AI
 
@@ -238,7 +239,7 @@ Preview statis tidak berubah perilakunya: semua tab lama tetap ada, semua berlab
 - Label "terhubung" berarti halaman mengirim ke bot dan bot menjawab. Itu bukan bukti Discord, Lavalink atau provider AI berfungsi; semuanya tiruan atau tidak tersedia dalam tes.
 - Formulir AI tetap ditampilkan kepada admin yang bukan owner bot, hanya diberi label. Penolakannya dilakukan server, seperti sebelumnya.
 - `botOwner` dibaca dari `OWNER_IDS` saat permintaan; label mengikuti nilai saat halaman dimuat.
-- Saat audit ini ada tujuh kategori tanpa halaman. Server Stats sejak itu sudah punya halaman (`DOKUMENTASI-AUDIT-SERVER-STATS.md`), sehingga angka audit ini bertambah menjadi 31 tab, 28 formulir dan 177 kontrol. Enam kategori lain (Community, Fun, Reaction Roles, Search, Tools, Utility) belum dikerjakan.
+- Saat audit ini ada tujuh kategori tanpa halaman. Server Stats sejak itu sudah punya halaman (`DOKUMENTASI-AUDIT-SERVER-STATS.md`), lalu Reaction Roles (`DOKUMENTASI-AUDIT-REACTION-ROLES.md`), sehingga angka audit ini bertambah menjadi 32 tab, 29 formulir dan 181 kontrol. Lima kategori lain (Community, Fun, Search, Tools, Utility) belum dikerjakan.
 
 ### Tes
 

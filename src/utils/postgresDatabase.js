@@ -55,6 +55,8 @@ const PROTOCOL_ONLY_KEY_TYPES = [
     'jointocreate_channels',
     // Written by src/services/serverStats/store.js (row lock from read to write).
     'counters',
+    // Written by src/services/reactionRoles/store.js (per-guild lock, validated panels).
+    'reaction_role',
 ];
 
 class PostgreSQLDatabase {

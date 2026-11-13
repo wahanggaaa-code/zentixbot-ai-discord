@@ -125,12 +125,3 @@ export async function getVerificationPanelStatus(client, guild, config) {
         buttonCustomId: 'verify_user',
     });
 }
-
-export async function getReactionRolePanelStatus(client, guild, panelData) {
-    return getBotPanelStatus(client, guild, {
-        channelId: panelData?.channelId,
-        messageId: panelData?.messageId,
-        selectCustomId: 'reaction_roles',
-    });
-}
-

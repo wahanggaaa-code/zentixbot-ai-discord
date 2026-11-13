@@ -32,6 +32,7 @@ const FEATURE_TABS = {
     giveaway: ['list'],
     'join-to-create': ['inventory'],
     'server-stats': ['counters'],
+    'reaction-roles': ['panels'],
 };
 const AI_TABS = {
     greeting: ['welcome', 'goodbye'],
@@ -105,7 +106,7 @@ test('dashboard: no tab renders a mock form or calls itself a simulation', async
     await tick(30);
     const seen = await walk(page);
 
-    assert.equal(seen.length, 18 + 12 + 1, 'feature tabs + AI tabs + providers');
+    assert.equal(seen.length, 19 + 12 + 1, 'feature tabs + AI tabs + providers');
     for (const entry of seen) {
         assert.equal(entry.mock, 0, `${entry.where} renders a mock control`);
         assert.doesNotMatch(entry.banner, SIMULATION, `${entry.where} is labelled as simulation: ${entry.banner}`);
@@ -161,13 +162,13 @@ test('dashboard: index pages', async (t) => {
 
     await page.go('#features');
     const cards = [...page.main.querySelectorAll('.f-index-bottom span:first-child')].map((el) => el.textContent);
-    assert.deepEqual(cards, Array(11).fill('BUKA FITUR'));
-    assert.match(page.main.querySelector('.f-index-bar').textContent, /11 FITUR TERHUBUNG KE BOT/);
+    assert.deepEqual(cards, Array(12).fill('BUKA FITUR'));
+    assert.match(page.main.querySelector('.f-index-bar').textContent, /12 FITUR TERHUBUNG KE BOT/);
     assert.doesNotMatch(page.main.querySelector('.f-index-bar').textContent, /SEBAGIAN|SIMULASI/);
     // Categories without a page: named as such, and not dressed up as links.
     const more = page.main.querySelector('.f-more');
-    assert.equal(more.querySelectorAll('.f-chips span').length, 6);
-    assert.doesNotMatch(more.querySelector('.f-chips').textContent, /Server Stats/, 'Server Stats has a page now');
+    assert.equal(more.querySelectorAll('.f-chips span').length, 5);
+    assert.doesNotMatch(more.querySelector('.f-chips').textContent, /Server Stats|Reaction Roles/, 'these have a page now');
     assert.equal(more.querySelectorAll('a, button').length, 0);
     assert.doesNotMatch(more.querySelector('.f-chips').textContent, /↗/);
     assert.match(more.textContent, /BELUM ADA HALAMAN/);
@@ -247,7 +248,7 @@ test('static preview: every page is labelled as a simulation and nothing is requ
 
     await page.go('#features');
     assert.match(page.main.querySelector('.f-index-bar').textContent, /UI SIMULASI/);
-    assert.deepEqual([...page.main.querySelectorAll('.f-index-bottom span:first-child')].map((el) => el.textContent), Array(11).fill('LIHAT PREVIEW'));
+    assert.deepEqual([...page.main.querySelectorAll('.f-index-bottom span:first-child')].map((el) => el.textContent), Array(12).fill('LIHAT PREVIEW'));
     await page.go('#ai');
     assert.match(page.main.querySelector('.ai-intro-foot').textContent, /UI SIMULASI · TIDAK TERHUBUNG/);
     assert.deepEqual([...page.main.querySelectorAll('.f-index-bottom span:first-child')].map((el) => el.textContent), Array(8).fill('LIHAT PREVIEW'));

@@ -25,6 +25,7 @@ import { createHostingApi } from '../src/dashboard/hostingApi.js';
 import { createAIApi } from '../src/dashboard/aiApi.js';
 import { createSettingsApi } from '../src/dashboard/settingsApi.js';
 import { createServerStatsApi } from '../src/dashboard/serverStatsApi.js';
+import { createReactionRolesApi } from '../src/dashboard/reactionRolesApi.js';
 
 const dir = 'dashboard-preview/';
 const raw = fs.readFileSync(dir + 'index.html', 'utf8');
@@ -49,6 +50,10 @@ const NEEDS_PRECONDITION = {
 // Controls that only count under another choice in the same form; the page says so next to each of them.
 const CONTEXT = {
     'aiManualForm.permission': { action: 'permissions' }, // "hanya tindakan atur izin"
+    // A panel offers at least one role; the page sends nothing before one is ticked.
+    'reactRolesCreateForm.channelId': { roleIds: true },
+    'reactRolesCreateForm.title': { roleIds: true },
+    'reactRolesCreateForm.description': { roleIds: true },
 };
 // Pages left to their own tests, with the reason.
 const COVERED_ELSEWHERE = {
@@ -74,7 +79,12 @@ async function openDashboard(t) {
     guild.channels.create = async () => { throw new Error('channel creation is not available in this walk'); };
     guild.channels.cache.set('623456789012345003', { id: '623456789012345003', name: 'Musik', type: ChannelType.GuildVoice });
     // A text channel that reports its permissions; the giveaway form only offers channels the bot may post in.
-    guild.channels.cache.set('623456789012345004', { id: '623456789012345004', name: 'umum', type: ChannelType.GuildText, permissionsFor: () => ({ has: () => true }) });
+    // Sending is refused, like channel creation above: a reaction role panel that really got posted would change
+    // the page between the two submits of a comparison.
+    guild.channels.cache.set('623456789012345004', {
+        id: '623456789012345004', name: 'umum', type: ChannelType.GuildText, permissionsFor: () => ({ has: () => true }),
+        send: async () => { throw new Error('sending is not available in this walk'); },
+    });
     client.commands = new Map([
         ['ping', { data: { name: 'ping', description: 'Ping' }, category: 'Core' }],
         ['balance', { data: { name: 'balance', description: 'Balance' }, category: 'Economy' }],
@@ -88,7 +98,7 @@ async function openDashboard(t) {
     };
     const csrf = (req, res, next) => next();
     app.get('/dashboard/api/me', (req, res) => res.json({ user: { username: 'Tester' }, guild: { name: 'Home' }, csrf: 'c', botOwner: true }));
-    for (const create of [createBotApiRouter, createGoodbyeApi, createBirthdayApi, createCoreApi, createGiveawayApi, createJoinToCreateSettingsApi, createServerStatsApi, createModulesApi, createOperationsApi]) {
+    for (const create of [createBotApiRouter, createGoodbyeApi, createBirthdayApi, createCoreApi, createGiveawayApi, createJoinToCreateSettingsApi, createServerStatsApi, createReactionRolesApi, createModulesApi, createOperationsApi]) {
         app.use('/dashboard/api/bot', create(client, { auth, csrf }));
     }
     app.use('/dashboard/api/bot', createJoinToCreateApi(client, { auth }));
@@ -167,7 +177,7 @@ async function listTabs(page) {
 test('live dashboard: every tab loads from the bot, without mock forms or script errors', async (t) => {
     const page = await openDashboard(t);
     const tabs = await listTabs(page);
-    assert.equal(tabs.length, 18 + 12 + 1);
+    assert.equal(tabs.length, 19 + 12 + 1);
 
     for (const { hash, attr, tab, where } of tabs) {
         page.state.reads.length = 0;
@@ -225,8 +235,10 @@ test('live dashboard: every control of every form changes the request that is se
     /** Puts the form into the state in which `control` counts, if it only counts under another choice. */
     function prepare(form, control) {
         for (const [name, value] of Object.entries(CONTEXT[`${form.id}.${control?.name}`] ?? {})) {
-            const other = form.elements[name];
-            other.value = value;
+            const found = form.elements[name];
+            const other = found instanceof w.RadioNodeList ? [...found].find((entry) => !entry.disabled) : found;
+            if (other.type === 'checkbox') other.checked = value;
+            else other.value = value;
             other.dataset.flipped = '1';
             other.dispatchEvent(new w.Event('change', { bubbles: true }));
         }
@@ -270,7 +282,7 @@ test('live dashboard: every control of every form changes the request that is se
     }
 
     assert.deepEqual(unsent.sort(), Object.keys(NEEDS_PRECONDITION).sort());
-    assert.equal(formCount, 28, 'forms on the live dashboard');
-    assert.equal(checked, 177, 'controls on the live dashboard');
+    assert.equal(formCount, 29, 'forms on the live dashboard');
+    assert.equal(checked, 181, 'controls on the live dashboard');
     assert.deepEqual(state.errors, []);
 });
