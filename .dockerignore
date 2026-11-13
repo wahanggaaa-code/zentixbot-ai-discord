@@ -11,6 +11,7 @@ backups
 logs
 *.md
 !README.md
+docs
 .DS_Store
 coverage
 .agent-tools

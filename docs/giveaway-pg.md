@@ -21,7 +21,7 @@ Versi ini menghubungkan transaksi per giveaway ke `/gcreate`, pendaftaran melalu
 
 ## Membuat, menghapus dan pengiriman tertunda
 
-Kode: `src/services/postgresGiveawayManagement.js` (urutan Discord/database) dan bagian akhir `src/services/storage/postgresGiveawayTransactions.js` (transaksi). Cara pakai dari dashboard ada di `DOKUMENTASI-DASHBOARD.md`.
+Kode: `src/services/postgresGiveawayManagement.js` (urutan Discord/database) dan bagian akhir `src/services/storage/postgresGiveawayTransactions.js` (transaksi). Cara pakai dari dashboard ada di [`docs/dashboard.md`](dashboard.md).
 
 ### Hapus: tandai → Discord → buang
 

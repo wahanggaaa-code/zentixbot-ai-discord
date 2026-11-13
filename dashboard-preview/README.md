@@ -1,6 +1,6 @@
 # ZentixBot — Dashboard tahap 8
 
-Saat disajikan dari proses bot pada `/dashboard/`, beberapa halaman bot dan AI mempunyai jalur live, sedangkan halaman lain masih simulasi atau placeholder. Lihat inventaris dan batasnya di `../DOKUMENTASI-DASHBOARD.md`, `../DOKUMENTASI-POSTGRESQL.md`, dan `../DOKUMENTASI-TAHAP-8.md`. Ketersediaan fitur bergantung pada konfigurasi, izin dan layanan pendukung; integrasi langsung belum diuji.
+Saat disajikan dari proses bot pada `/dashboard/`, beberapa halaman bot dan AI mempunyai jalur live, sedangkan halaman lain masih simulasi atau placeholder. Lihat inventaris dan batasnya di [`docs/dashboard.md`](../docs/dashboard.md), [`docs/postgresql.md`](../docs/postgresql.md), dan [`docs/tahap-8.md`](../docs/tahap-8.md). Ketersediaan fitur bergantung pada konfigurasi, izin dan layanan pendukung; integrasi langsung belum diuji.
 
 Menjalankan `python3 -m http.server 4174` pada folder ini menghasilkan preview statis tanpa autentikasi: **semua** data dan tindakan adalah contoh. Jangan masukkan token, informasi pribadi, atau data sensitif ke preview dan jangan gunakan sebagai dashboard produksi.
 

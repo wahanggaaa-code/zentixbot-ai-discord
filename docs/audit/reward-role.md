@@ -4,7 +4,7 @@ Tanggal audit: 2026-11-13. Cakupan: `src/services/leveling/` (`xpSystem.js`, `le
 
 Audit dilakukan dengan membaca kode dan menjalankan tes terhadap PostgreSQL lokal dan Discord tiruan. **Tidak ada yang diuji pada server Discord nyata.**
 
-Dokumen ini adalah bagian kedua dari butir checklist "Audit fitur tiket, reward role dan seluruh penulis ekonomi". Tiket ada di `DOKUMENTASI-AUDIT-TIKET.md`, penulis ekonomi di `DOKUMENTASI-AUDIT-EKONOMI.md`.
+Dokumen ini adalah bagian kedua dari butir checklist "Audit fitur tiket, reward role dan seluruh penulis ekonomi". Tiket ada di [`docs/audit/tiket.md`](tiket.md), penulis ekonomi di [`docs/audit/ekonomi.md`](ekonomi.md).
 
 ## Ringkasan
 
@@ -116,7 +116,7 @@ Yang **tidak** diuji: pemberian role setelah ubah level lewat web pada backend S
 
 Hasil pada 2026-11-13, PostgreSQL 16 sekali pakai tanpa TLS, Discord tiruan:
 
-- regresi penuh Node 22: lihat tabel di `DOKUMENTASI-PROGRES-PROYEK.md` bagian 6;
+- regresi penuh Node 22: lihat tabel di [`docs/progres-proyek.md`](../progres-proyek.md) bagian 6;
 - Node 20.20: 46 dari 46 tes lulus (tiga file di atas, `tahap6-modules`, `tahap6-operations`). Tes leveling SQLite tidak termasuk (SQLite memerlukan Node 22.5).
 
 PostgreSQL untuk tes dapat disiapkan dengan `source scripts/setup-test-postgres.sh` (Linux x86_64; mengunduh PostgreSQL 16 ke direktori cache dan membuat cluster kosong di `/tmp`).
