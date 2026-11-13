@@ -1,0 +1,13 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {JSDOM} from 'jsdom';
+const html=fs.readFileSync('dashboard-preview/index.html','utf8').replace(/<script src=".*?"><\/script>/g,'');
+const scripts=['session.js','live.js','goodbye-live.js','birthday-live.js','core-live.js','giveaway-live.js','modules-live.js','operations-live.js','features.js','ai-studio.js','app.js'];
+const delay=()=>new Promise(r=>setTimeout(r,50));
+function setup(t,url){const dom=new JSDOM(html,{url,runScripts:'outside-only'});dom.window.scrollTo=()=>{};t.after(()=>dom.window.close());return dom.window}
+test('giveaway inventory escapes stored values, warns and follows cursor without writes',async t=>{
+ const w=setup(t,'http://localhost/dashboard/#features/giveaway');const calls=[];w.fetch=async(url,opts={})=>{url=String(url);calls.push([url,opts]);if(url.endsWith('/me'))return {ok:true,json:async()=>({user:{username:'Tester'},guild:{name:'Server'},csrf:'csrf'})};if(url.includes('/giveaway/list'))return {ok:true,json:async()=>url.includes('?after=')?{legacyDetected:false,next:null,giveaways:[{messageId:'222222222222222222',prize:'Page 2',status:'ended',entries:0,winnerCount:1,endAt:1900000000000,warnings:[],review:false}]}:{legacyDetected:true,next:'111111111111111111',giveaways:[{messageId:'111111111111111111',channelId:'444444444444444444',hostId:'555555555555555555',prize:'<img src=x>',status:'review',entries:null,endAt:null,winnerCount:null,warnings:['<img src=x>'],review:true}]}};return {ok:true,json:async()=>({})}};
+ scripts.forEach(x=>w.eval(fs.readFileSync('dashboard-preview/'+x,'utf8')));await delay();const page=w.document.querySelector('#giveawayLive');assert.ok(page);assert.equal(page.querySelector('img'),null);assert.match(page.textContent,/data Giveaway lama/i);assert.match(page.textContent,/PERLU DIPERIKSA/);assert.match(w.document.body.textContent,/belum tersedia/i);[...page.querySelectorAll('button')].find(x=>x.textContent.includes('BERIKUTNYA')).click();await delay();assert.match(page.textContent,/Page 2/);assert.ok(calls.some(([url])=>url.includes('?after=111111111111111111')));assert.ok(calls.every(([,o])=>!o.method||o.method==='GET'));
+});
+test('static giveaway preview neither fetches nor shows live inventory',async t=>{const w=setup(t,'http://localhost/preview/#features/giveaway');let calls=0;w.fetch=async()=>{calls++;throw Error('unexpected')};scripts.forEach(x=>w.eval(fs.readFileSync('dashboard-preview/'+x,'utf8')));await delay();assert.match(w.document.querySelector('.f-demo-warning').textContent,/SIMULASI|CONTOH/);assert.equal(w.document.querySelector('#giveawayLive'),null);assert.equal(calls,0)});
