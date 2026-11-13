@@ -1,8 +1,7 @@
 import { Events } from 'discord.js';
 import { logger } from '../utils/logger.js';
-import { getLevelingConfig, getUserLevelData } from '../services/leveling/leveling.js';
+import { getLevelingConfig } from '../services/leveling/leveling.js';
 import { addXp } from '../services/leveling/xpSystem.js';
-import {isSQLiteLevelBackend} from '../services/leveling/sqliteLevels.js';
 import { checkRateLimit } from '../utils/rateLimiter.js';
 import { parsePrefixCommand } from '../utils/prefixParser.js';
 import { supportsPrefixExecution, executePrefixCommand, resolvePrefixAccessKey } from '../utils/messageAdapter.js';
@@ -13,15 +12,12 @@ import { getCommandPrefix, getBotMessage, isBotOwner, isCommandCategoryEnabled, 
 import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abuseProtection.js';
 import { createEmbed } from '../utils/embeds.js';
 import { isCommandEnabled } from '../services/commandAccessService.js';
-import {
-  getCountingGameConfig,
-  saveCountingGameConfig,
-  isValidCountingMessage,
-  recordCorrectCount,
-} from '../services/countingGameService.js';
+import { handleCountingMessage } from '../services/countingGame/manage.js';
 
 const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
+// Same value as the default leveling settings.
+const DEFAULT_XP_COOLDOWN_SECONDS = 20;
 
 export default {
   name: Events.MessageCreate,
@@ -31,7 +27,7 @@ export default {
 
       logger.debug(`Message received from ${message.author.tag}: ${message.content}`);
 
-      const countingProcessed = await handleCountingGame(message, client);
+      const countingProcessed = await handleCountingMessage(client, message);
       if (countingProcessed) {
         return;
       }
@@ -147,42 +143,6 @@ async function handlePrefixCommand(message, client) {
   }
 }
 
-async function handleCountingGame(message, client) {
-  try {
-    const config = await getCountingGameConfig(client, message.guild.id);
-    if (!config.enabled || !config.channelId || message.channel.id !== config.channelId) {
-      return false;
-    }
-
-    const content = message.content.trim();
-    const validCount = isValidCountingMessage(content, config);
-    const invalidAttempt = !validCount || message.author.id === config.lastUserId;
-
-    if (invalidAttempt) {
-      await message.delete().catch(() => {});
-      await saveCountingGameConfig(client, message.guild.id, {
-        ...config,
-        nextNumber: 1,
-        lastUserId: null,
-        currentStreak: 0,
-      });
-
-      const failureMessage = await message.channel.send(`❌ Count broken by <@${message.author.id}>. The sequence has been reset to **1**.`);
-      setTimeout(() => {
-        failureMessage.delete().catch(() => {});
-      }, 10000);
-
-      return true;
-    }
-
-    await recordCorrectCount(client, message.guild.id, message.author.id);
-    return true;
-  } catch (error) {
-    logger.error('Error handling counting game:', error);
-    return false;
-  }
-}
-
 async function handleLeveling(message, client) {
   try {
     const rateLimitKey = `xp-event:${message.guild.id}:${message.author.id}`;
@@ -218,12 +178,12 @@ async function handleLeveling(message, client) {
       return;
     }
 
-    const cooldownTime = levelingConfig.xpCooldown || 60;
-    // SQLite performs the authoritative cooldown check together with the award.
-    if (!isSQLiteLevelBackend(client)) {
-      const userData = await getUserLevelData(client, message.guild.id, message.author.id);
-      if (Date.now() - (userData.lastMessage || 0) < cooldownTime * 1000) return;
-    }
+    // The cooldown is checked by addXp, together with the award, so that
+    // messages arriving at the same moment cannot all pass it.
+    const storedCooldown = Number(levelingConfig.xpCooldown);
+    const cooldownTime = Number.isFinite(storedCooldown) && storedCooldown >= 0
+      ? storedCooldown
+      : DEFAULT_XP_COOLDOWN_SECONDS;
 
     const minXP = levelingConfig.xpRange?.min || levelingConfig.xpPerMessage?.min || 15;
     const maxXP = levelingConfig.xpRange?.max || levelingConfig.xpPerMessage?.max || 25;

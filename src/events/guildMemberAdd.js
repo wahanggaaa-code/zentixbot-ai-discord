@@ -3,7 +3,7 @@ import { getGuildConfig } from '../services/config/guildConfig.js';
 import { getWelcomeConfig } from '../utils/database.js';
 import { deliverJoinWelcome } from '../services/ai/welcome.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
-import { getServerCounters, updateCounter } from '../services/serverstatsService.js';
+import { counterRefresher } from '../services/serverStats/refresh.js';
 import { setBirthday as dbSetBirthday } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
 import {isSQLiteBirthdayBackend,restoreSQLiteBirthdayOnJoin} from '../services/storage/sqliteBirthdays.js';
@@ -76,16 +76,8 @@ export default {
             logger.debug('Error logging member join:', error);
         }
 
-        try {
-            const counters = await getServerCounters(member.client, guild.id);
-            for (const counter of counters) {
-                if (counter && counter.type && counter.channelId && counter.enabled !== false) {
-                    await updateCounter(member.client, guild, counter);
-                }
-            }
-        } catch (error) {
-            logger.debug('Error updating counters on member join:', error);
-        }
+        // Only a request: the rename happens later and never holds up the rest of this handler.
+        counterRefresher.schedule(member.client, guild);
 
         try {
             if (isSQLiteBirthdayBackend(member.client)) {

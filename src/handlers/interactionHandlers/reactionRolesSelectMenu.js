@@ -4,7 +4,42 @@ import { logger } from '../../utils/logger.js';
 import { handleInteractionError, createError, ErrorTypes } from '../../utils/errorHandler.js';
 import { getColor } from '../../config/bot.js';
 import { logEvent, EVENT_TYPES } from '../../services/loggingService.js';
-import { getReactionRoleMessage } from '../../services/reactionRoleService.js';
+import { applyMemberChoice, roleReason } from '../../services/reactionRoles/manage.js';
+
+const names = (entries) => entries.map((entry) => (entry.name ? `**${entry.name}**` : `\`${entry.id}\``)).join(', ');
+
+/**
+ * What the member is told. The title and colour follow what really happened:
+ * success only when every wanted change was made.
+ */
+export function describeChoice(outcome) {
+    const changed = outcome.added.length + outcome.removed.length;
+    const problems = outcome.skipped.length + outcome.failed.length;
+    const lines = [];
+    if (outcome.added.length) lines.push(`✅ **Added:** ${names(outcome.added)}`);
+    if (outcome.removed.length) lines.push(`❌ **Removed:** ${names(outcome.removed)}`);
+    for (const entry of outcome.skipped) {
+        lines.push(`⚠️ **Not changed:** ${entry.name ? `**${entry.name}**` : `\`${entry.id}\``} — ${roleReason(entry.reason)}`);
+    }
+    for (const entry of outcome.failed) {
+        lines.push(`⚠️ **Could not ${entry.wanted ? 'add' : 'remove'}:** **${entry.name}** — Discord refused the change.`);
+    }
+    if (problems) lines.push('\nPlease tell a server administrator about the roles that could not be changed.');
+
+    let title = '🎭 **Roles updated successfully!**';
+    let color = 'success';
+    if (!changed && !problems) {
+        title = '🎭 **No changes were made to your roles.**';
+        color = 'info';
+    } else if (changed && problems) {
+        title = '🎭 **Some of your roles were updated.**';
+        color = 'warning';
+    } else if (problems) {
+        title = '🎭 **Your roles could not be updated.**';
+        color = 'error';
+    }
+    return { description: [title, '', ...lines].join('\n').trim(), color };
+}
 
 export async function handleReactionRolesSelectMenu(interaction, client) {
     try {
@@ -16,151 +51,37 @@ export async function handleReactionRolesSelectMenu(interaction, client) {
                 'Reaction role interaction used outside a guild context',
                 ErrorTypes.VALIDATION,
                 'This reaction role menu can only be used inside a server.',
-                { userId: interaction.user.id }
+                { userId: interaction.user.id },
             );
-        }
-
-        logger.debug(`Reaction role select menu interaction by ${interaction.user.tag} on message ${interaction.message.id}`);
-
-        const reactionRoleData = await getReactionRoleMessage(client, interaction.guildId, interaction.message.id);
-
-        if (!reactionRoleData) {
-            logger.warn(`Reaction role data not found for message ${interaction.message.id} in guild ${interaction.guildId}`);
-            return interaction.editReply({
-                embeds: [
-                    new EmbedBuilder()
-                        .setDescription('❌ This reaction role message is no longer active.')
-                        .setColor(getColor('error'))
-                ]
-            });
         }
 
         const member = interaction.member;
-        const selectedRoleIds = interaction.values;
-
-        const me = interaction.guild.members.me ?? await interaction.guild.members.fetchMe().catch(() => null);
-
-        if (!me) {
-            throw createError(
-                'Unable to fetch bot member for permission validation',
-                ErrorTypes.PERMISSION,
-                'I could not verify my server permissions. Please try again.',
-                { guildId: interaction.guildId }
-            );
+        let outcome;
+        try {
+            outcome = await applyMemberChoice(client, interaction.guild, member, interaction.message.id, interaction.values);
+        } catch (error) {
+            // The panel may well be active: a database problem is not "no panel".
+            logger.error(`[REACTROLES] Could not read panel ${interaction.message.id}:`, error);
+            await interaction.editReply({
+                embeds: [new EmbedBuilder()
+                    .setDescription('❌ Your roles could not be changed right now. Nothing was changed. Please try again in a moment.')
+                    .setColor(getColor('error'))],
+            });
+            return;
         }
 
-        if (!me.permissions.has('ManageRoles')) {
-            throw createError(
-                'Bot missing ManageRoles permission',
-                ErrorTypes.PERMISSION,
-                'I do not have permission to manage roles in this server.',
-                { guildId: interaction.guildId }
-            );
+        if (!outcome) {
+            logger.warn(`Reaction role data not found for message ${interaction.message.id} in guild ${interaction.guildId}`);
+            await interaction.editReply({
+                embeds: [new EmbedBuilder().setDescription('❌ This reaction role message is no longer active.').setColor(getColor('error'))],
+            });
+            return;
         }
 
-        const botRolePosition = me.roles.highest.position;
+        const { description, color } = describeChoice(outcome);
+        await interaction.editReply({ embeds: [new EmbedBuilder().setDescription(description).setColor(getColor(color)).setTimestamp()] });
 
-        const availableRoleIds = Array.isArray(reactionRoleData.roles)
-            ? reactionRoleData.roles
-            : (typeof reactionRoleData.roles === 'object' ? Object.values(reactionRoleData.roles) : []);
-
-        const addedRoles = [];
-        const removedRoles = [];
-        const skippedRoles = [];
-
-        for (const roleId of selectedRoleIds) {
-            if (!availableRoleIds.includes(roleId)) {
-                logger.warn(`Role ${roleId} not in available roles for message ${interaction.message.id}`);
-                continue;
-            }
-
-            const role = interaction.guild.roles.cache.get(roleId);
-            if (!role) {
-                logger.warn(`Role ${roleId} not found in guild ${interaction.guildId}`);
-                skippedRoles.push(roleId);
-                continue;
-            }
-
-            const roleHasDangerousPermissions = role.permissions.has([
-                'Administrator',
-                'ManageGuild',
-                'ManageRoles',
-                'ManageChannels',
-                'ManageWebhooks',
-                'BanMembers',
-                'KickMembers',
-                'MentionEveryone'
-            ]);
-
-            if (role.managed || roleHasDangerousPermissions) {
-                logger.warn(`Blocked self-assignment for protected role ${role.name} (${roleId})`);
-                skippedRoles.push(role.name);
-                continue;
-            }
-
-            if (role.position >= botRolePosition) {
-                logger.warn(`Cannot assign role ${role.name} (${roleId}), hierarchy issue`);
-                skippedRoles.push(role.name);
-                continue;
-            }
-
-            if (!member.roles.cache.has(roleId)) {
-                try {
-                    await member.roles.add(role);
-                    addedRoles.push(role.name);
-                    logger.debug(`Added role ${role.name} to ${member.user.tag}`);
-                } catch (roleError) {
-                    logger.error(`Failed to add role ${role.name} to ${member.user.tag}:`, roleError);
-                    skippedRoles.push(role.name);
-                }
-            }
-        }
-
-        for (const roleId of availableRoleIds) {
-            if (selectedRoleIds.includes(roleId)) continue;
-
-            const role = interaction.guild.roles.cache.get(roleId);
-            if (!role) continue;
-
-            if (role.position >= botRolePosition) continue;
-
-            if (member.roles.cache.has(roleId)) {
-                try {
-                    await member.roles.remove(role);
-                    removedRoles.push(role.name);
-                    logger.debug(`Removed role ${role.name} from ${member.user.tag}`);
-                } catch (roleError) {
-                    logger.error(`Failed to remove role ${role.name} from ${member.user.tag}:`, roleError);
-                }
-            }
-        }
-
-        let description = '🎭 **Roles updated successfully!**\n\n';
-
-        if (addedRoles.length > 0) {
-            description += `✅ **Added:** ${addedRoles.map(name => `**${name}**`).join(', ')}\n`;
-        }
-
-        if (removedRoles.length > 0) {
-            description += `❌ **Removed:** ${removedRoles.map(name => `**${name}**`).join(', ')}\n`;
-        }
-
-        if (addedRoles.length === 0 && removedRoles.length === 0) {
-            description += 'No changes were made to your roles.';
-        }
-
-        if (skippedRoles.length > 0) {
-            description += `\n⚠️ **Skipped:** ${skippedRoles.length} role${skippedRoles.length !== 1 ? 's' : ''} (permission issues)`;
-        }
-
-        const responseEmbed = new EmbedBuilder()
-            .setDescription(description)
-            .setColor(getColor('success'))
-            .setTimestamp();
-
-        await interaction.editReply({ embeds: [responseEmbed] });
-
-        if (addedRoles.length > 0 || removedRoles.length > 0) {
+        if (outcome.added.length > 0 || outcome.removed.length > 0) {
             try {
                 await logEvent({
                     client,
@@ -171,35 +92,19 @@ export async function handleReactionRolesSelectMenu(interaction, client) {
                         userId: member.user.id,
                         channelId: interaction.channelId,
                         fields: [
-                            {
-                                name: '👤 Member',
-                                value: `${member.user.tag} (${member.user.id})`,
-                                inline: false
-                            },
-                            ...(addedRoles.length > 0 ? [{
-                                name: '✅ Roles Added',
-                                value: addedRoles.join(', '),
-                                inline: false
-                            }] : []),
-                            ...(removedRoles.length > 0 ? [{
-                                name: '❌ Roles Removed',
-                                value: removedRoles.join(', '),
-                                inline: false
-                            }] : [])
-                        ]
-                    }
+                            { name: '👤 Member', value: `${member.user.tag} (${member.user.id})`, inline: false },
+                            ...(outcome.added.length ? [{ name: '✅ Roles Added', value: outcome.added.map((entry) => entry.name).join(', ').slice(0, 1024), inline: false }] : []),
+                            ...(outcome.removed.length ? [{ name: '❌ Roles Removed', value: outcome.removed.map((entry) => entry.name).join(', ').slice(0, 1024), inline: false }] : []),
+                        ],
+                    },
                 });
             } catch (logError) {
                 logger.warn('Failed to log reaction role update:', logError);
             }
         }
 
-        logger.info(`Reaction roles updated for ${member.user.tag}: +${addedRoles.length}, -${removedRoles.length}`);
-
+        logger.info(`Reaction roles for ${member.user.tag}: +${outcome.added.length}, -${outcome.removed.length}, skipped ${outcome.skipped.length}, failed ${outcome.failed.length}`);
     } catch (error) {
-        await handleInteractionError(interaction, error, {
-            type: 'select_menu',
-            customId: 'reaction_roles'
-        });
+        await handleInteractionError(interaction, error, { type: 'select_menu', customId: 'reaction_roles' });
     }
 }

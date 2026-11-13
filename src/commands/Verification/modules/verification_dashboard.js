@@ -18,7 +18,7 @@ import {
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
 import { successEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
-import { TitanBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
+import { ZentixBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
 import { getGuildConfig } from '../../../services/config/guildConfig.js';
 import { saveVerificationDashboardChange } from '../../../services/config/verificationDashboardUpdate.js';
 import { getWelcomeConfigForEditing } from '../../../utils/database.js';
@@ -149,7 +149,7 @@ function buildButtonRow(cfg, guildId, disabled = false, panelStatus = null) {
 async function repostVerificationPanel(guild, cfg) {
     const channel = await guild.channels.fetch(cfg.channelId).catch(() => null);
     if (!channel) {
-        throw new TitanBotError(
+        throw new ZentixBotError(
             'Panel channel missing',
             ErrorTypes.CONFIGURATION,
             'The configured verification channel no longer exists. Set a new channel from the dashboard.',
@@ -233,7 +233,7 @@ export default {
             const cfg = guildConfig.verification;
 
             if (!cfg?.channelId) {
-                throw new TitanBotError(
+                throw new ZentixBotError(
                     'Verification not configured',
                     ErrorTypes.CONFIGURATION,
                     'The verification system has not been set up yet. Run `/verification setup` first.',
@@ -343,7 +343,7 @@ export default {
                             next.messageId = newMsg.id;
                         } catch (error) {
                             logger.warn('Could not re-post verification panel on re-enable:', error.message);
-                            throw new TitanBotError('Verification panel send failed', ErrorTypes.CONFIGURATION,
+                            throw new ZentixBotError('Verification panel send failed', ErrorTypes.CONFIGURATION,
                                 'Could not post the verification panel. Check Discord and reload the dashboard before retrying.');
                         }
                     }
@@ -382,9 +382,9 @@ export default {
                 },
             });
         } catch (error) {
-            if (error instanceof TitanBotError) throw error;
+            if (error instanceof ZentixBotError) throw error;
             logger.error('Unexpected error in verification_dashboard:', error);
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 `Verification dashboard failed: ${error.message}`,
                 ErrorTypes.UNKNOWN,
                 'Failed to open the verification dashboard.',
@@ -458,7 +458,7 @@ async function handleChannel(selectInteraction, rootInteraction, cfg, guildId, c
                 next.messageId = newMsg.id;
             } catch (error) {
                 logger.warn('Could not post verification panel in new channel:', error.message);
-                throw new TitanBotError('Verification panel send failed', ErrorTypes.CONFIGURATION,
+                throw new ZentixBotError('Verification panel send failed', ErrorTypes.CONFIGURATION,
                     'Could not post the verification panel. Check Discord and reload the dashboard before retrying.');
             }
         }
@@ -608,7 +608,7 @@ async function handleMessage(selectInteraction, rootInteraction, cfg, guildId, c
         logger.error('Error in handleMessage:', error);
         await replyUserError(submitted || selectInteraction, {
             type: ErrorTypes.CONFIGURATION,
-            message: error instanceof TitanBotError ? error.userMessage : 'Failed to update configuration. Please reload the dashboard.',
+            message: error instanceof ZentixBotError ? error.userMessage : 'Failed to update configuration. Please reload the dashboard.',
         }).catch(() => {});
     }
 }
@@ -659,7 +659,7 @@ async function handleButtonText(selectInteraction, rootInteraction, cfg, guildId
         logger.error('Error in handleButtonText:', error);
         await replyUserError(submitted || selectInteraction, {
             type: ErrorTypes.CONFIGURATION,
-            message: error instanceof TitanBotError ? error.userMessage : 'Failed to update configuration. Please reload the dashboard.',
+            message: error instanceof ZentixBotError ? error.userMessage : 'Failed to update configuration. Please reload the dashboard.',
         }).catch(() => {});
     }
 }

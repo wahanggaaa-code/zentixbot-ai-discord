@@ -1,146 +1,97 @@
 import { getColor } from '../../../config/bot.js';
-import { PermissionFlagsBits } from 'discord.js';
 import { createEmbed } from '../../../utils/embeds.js';
-import { getServerCounters, saveServerCounters, getCounterEmoji as getCounterTypeEmoji, getCounterTypeLabel, getGuildCounterStats } from '../../../services/serverstatsService.js';
+import { getCounterEmoji } from '../../../services/serverstatsService.js';
+import { inspectCounters, pruneMissingCounters } from '../../../services/serverStats/manage.js';
 import { logger } from '../../../utils/logger.js';
-
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
-import { replyUserError, ErrorTypes } from '../../../utils/errorHandler.js';
+import { begin, replyCounterError, typeDisplay } from './shared.js';
+
+const FOOTER = 'Counter System • Names follow the member count; Discord limits how often a channel can be renamed';
+
+/** What the list says about one counter. */
+function statusOf(counter) {
+    if (!counter.known) return 'Unknown type (not updated)';
+    if (!counter.channel) return 'Channel not visible to me';
+    if (counter.enabled === false) return 'Disabled';
+    if (counter.botCanManage === false) return 'I cannot rename this channel (need View Channel and Manage Channels)';
+    if (counter.count === null) return 'Member list could not be read';
+    if (counter.current) return 'Up to date';
+    if (counter.nextRenameAt) return `Rename waiting for Discord's limit, <t:${Math.ceil(counter.nextRenameAt / 1000)}:R>`;
+    return 'Will be renamed at the next refresh';
+}
+
 export async function handleList(interaction, client) {
     const guild = interaction.guild;
 
-    try {
-        await InteractionHelper.safeDefer(interaction);
-    } catch (error) {
-        logger.error("Failed to defer reply:", error);
-        return;
-    }
-
-    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
-        await replyUserError(interaction, { type: ErrorTypes.PERMISSION, message: 'You need **Manage Channels** permission to view counters.' }).catch(logger.error);
-        return;
-    }
+    if (!await begin(interaction, 'view')) return;
 
     try {
-        const counters = await getServerCounters(client, guild.id);
-        const stats = await getGuildCounterStats(guild);
+        // Records of channels that Discord reports as deleted are removed first, as before.
+        await pruneMissingCounters(client, guild);
+        const { counters, rejected } = await inspectCounters(client, guild);
 
-        const validCounters = [];
-        const orphanedCounters = [];
-        
-        for (const counter of counters) {
-            const channel = guild.channels.cache.get(counter.channelId);
-            if (channel) {
-                validCounters.push(counter);
-            } else {
-                orphanedCounters.push(counter);
-                logger.info(`Removing orphaned counter ${counter.id} (type: ${counter.type}, deleted channel: ${counter.channelId}) from guild ${guild.id}`);
-            }
-        }
-
-        if (orphanedCounters.length > 0) {
-            await saveServerCounters(client, guild.id, validCounters);
-            logger.info(`Cleaned up ${orphanedCounters.length} orphaned counter(s) from guild ${guild.id}`);
-        }
-
-        if (validCounters.length === 0) {
+        if (counters.length === 0) {
             const embed = createEmbed({
-                title: "Server Counters",
-                description: "No counters have been set up for this server yet.\n\nUse `/serverstats create` to set up your first counter!",
-                color: getColor('warning')
+                title: 'Server Counters',
+                description: 'No counters have been set up for this server yet.\n\nUse `/serverstats create` to set up your first counter!',
+                color: getColor('warning'),
             });
-
             embed.addFields({
-                name: "**Available Counter Types**",
-                value: "**Members + Bots** - Total server members\n **Members Only** - Human members only\n **Bots Only** - Bot members only",
-                inline: false
+                name: '**Available Counter Types**',
+                value: '**Members + Bots** - Total server members\n**Members Only** - Human members only\n**Bots Only** - Bot members only',
+                inline: false,
             });
-
             embed.addFields({
-                name: "**Usage Examples**",
-                value: "`/serverstats create type:members channel_type:voice category:Stats`\n`/serverstats create type:bots channel_type:text category:Server Info`\n`/serverstats list`",
-                inline: false
+                name: '**Usage Examples**',
+                value: '`/serverstats create type:members channel_type:voice category:Stats`\n`/serverstats create type:bots channel_type:text category:Server Info`\n`/serverstats list`',
+                inline: false,
             });
-
-            embed.setFooter({ 
-                text: "Counter System • Automatic updates every 15 minutes" 
-            });
-
+            embed.setFooter({ text: FOOTER });
             await InteractionHelper.safeEditReply(interaction, { embeds: [embed] }).catch(logger.error);
             return;
         }
 
         const embed = createEmbed({
-            title: `Server Counters (${validCounters.length})`,
-            description: "Here are all the active counters for this server.\n\nCounters automatically update every 15 minutes.",
-            color: getColor('info')
+            title: `Server Counters (${counters.length})`,
+            description: 'The counters of this server and what their channels show right now.',
+            color: getColor('info'),
         });
 
-        for (let i = 0; i < validCounters.length; i++) {
-            const counter = validCounters[i];
-            const channel = guild.channels.cache.get(counter.channelId);
-            
-            if (!channel) {
-                
-                logger.warn(`Counter ${counter.id} still has missing channel after cleanup`);
-                continue;
-            }
-
-            const currentCount = getCurrentCount(stats, counter.type);
-            const status = channel.name.includes(':') ? '✅ Active' : '⚠️ Not Updated';
-            
+        counters.forEach((counter, index) => {
+            const created = Date.parse(counter.createdAt);
             embed.addFields({
-                name: `${getCounterTypeEmoji(counter.type)} Counter #${i + 1} - ${channel.name}`,
-                value: `**ID:** \`${counter.id}\`\n**Type:** ${getCounterTypeDisplay(counter.type)}\n**Channel:** ${channel}\n**Current Count:** ${currentCount}\n**Status:** ${status}\n**Created:** ${new Date(counter.createdAt).toLocaleDateString()}`,
-                inline: false
+                name: `${getCounterEmoji(counter.type)} Counter #${index + 1} - ${counter.channel?.name ?? 'channel not visible'}`,
+                value: [
+                    `**ID:** \`${counter.id}\``,
+                    `**Type:** ${typeDisplay(counter.type)}`,
+                    `**Channel:** ${counter.channel ?? `\`${counter.channelId}\``}`,
+                    `**Current Count:** ${counter.count ?? 'unknown'}`,
+                    `**Status:** ${statusOf(counter)}`,
+                    `**Created:** ${Number.isFinite(created) && created > 0 ? `<t:${Math.floor(created / 1000)}:R>` : 'unknown'}`,
+                ].join('\n'),
+                inline: false,
             });
-        }
-
-        embed.addFields({
-            name: "**Statistics**",
-            value: `**Total Counters:** ${validCounters.length}\n**Active Counters:** ${validCounters.filter(c => {
-                const channel = guild.channels.cache.get(c.channelId);
-                return channel && channel.name.includes(':');
-            }).length}\n**Next Update:** <t:${Math.floor(Date.now() / 1000) + 900}:R>`,
-            inline: false
         });
 
         embed.addFields({
-            name: "**Management Commands**",
-            value: "`/serverstats create` - Create new counter\n`/serverstats update` - Update existing counter\n`/serverstats delete` - Delete counter",
-            inline: false
+            name: '**Statistics**',
+            value: [
+                `**Total Counters:** ${counters.length}`,
+                `**Up to date:** ${counters.filter((counter) => counter.current).length}`,
+                ...(rejected > 0 ? [`**Unreadable stored entries:** ${rejected}`] : []),
+            ].join('\n'),
+            inline: false,
         });
-
-        embed.setFooter({ 
-            text: "Counter System • Automatic updates every 15 minutes" 
+        embed.addFields({
+            name: '**Management Commands**',
+            value: '`/serverstats create` - Create new counter\n`/serverstats update` - Update existing counter\n`/serverstats delete` - Delete counter',
+            inline: false,
         });
+        embed.setFooter({ text: FOOTER });
         embed.setTimestamp();
 
         await InteractionHelper.safeEditReply(interaction, { embeds: [embed] }).catch(logger.error);
-
     } catch (error) {
-        logger.error("Error displaying counters:", error);
-        await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while fetching counters. Please try again.' }).catch(logger.error);
-    }
-}
-
-function getCounterTypeDisplay(type) {
-    return `${getCounterTypeEmoji(type)} ${getCounterTypeLabel(type)}`;
-}
-
-function getCounterEmoji(type) {
-    return getCounterTypeEmoji(type);
-}
-
-function getCurrentCount(stats, type) {
-    switch (type) {
-        case "members":
-            return stats.totalCount;
-        case "bots":
-            return stats.botCount;
-        case "members_only":
-            return stats.humanCount;
-        default:
-            return 0;
+        await replyCounterError(interaction, error, 'The counters could not be read. Nothing was changed.');
     }
 }

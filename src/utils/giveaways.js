@@ -2,7 +2,7 @@
 
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { logger } from './logger.js';
-import { TitanBotError, ErrorTypes } from './errorHandler.js';
+import { ZentixBotError, ErrorTypes } from './errorHandler.js';
 import { unwrapReplitData } from './database.js';
 import {isPostgresGiveawayBackend,createPostgresGiveaway} from '../services/storage/postgresGiveawayTransactions.js';
 import {isSQLiteGiveawayBackend,readSQLiteGiveaways,saveSQLiteGiveaway,deleteSQLiteGiveaway} from '../services/storage/sqliteGiveaways.js';
@@ -48,7 +48,7 @@ export async function getGuildGiveaways(client, guildId) {
         return Array.isArray(unwrappedGiveaways) ? unwrappedGiveaways : [];
     } catch (error) {
         logger.error(`Error getting giveaways for guild ${guildId}:`, error);
-        if(isSQLiteGiveawayBackend(client))throw error instanceof TitanBotError?error:new TitanBotError('SQLite giveaway read failed',ErrorTypes.DATABASE,'Could not read giveaway data.');
+        if(isSQLiteGiveawayBackend(client))throw error instanceof ZentixBotError?error:new ZentixBotError('SQLite giveaway read failed',ErrorTypes.DATABASE,'Could not read giveaway data.');
         return [];
     }
 }
@@ -61,7 +61,7 @@ export async function saveGiveaway(client, guildId, giveawayData) {
         }
 
         if (!giveawayData || !giveawayData.messageId) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'Invalid giveaway data: missing messageId',
                 ErrorTypes.VALIDATION,
                 'Cannot save giveaway without a message ID.',
@@ -83,10 +83,10 @@ export async function saveGiveaway(client, guildId, giveawayData) {
         return true;
     } catch (error) {
         logger.error(`Error saving giveaway in guild ${guildId}:`, error);
-        if (error instanceof TitanBotError) {
+        if (error instanceof ZentixBotError) {
             throw error;
         }
-        if(isSQLiteGiveawayBackend(client)||isPostgresGiveawayBackend(client))throw new TitanBotError('Persistent giveaway write failed',ErrorTypes.DATABASE,'Could not save giveaway data.');
+        if(isSQLiteGiveawayBackend(client)||isPostgresGiveawayBackend(client))throw new ZentixBotError('Persistent giveaway write failed',ErrorTypes.DATABASE,'Could not save giveaway data.');
         return false;
     }
 }
@@ -99,7 +99,7 @@ export async function deleteGiveaway(client, guildId, messageId) {
         }
 
         if (!messageId) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'Missing messageId parameter',
                 ErrorTypes.VALIDATION,
                 'Cannot delete giveaway without a message ID.',
@@ -108,7 +108,7 @@ export async function deleteGiveaway(client, guildId, messageId) {
         }
 
         if(isSQLiteGiveawayBackend(client))return deleteSQLiteGiveaway(client,guildId,messageId);
-        if(isPostgresGiveawayBackend(client))throw new TitanBotError('PostgreSQL giveaway deletion unavailable',ErrorTypes.DATABASE,'Giveaway deletion is temporarily unavailable; no message or data was deleted.');
+        if(isPostgresGiveawayBackend(client))throw new ZentixBotError('PostgreSQL giveaway deletion unavailable',ErrorTypes.DATABASE,'Giveaway deletion is temporarily unavailable; no message or data was deleted.');
         const key = giveawayKey(guildId);
         const giveaways = await getGuildGiveaways(client, guildId);
 
@@ -126,10 +126,10 @@ export async function deleteGiveaway(client, guildId, messageId) {
         return true;
     } catch (error) {
         logger.error(`Error deleting giveaway ${messageId} in guild ${guildId}:`, error);
-        if (error instanceof TitanBotError) {
+        if (error instanceof ZentixBotError) {
             throw error;
         }
-        if(isSQLiteGiveawayBackend(client)||isPostgresGiveawayBackend(client))throw new TitanBotError('Persistent giveaway write failed',ErrorTypes.DATABASE,'Could not save giveaway data.');
+        if(isSQLiteGiveawayBackend(client)||isPostgresGiveawayBackend(client))throw new ZentixBotError('Persistent giveaway write failed',ErrorTypes.DATABASE,'Could not save giveaway data.');
         return false;
     }
 }

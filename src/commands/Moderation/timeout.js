@@ -1,7 +1,7 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import { successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
-import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
+import { ZentixBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { ModerationService } from '../../services/moderation/moderationService.js';
 
@@ -56,7 +56,7 @@ export default {
         const reason = interaction.options.getString("reason") || "No reason provided";
 
         if (!targetUser) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'Missing target user',
                 ErrorTypes.USER_INPUT,
                 'You must specify a user to timeout.',
@@ -65,21 +65,21 @@ export default {
         }
 
         if (targetUser.id === interaction.user.id) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 "Cannot timeout self",
                 ErrorTypes.VALIDATION,
                 "You cannot timeout yourself.",
             );
         }
         if (targetUser.id === client.user.id) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 "Cannot timeout bot",
                 ErrorTypes.VALIDATION,
                 "You cannot timeout the bot.",
             );
         }
         if (!member) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 "Target not found",
                 ErrorTypes.USER_INPUT,
                 "The target user is not currently in this server.",

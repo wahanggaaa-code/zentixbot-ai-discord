@@ -1,4 +1,5 @@
 import express from 'express';
+import { createHash } from 'node:crypto';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { pgConfig } from '../config/database/postgres.js';
 import { sqliteBackend } from '../services/storage/sqlite.js';
@@ -9,12 +10,98 @@ import { EVENT_TYPES } from '../services/loggingService.js';
 import { messageHasPanelMarker } from '../utils/panelStatus.js';
 import { Mutex } from '../utils/mutex.js';
 import { assertOnboardingCompatible, assertOnboardingShape } from '../services/config/onboardingConflict.js';
+import { checkRewardRole, listRewardEntries } from '../services/leveling/rewardRoles.js';
+import { canonicalJson } from '../services/leveling/leveling.js';
+import { getRewardSyncStatus, startRewardSync } from '../services/leveling/levelRoleSyncService.js';
 
 const tables=pgConfig.tables;
 const events=[...new Set(Object.values(EVENT_TYPES))];
 const groups=[...new Set(events.map(x=>x.split('.')[0]))];
 const LEVEL_DEFAULTS={enabled:true,xpPerMessage:{min:15,max:25},xpCooldown:20,levelUpMessage:'{user} has leveled up to level {level}!',levelUpChannel:null,ignoredChannels:[],ignoredRoles:[],blacklistedUsers:[],roleRewards:{},announceLevelUp:true,xpMultiplier:1};
 const bad=(message,status=400)=>Object.assign(new Error(message),{status});
+
+// Why a reward role cannot be given, in the words shown on the dashboard.
+const REWARD_ROLE_REASONS = {
+    ROLE_MISSING: 'Role sudah tidak ada di server.',
+    ROLE_EVERYONE: '@everyone tidak dapat dijadikan hadiah.',
+    ROLE_MANAGED: 'Role dikelola integrasi dan tidak dapat diberikan bot.',
+    ROLE_DANGEROUS: 'Role memiliki izin pengelolaan atau moderasi server.',
+    BOT_MEMBER_UNKNOWN: 'Data bot di server belum tersedia.',
+    BOT_NO_MANAGE_ROLES: 'Bot tidak memiliki izin Manage Roles.',
+    ROLE_TOO_HIGH: 'Posisi role tidak di bawah role tertinggi bot.',
+};
+const REWARD_SYNC_PAUSE_MS = 60_000;
+
+// Fingerprint of the stored leveling settings. The page sends it back when it
+// saves; if the settings changed in between (for example through
+// /level dashboard), the save is refused instead of overwriting that change.
+function levelingRevision(cfg) {
+    const state = { leveling: cfg.leveling ?? null, publicLeaderboard: cfg.publicLeaderboard === true };
+    return createHash('sha256').update(canonicalJson(state)).digest('hex').slice(0, 24);
+}
+const LEVELING_STALE_TEXT = 'Pengaturan leveling sudah diubah di tempat lain, misalnya lewat /level dashboard. '
+    + 'Tidak ada yang disimpan. Muat ulang halaman lalu ulangi perubahan.';
+
+// One line per configured reward: can the bot give this role right now?
+// Reads the role cache only; it does not call Discord.
+function rewardRoleStatus(guild, leveling) {
+    return listRewardEntries(leveling).map(({ level, roleId: id }) => {
+        const role = guild.roles.cache.get(id) ?? null;
+        const verdict = checkRewardRole(guild, role);
+        return {
+            level,
+            roleId: id,
+            name: role?.name ?? null,
+            ok: verdict.ok,
+            code: verdict.ok ? null : verdict.code,
+            reason: verdict.ok ? null : REWARD_ROLE_REASONS[verdict.code] ?? 'Role tidak dapat diberikan.',
+        };
+    });
+}
+
+function rewardRoleOrThrow(guild, level, id) {
+    if (typeof id !== 'string') throw bad('Role reward tidak valid.');
+    const verdict = checkRewardRole(guild, guild.roles.cache.get(id) ?? null);
+    if (!verdict.ok) {
+        const reason = REWARD_ROLE_REASONS[verdict.code] ?? 'Role tidak dapat diberikan.';
+        throw bad(`Role hadiah level ${level} tidak dapat dipakai: ${reason}`);
+    }
+    return id;
+}
+
+// The premium role is given by the bot to whoever pays for it; the same rules
+// as for level reward roles apply. `ok:false` roles stay in the list so the
+// admin can see why they cannot be chosen.
+function premiumRoleChoices(guild) {
+    return listStaffRoles(guild).map(({ id, name }) => {
+        const verdict = checkRewardRole(guild, guild.roles.cache.get(id) ?? null);
+        return { id, name, ok: verdict.ok, reason: verdict.ok ? null : REWARD_ROLE_REASONS[verdict.code] ?? 'Role tidak dapat diberikan.' };
+    });
+}
+
+function premiumRoleState(guild, id) {
+    if (!id) return null;
+    const role = guild.roles.cache.get(id) ?? null;
+    const verdict = checkRewardRole(guild, role);
+    return {
+        roleId: id,
+        name: role?.name ?? null,
+        ok: verdict.ok,
+        code: verdict.ok ? null : verdict.code,
+        reason: verdict.ok ? null : REWARD_ROLE_REASONS[verdict.code] ?? 'Role tidak dapat diberikan.',
+    };
+}
+
+function premiumRoleOrThrow(guild, id) {
+    if (id === null) return null;
+    if (typeof id !== 'string') throw bad('Role premium tidak valid.');
+    const verdict = checkRewardRole(guild, guild.roles.cache.get(id) ?? null);
+    if (!verdict.ok) {
+        const reason = REWARD_ROLE_REASONS[verdict.code] ?? 'Role tidak dapat diberikan.';
+        throw bad(`Role premium tidak dapat dipakai: ${reason}`);
+    }
+    return id;
+}
 function pool(client){const db=client.db;if(!db || db.getStatus?.().isDegraded || !db.isAvailable?.() || !db.db?.isAvailable?.() || !db.db.pool) throw bad('Database persisten tidak tersedia.',503);return db.db.pool;}
 async function read(client,id){const sqlite=sqliteBackend(client);if(sqlite)return normalizeGuildConfig(unwrapReplitData(sqlite.botGet(`guild:${id}:config`)||{}),GUILD_CONFIG_DEFAULTS);const rows=await pool(client).query(`SELECT config FROM ${tables.guilds} WHERE id=$1`,[id]);return normalizeGuildConfig(unwrapReplitData(rows.rows[0]?.config || {}),GUILD_CONFIG_DEFAULTS);}
 async function transaction(client,id,fn,includeWelcome=false) {
@@ -60,7 +147,8 @@ export function createModulesApi(client,{auth,csrf}) {
   if(kind==='leveling')data={...LEVEL_DEFAULTS,...(cfg.leveling||{}),publicLeaderboard:cfg.publicLeaderboard===true};
   if(kind==='economy')data={premiumRoleId:cfg.premiumRoleId||null};
   if(kind==='ticket')data={channelId:cfg.ticketPanelChannelId||null,messageId:cfg.ticketPanelMessageId||null,staffRoleId:cfg.ticketStaffRoleId||null,categoryId:cfg.ticketCategoryId||null,closedCategoryId:cfg.ticketClosedCategoryId||null,message:cfg.ticketPanelMessage||'Click the button below to create a support ticket.',buttonText:cfg.ticketButtonLabel||'Create Ticket',logsChannelId:cfg.ticketLogsChannelId||null,transcriptChannelId:cfg.ticketTranscriptChannelId||null,maxTicketsPerUser:cfg.maxTicketsPerUser||3,dmOnClose:cfg.dmOnClose!==false};
-  res.json({settings:data,...channelsRoles(req.guild),...(['ticket','economy'].includes(kind)?{roles:listStaffRoles(req.guild)}:{}),events,groups});
+  const levelingExtra=kind==='leveling'?{revision:levelingRevision(cfg),rewardRoles:rewardRoleStatus(req.guild,data),rewardSync:getRewardSyncStatus(req.guild.id)}:{};
+  res.json({settings:data,...channelsRoles(req.guild),...(kind==='ticket'?{roles:listStaffRoles(req.guild)}:{}),...(kind==='economy'?{roles:premiumRoleChoices(req.guild),premiumRole:premiumRoleState(req.guild,data.premiumRoleId)}:{}),...levelingExtra,events,groups});
  }catch(e){answer(res,e)}});
  router.patch('/settings/:kind',auth,csrf,async(req,res)=>{try{
   const b=req.body,g=req.guild,kind=req.params.kind;let updated;
@@ -80,15 +168,16 @@ export function createModulesApi(client,{auth,csrf}) {
   } else if(kind==='leveling'){
    const required=['enabled','min','max','cooldown','channelId','announce','publicLeaderboard'];
    const optional=['levelUpMessage','ignoredChannels','ignoredRoles','roleRewards'];
-   if (!b || typeof b!=='object' || Array.isArray(b) || required.some(k=>!(k in b)) || Object.keys(b).some(k=>!required.includes(k)&&!optional.includes(k))) throw bad('Data tidak valid.');
+   if (!b || typeof b!=='object' || Array.isArray(b) || required.some(k=>!(k in b)) || Object.keys(b).some(k=>!required.includes(k)&&!optional.includes(k)&&k!=='revision')) throw bad('Data tidak valid.');
+   if ('revision' in b && (typeof b.revision!=='string' || !/^[0-9a-f]{24}$/.test(b.revision))) throw bad('Data tidak valid.');
    if ('levelUpMessage' in b) str(b.levelUpMessage,1,2000);
    if ('ignoredChannels' in b) { if(!Array.isArray(b.ignoredChannels)||b.ignoredChannels.length>100||new Set(b.ignoredChannels).size!==b.ignoredChannels.length)throw bad('Daftar channel tidak valid.'); b.ignoredChannels.forEach(id=>{if(id===null)throw bad('Channel tidak valid.');channelId(g,id)}); }
    if ('ignoredRoles' in b) { if(!Array.isArray(b.ignoredRoles)||b.ignoredRoles.length>100||new Set(b.ignoredRoles).size!==b.ignoredRoles.length||b.ignoredRoles.some(id=>typeof id!=='string'||!g.roles.cache.has(id)||id===g.id))throw bad('Daftar role tidak valid.'); }
-   if ('roleRewards' in b) { if(!b.roleRewards||typeof b.roleRewards!=='object'||Array.isArray(b.roleRewards)||Object.keys(b.roleRewards).length>100)throw bad('Role reward tidak valid.'); for(const [level,id] of Object.entries(b.roleRewards)){if(!/^[1-9]\d{0,2}$/.test(level)||Number(level)>500||id===null)throw bad('Level reward harus 1–500.');roleId(g,id);} }
+   if ('roleRewards' in b) { if(!b.roleRewards||typeof b.roleRewards!=='object'||Array.isArray(b.roleRewards)||Object.keys(b.roleRewards).length>100)throw bad('Role reward tidak valid.'); for(const [level,id] of Object.entries(b.roleRewards)){if(!/^[1-9]\d{0,2}$/.test(level)||Number(level)>500||id===null)throw bad('Level reward harus 1–500.');rewardRoleOrThrow(g,level,id);} }
    bool(b.enabled);bool(b.announce);bool(b.publicLeaderboard);number(b.min,1,10000);number(b.max,1,10000);number(b.cooldown,1,3600);channelId(g,b.channelId);if(b.min>b.max)throw bad('XP minimum melebihi maksimum.');
-   updated=await transaction(client,g.id,cfg=>{cfg.publicLeaderboard=b.publicLeaderboard;cfg.leveling={...LEVEL_DEFAULTS,...(cfg.leveling||{}),...Object.fromEntries(optional.filter(k=>k in b).map(k=>[k,b[k]])),enabled:b.enabled,xpPerMessage:{min:b.min,max:b.max},xpRange:{min:b.min,max:b.max},xpCooldown:b.cooldown,levelUpChannel:b.channelId,announceLevelUp:b.announce};return cfg.leveling});
+   updated=await transaction(client,g.id,cfg=>{if('revision' in b&&levelingRevision(cfg)!==b.revision)throw bad(LEVELING_STALE_TEXT,409);cfg.publicLeaderboard=b.publicLeaderboard;cfg.leveling={...LEVEL_DEFAULTS,...(cfg.leveling||{}),...Object.fromEntries(optional.filter(k=>k in b).map(k=>[k,b[k]])),enabled:b.enabled,xpPerMessage:{min:b.min,max:b.max},xpRange:{min:b.min,max:b.max},xpCooldown:b.cooldown,levelUpChannel:b.channelId,announceLevelUp:b.announce};return cfg.leveling});
   } else if(kind==='economy'){
-   exact(b,['premiumRoleId']);if(b.premiumRoleId!==null && !listStaffRoles(g).some(r=>r.id===b.premiumRoleId))throw bad('Role premium tidak tersedia.');
+   exact(b,['premiumRoleId']);premiumRoleOrThrow(g,b.premiumRoleId);
    updated=await transaction(client,g.id,cfg=>{cfg.premiumRoleId=b.premiumRoleId;return {premiumRoleId:cfg.premiumRoleId}});
   } else if(kind==='ticket'){
    exact(b,['channelId','staffRoleId','categoryId','closedCategoryId','message','buttonText','logsChannelId','transcriptChannelId','maxTicketsPerUser','dmOnClose']);channelId(g,b.channelId);if(b.staffRoleId!==null && !listStaffRoles(g).some(r=>r.id===b.staffRoleId))throw bad('Role staf tidak tersedia.');channelId(g,b.categoryId,ChannelType.GuildCategory);channelId(g,b.closedCategoryId,ChannelType.GuildCategory);str(b.message,1,2000);str(b.buttonText,1,80);channelId(g,b.logsChannelId);channelId(g,b.transcriptChannelId);number(b.maxTicketsPerUser,1,50);bool(b.dmOnClose);
@@ -96,6 +185,34 @@ export function createModulesApi(client,{auth,csrf}) {
   } else throw bad('Modul tidak tersedia.',404);
   res.json({ok:true,settings:updated});
  }catch(e){answer(res,e)}});
+ // Manual reward role sync. It runs in the background of this process and
+ // only adds roles; the page reads the result with the GET route.
+ router.get('/leveling/reward-sync', auth, (req, res) => {
+     res.set('Cache-Control', 'no-store');
+     res.json({ status: getRewardSyncStatus(req.guild.id) });
+ });
+ router.post('/leveling/reward-sync', auth, csrf, async (req, res) => {
+     try {
+         exact(req.body, ['confirmed']);
+         if (req.body.confirmed !== true) throw bad('Konfirmasi diperlukan.');
+         const cfg = await read(client, req.guild.id);
+         if (cfg.leveling?.enabled === false) throw bad('Leveling sedang dinonaktifkan.', 409);
+         if (listRewardEntries(cfg.leveling).length === 0) throw bad('Belum ada role hadiah yang tersimpan.', 409);
+
+         const before = getRewardSyncStatus(req.guild.id);
+         if (before.running) {
+             return res.status(409).json({ error: 'Sinkronisasi masih berjalan.', status: before });
+         }
+         if (before.finishedAt && Date.now() - Date.parse(before.finishedAt) < REWARD_SYNC_PAUSE_MS) {
+             return res.status(429).json({ error: 'Sinkronisasi baru saja selesai. Tunggu satu menit.', status: before });
+         }
+
+         const { started, status } = startRewardSync(client, req.guild.id);
+         if (!started) return res.status(409).json({ error: 'Sinkronisasi masih berjalan.', status });
+         console.info(`[dashboard] reward role sync started guild=${req.guild.id} by=${req.member?.id}`);
+         res.status(202).json({ ok: true, status });
+     } catch (e) { answer(res, e); }
+ });
  router.post('/panel/:kind',auth,csrf,async(req,res)=>{try{
   exact(req.body,['confirmed']);if(req.body.confirmed!==true)throw bad('Konfirmasi diperlukan.');
   const kind=req.params.kind;if(!['verification','ticket'].includes(kind))throw bad('Panel tidak tersedia.',404);

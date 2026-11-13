@@ -17,7 +17,7 @@ import { InteractionHelper } from '../../../utils/interactionHelper.js';
 import { wrapDashboardHandler } from '../../../utils/dashboardSession.js';
 import { successEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
-import { TitanBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
+import { ZentixBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
 import { getGuildConfig } from '../../../services/config/guildConfig.js';
 import { saveVerificationDashboardChange } from '../../../services/config/verificationDashboardUpdate.js';
 import { getWelcomeConfigForEditing } from '../../../utils/database.js';
@@ -222,14 +222,14 @@ export default {
                             break;
                     }
                 } catch (error) {
-                    if (error instanceof TitanBotError) {
+                    if (error instanceof ZentixBotError) {
                         logger.debug(`Autoverify config validation error: ${error.message}`);
                     } else {
                         logger.error('Unexpected autoverify dashboard error:', error);
                     }
 
                     const errorMessage =
-                        error instanceof TitanBotError
+                        error instanceof ZentixBotError
                             ? error.userMessage || 'An error occurred while processing your selection.'
                             : 'An unexpected error occurred while updating the configuration.';
 
@@ -282,7 +282,7 @@ export default {
                     }
                     await replyUserError(btnInteraction, {
                         type: ErrorTypes.CONFIGURATION,
-                        message: err instanceof TitanBotError ? err.userMessage : 'Failed to update configuration. Please reload the dashboard.',
+                        message: err instanceof ZentixBotError ? err.userMessage : 'Failed to update configuration. Please reload the dashboard.',
                     }).catch(() => {});
                 }
             });
@@ -306,9 +306,9 @@ export default {
                 }
             });
         } catch (error) {
-            if (error instanceof TitanBotError) throw error;
+            if (error instanceof ZentixBotError) throw error;
             logger.error('Unexpected error in autoverify_dashboard:', error);
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 `Auto-verification dashboard failed: ${error.message}`,
                 ErrorTypes.UNKNOWN,
                 'Failed to open the auto-verification dashboard.',
@@ -517,7 +517,7 @@ async function handleAccountAge(selectInteraction, rootInteraction, guildConfig,
         logger.warn('Could not save auto-verification account age:', error.message);
         await replyUserError(submitted, {
             type: ErrorTypes.CONFIGURATION,
-            message: error instanceof TitanBotError ? error.userMessage : 'Failed to update configuration. Please reload the dashboard.',
+            message: error instanceof ZentixBotError ? error.userMessage : 'Failed to update configuration. Please reload the dashboard.',
         }).catch(() => {});
     }
 }

@@ -19,8 +19,9 @@ import {
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
 import { successEmbed } from '../../../utils/embeds.js';
 import { logger } from '../../../utils/logger.js';
-import { TitanBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
+import { ZentixBotError, ErrorTypes, replyUserError } from '../../../utils/errorHandler.js';
 import { getLevelingConfig, saveLevelingConfig } from '../../../services/leveling/leveling.js';
+import { checkRewardRole } from '../../../services/leveling/rewardRoles.js';
 import { botHasPermission } from '../../../utils/permissionGuard.js';
 import { startDashboardSession } from '../../../utils/dashboardSession.js';
 
@@ -130,6 +131,30 @@ function buildButtonRow(cfg, guildId, disabled = false) {
     );
 }
 
+// The dashboard keeps one settings object for as long as it is open. Every
+// handler changes that object and then saves it. When a save fails the object
+// is put back to the last state known to be stored, so the dashboard does not
+// show, and a later save does not write, a change that was refused.
+const storedCopies = new WeakMap();
+
+function rememberStored(cfg) {
+    storedCopies.set(cfg, structuredClone(cfg));
+}
+
+async function saveDashboardConfig(client, guildId, cfg) {
+    try {
+        await saveLevelingConfig(client, guildId, cfg);
+    } catch (error) {
+        const stored = storedCopies.get(cfg);
+        if (stored) {
+            for (const key of Object.keys(cfg)) delete cfg[key];
+            Object.assign(cfg, structuredClone(stored));
+        }
+        throw error;
+    }
+    rememberStored(cfg);
+}
+
 async function refreshDashboard(rootInteraction, cfg, guildId) {
     const selectMenu = buildSelectMenu(guildId);
     await InteractionHelper.safeEditReply(rootInteraction, {
@@ -149,13 +174,14 @@ export default {
             const cfg = await getLevelingConfig(client, guildId);
 
             if (!cfg.configured) {
-                throw new TitanBotError(
+                throw new ZentixBotError(
                     'Leveling system not configured',
                     ErrorTypes.CONFIGURATION,
                     'The leveling system has not been set up yet. Run `/level setup` first to configure it.',
                 );
             }
 
+            rememberStored(cfg);
             await startDashboardSession({
                 interaction,
                 embeds: [buildDashboardEmbed(cfg, interaction.guild)],
@@ -202,7 +228,7 @@ export default {
 
                     if (isAnnounce) {
                         cfg.announceLevelUp = cfg.announceLevelUp === false;
-                        await saveLevelingConfig(client, guildId, cfg);
+                        await saveDashboardConfig(client, guildId, cfg);
                         await btnInteraction.followUp({
                             embeds: [
                                 successEmbed(
@@ -215,7 +241,7 @@ export default {
                     } else {
                         const wasEnabled = cfg.enabled !== false;
                         cfg.enabled = !wasEnabled;
-                        await saveLevelingConfig(client, guildId, cfg);
+                        await saveDashboardConfig(client, guildId, cfg);
                         await btnInteraction.followUp({
                             embeds: [
                                 successEmbed(
@@ -231,9 +257,9 @@ export default {
                 },
             });
         } catch (error) {
-            if (error instanceof TitanBotError) throw error;
+            if (error instanceof ZentixBotError) throw error;
             logger.error('Unexpected error in level_dashboard:', error);
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 `Level dashboard failed: ${error.message}`,
                 ErrorTypes.UNKNOWN,
                 'Failed to open the leveling dashboard.',
@@ -243,6 +269,7 @@ export default {
 };
 
 async function handleRoleRewardAdd(selectInteraction, rootInteraction, cfg, guildId, client) {
+    if (!storedCopies.has(cfg)) rememberStored(cfg);
     const modal = new ModalBuilder()
         .setCustomId(`level_cfg_role_reward_add_${guildId}`)
         .setTitle('🏆 Add Role Reward');
@@ -292,12 +319,41 @@ async function handleRoleRewardAdd(selectInteraction, rootInteraction, cfg, guil
 
     const roleId = submitted.fields.getField('reward_role').values[0];
 
+    // A reward role is handed out by the bot without further checks, so it
+    // must be a role the bot can give and one that grants no server control.
+    const guild = rootInteraction.guild;
+    const role = guild.roles.cache.get(roleId) ?? await guild.roles.fetch(roleId).catch(() => null);
+    const verdict = checkRewardRole(guild, role);
+    if (!verdict.ok) {
+        await replyUserError(submitted, {
+            type: ErrorTypes.VALIDATION,
+            message: `<@&${roleId}> cannot be used as a reward. ${verdict.message}`,
+        });
+        return;
+    }
+
     cfg.roleRewards = cfg.roleRewards ?? {};
+    const previous = cfg.roleRewards[level];
     cfg.roleRewards[level] = roleId;
-    await saveLevelingConfig(client, guildId, cfg);
+    try {
+        await saveDashboardConfig(client, guildId, cfg);
+    } catch (error) {
+        await replyUserError(submitted, {
+            type: ErrorTypes.CONFIGURATION,
+            message: error instanceof ZentixBotError && error.userMessage
+                ? error.userMessage
+                : 'The role reward could not be saved.',
+        });
+        return;
+    }
 
     await submitted.reply({
-        embeds: [successEmbed('Role Reward Added', `<@&${roleId}> will now be awarded at level **${level}**.`)],
+        embeds: [successEmbed(
+            'Role Reward Added',
+            `<@&${roleId}> will now be awarded at level **${level}**.\n` +
+            'Members who already reached this level receive it on their next level-up, ' +
+            'at the next bot start, or when a sync is started from the web dashboard.',
+        )],
         flags: MessageFlags.Ephemeral,
     });
 
@@ -305,6 +361,7 @@ async function handleRoleRewardAdd(selectInteraction, rootInteraction, cfg, guil
 }
 
 async function handleRoleRewardRemove(selectInteraction, rootInteraction, cfg, guildId, client) {
+    if (!storedCopies.has(cfg)) rememberStored(cfg);
     const rewards = cfg.roleRewards ?? {};
     const entries = Object.entries(rewards).sort(([a], [b]) => Number(a) - Number(b));
 
@@ -361,11 +418,26 @@ async function handleRoleRewardRemove(selectInteraction, rootInteraction, cfg, g
         return;
     }
 
+    const removed = cfg.roleRewards[level];
     delete cfg.roleRewards[level];
-    await saveLevelingConfig(client, guildId, cfg);
+    try {
+        await saveDashboardConfig(client, guildId, cfg);
+    } catch (error) {
+        await replyUserError(submitted, {
+            type: ErrorTypes.CONFIGURATION,
+            message: error instanceof ZentixBotError && error.userMessage
+                ? error.userMessage
+                : 'The role reward could not be removed.',
+        });
+        return;
+    }
 
     await submitted.reply({
-        embeds: [successEmbed('Role Reward Removed', `The role reward for level **${level}** has been removed.`)],
+        embeds: [successEmbed(
+            'Role Reward Removed',
+            `The role reward for level **${level}** has been removed.\n` +
+            'Members who already received the role keep it.',
+        )],
         flags: MessageFlags.Ephemeral,
     });
 
@@ -412,7 +484,7 @@ async function handleChannel(selectInteraction, rootInteraction, cfg, guildId, c
     }
 
     cfg.levelUpChannel = channelId;
-    await saveLevelingConfig(client, guildId, cfg);
+    await saveDashboardConfig(client, guildId, cfg);
 
     await submitted.reply({
         embeds: [successEmbed('\u2705 Channel Updated', `Level-up notifications will now be sent in ${channel ??`<#${channelId}>`}.`)],
@@ -465,7 +537,7 @@ async function handleIgnoreChannels(selectInteraction, rootInteraction, cfg, gui
     }
 
     cfg.ignoredChannels = Array.from(ignoreSet);
-    await saveLevelingConfig(client, guildId, cfg);
+    await saveDashboardConfig(client, guildId, cfg);
 
     const list = cfg.ignoredChannels.length > 0
         ? cfg.ignoredChannels.map(id => `<#${id}>`).join(',')
@@ -521,7 +593,7 @@ async function handleIgnoreRoles(selectInteraction, rootInteraction, cfg, guildI
     }
 
     cfg.ignoredRoles = Array.from(ignoreSet);
-    await saveLevelingConfig(client, guildId, cfg);
+    await saveDashboardConfig(client, guildId, cfg);
 
     const list = cfg.ignoredRoles.length > 0
         ? cfg.ignoredRoles.map(id => `<@&${id}>`).join(',')
@@ -574,7 +646,7 @@ async function handleMessage(selectInteraction, rootInteraction, cfg, guildId, c
     }
 
     cfg.levelUpMessage = newMessage;
-    await saveLevelingConfig(client, guildId, cfg);
+    await saveDashboardConfig(client, guildId, cfg);
 
     const preview = newMessage.replace('{user}', '@User').replace('{level}', '5');
 
@@ -651,7 +723,7 @@ async function handleXpRange(selectInteraction, rootInteraction, cfg, guildId, c
     }
 
     cfg.xpRange = { min: newMin, max: newMax };
-    await saveLevelingConfig(client, guildId, cfg);
+    await saveDashboardConfig(client, guildId, cfg);
 
     await submitted.reply({
         embeds: [
@@ -705,7 +777,7 @@ async function handleXpCooldown(selectInteraction, rootInteraction, cfg, guildId
     }
 
     cfg.xpCooldown = newCooldown;
-    await saveLevelingConfig(client, guildId, cfg);
+    await saveDashboardConfig(client, guildId, cfg);
 
     await submitted.reply({
         embeds: [
@@ -719,3 +791,5 @@ async function handleXpCooldown(selectInteraction, rootInteraction, cfg, guildId
 
     await refreshDashboard(rootInteraction, cfg, guildId);
 }
+// Exported for tests; the command itself is the default export.
+export { handleRoleRewardAdd, handleRoleRewardRemove };

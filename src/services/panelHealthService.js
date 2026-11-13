@@ -1,13 +1,11 @@
 import { isHomeGuild } from '../utils/singleGuild.js';
 import { logger } from '../utils/logger.js';
-import { getReactionRoleKey } from '../utils/database/keys.js';
 import { getGuildConfig, setGuildConfig } from './config/guildConfig.js';
 import {
     getTicketPanelStatus,
     getVerificationPanelStatus,
-    getReactionRolePanelStatus,
 } from '../utils/panelStatus.js';
-import { getAllReactionRoleMessages } from './reactionRoleService.js';
+import { summarizePanels } from './reactionRoles/manage.js';
 
 async function persistVerificationMessageId(client, guildId, config, messageId) {
     if (!messageId || config.verification?.messageId === messageId) return;
@@ -15,15 +13,6 @@ async function persistVerificationMessageId(client, guildId, config, messageId) 
     // enough for the verification channel or other settings to change.
     config.verification = { ...config.verification, messageId };
     await setGuildConfig(client, guildId, config);
-}
-
-async function persistReactionRoleMessageId(client, guildId, panelData, messageId) {
-    if (!messageId || panelData.messageId === messageId) return;
-    const oldKey = getReactionRoleKey(guildId, panelData.messageId);
-    panelData.messageId = messageId;
-    const newKey = getReactionRoleKey(guildId, messageId);
-    await client.db.set(newKey, panelData);
-    await client.db.delete(oldKey).catch(() => {});
 }
 
 export async function reconcileTicketPanels(client) {
@@ -118,6 +107,11 @@ export async function reconcileVerificationPanels(client) {
     return summary;
 }
 
+/**
+ * Count the stored reaction role panels by what Discord shows for them.
+ * Reads only. A record is never moved to another message here: with two panels
+ * in one channel that used to overwrite the second panel with the first one's roles.
+ */
 export async function reconcileReactionRolePanelHealth(client) {
     const summary = {
         scannedGuilds: 0,
@@ -125,6 +119,8 @@ export async function reconcileReactionRolePanelHealth(client) {
         healthyPanels: 0,
         deletedPanels: 0,
         missingChannels: 0,
+        uncheckedPanels: 0,
+        unreadableRecords: 0,
         recoveredIds: 0,
         errors: 0,
     };
@@ -134,33 +130,18 @@ export async function reconcileReactionRolePanelHealth(client) {
         summary.scannedGuilds += 1;
 
         try {
-            const panels = await getAllReactionRoleMessages(client, guild.id);
-            if (!panels?.length) continue;
-
-            for (const panelData of panels) {
-                if (!panelData?.channelId || !panelData?.messageId) continue;
-                summary.scannedPanels += 1;
-
-                const panelStatus = await getReactionRolePanelStatus(client, guild, panelData);
-
-                if (panelStatus.recoveredId) {
-                    summary.recoveredIds += 1;
-                    await persistReactionRoleMessageId(client, guild.id, panelData, panelStatus.recoveredId);
-                }
-
-                if (panelStatus.exists) {
-                    summary.healthyPanels += 1;
-                } else if (panelStatus.reason === 'channel_missing') {
-                    summary.missingChannels += 1;
-                    logger.warn(
-                        `Reaction role panel channel missing for guild ${guild.id}, message ${panelData.messageId}`,
-                    );
-                } else if (panelStatus.reason === 'panel_deleted') {
-                    summary.deletedPanels += 1;
-                    logger.warn(
-                        `Reaction role panel deleted for guild ${guild.id} — repost from /reactroles dashboard`,
-                    );
-                }
+            const panels = await summarizePanels(client, guild);
+            summary.scannedPanels += panels.stored;
+            summary.healthyPanels += panels.ok;
+            summary.deletedPanels += panels.messageMissing;
+            summary.missingChannels += panels.channelMissing;
+            summary.uncheckedPanels += panels.unknown;
+            summary.unreadableRecords += panels.unreadable;
+            if (panels.messageMissing > 0) {
+                logger.warn(`Reaction role panel message missing for guild ${guild.id} (${panels.messageMissing}) — repost from /reactroles dashboard`);
+            }
+            if (panels.channelMissing > 0) {
+                logger.warn(`Reaction role panel channel missing for guild ${guild.id} (${panels.channelMissing})`);
             }
         } catch (error) {
             summary.errors += 1;

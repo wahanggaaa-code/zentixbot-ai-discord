@@ -1,7 +1,7 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
-import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
+import { ZentixBotError, ErrorTypes } from '../../utils/errorHandler.js';
 
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 export default {
@@ -28,7 +28,7 @@ export default {
     const match = notation.match(/^(\d*)d(\d+)([\+\-]\d+)?$/);
 
     if (!match) {
-      throw new TitanBotError(
+      throw new ZentixBotError(
         `Invalid dice notation: ${notation}`,
         ErrorTypes.USER_INPUT,
         'Invalid notation. Use format like `1d20` or `3d6+5`.'
@@ -40,15 +40,15 @@ export default {
     const modifier = parseInt(match[3] || "0", 10);
 
     if (numDice < 1 || numDice > 20) {
-      throw new TitanBotError(
-        `Too many dice requested: ${numDice}`,
+      throw new ZentixBotError(
+        `Number of dice out of range: ${numDice}`,
         ErrorTypes.VALIDATION,
         'Please keep the number of dice between 1 and 20.'
       );
     }
 
     if (numSides < 1 || numSides > 1000) {
-      throw new TitanBotError(
+      throw new ZentixBotError(
         `Invalid number of sides: ${numSides}`,
         ErrorTypes.VALIDATION,
         'Please keep the number of sides between 1 and 1000.'
@@ -68,10 +68,10 @@ export default {
 
     const resultsDetail =
       numDice > 1 ? `**Rolls:** ${rolls.join(" + ")}\n` : "";
-    const modifierText = modifier !== 0 ? `+ (${modifier})` : "";
+    const modifierText = modifier === 0 ? "" : ` ${modifier > 0 ? "+" : "-"} ${Math.abs(modifier)}`;
 
     const embed = successEmbed(
-      `🎲 Rolling ${numDice}d${numSides}${modifier !== 0 ? match[3] : ""}`,
+      `🎲 Rolling ${numDice}d${numSides}${modifier === 0 ? "" : `${modifier > 0 ? "+" : "-"}${Math.abs(modifier)}`}`,
       `${resultsDetail}**Total Roll:** ${totalRoll}${modifierText} = **${finalTotal}**`,
     );
 

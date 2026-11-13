@@ -1,8 +1,9 @@
 import {sqliteBackend} from './sqlite.js';
 import {getGuildBirthdaysKey,getBirthdayLeftBackupKey,getLegacyVariantsForCanonical} from '../../utils/database/keys.js';
+import {validBirthday} from '../../utils/birthdayDates.js';
 const fail=(message,code='BIRTHDAY_INVALID')=>Object.assign(new Error(message),{code});
 const id=value=>typeof value==='string'&&/^\d{17,20}$/.test(value);
-export function validBirthday(month,day){return Number.isInteger(month)&&Number.isInteger(day)&&month>=1&&month<=12&&day>=1&&day<=[31,29,31,30,31,30,31,31,30,31,30,31][month-1]}
+export {validBirthday};
 export function isSQLiteBirthdayBackend(client){return client?.db?.db?.sqlite?.dialect==='sqlite'}
 function store(client,guild){if(!isSQLiteBirthdayBackend(client))throw fail('SQLite birthday backend unavailable');const sqlite=sqliteBackend(client);if(!sqlite)throw fail('Persistent storage unavailable','BIRTHDAY_UNAVAILABLE');if(!id(guild)||(client.homeGuildId&&client.homeGuildId!==guild))throw fail('Invalid guild');return sqlite}
 function load(tx,key){

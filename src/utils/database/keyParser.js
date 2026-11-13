@@ -30,6 +30,7 @@ const TEMP_BACKED_TYPES = new Set([
     'giveaway_entry',
     'giveaway_lock',
     'ticket_counter',
+    'counting_game',
 ]);
 
 export function isTempBackedType(type) {
@@ -144,6 +145,10 @@ export function parseKey(key) {
         if (parts[2] === 'fake_account' && parts[3]) {
             return { type: 'fake_account', guildId, userId: parts[3], fullKey };
         }
+    }
+
+    if (parts[0] === 'countingGame' && parts[1] && parts.length === 2) {
+        return { type: 'counting_game', guildId: parts[1], fullKey };
     }
 
     if (parts[0] === 'giveaway') {

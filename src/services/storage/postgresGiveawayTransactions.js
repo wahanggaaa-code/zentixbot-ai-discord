@@ -24,6 +24,8 @@ function validRecord(row,guildId,messageId){
  if(d.deliveryStatus!=null&&!['pending','delivered'].includes(d.deliveryStatus))throw fail('GIVEAWAY_INVALID','Giveaway delivery status requires review');
  if(!d.ended&&d.deliveryStatus!=null)throw fail('GIVEAWAY_INVALID','Active giveaway delivery status requires review');
  if(d.deliveryStatus==='pending'&&(!tokenPattern.test(d.deliveryToken||'')||!['manual_end','scheduled_end','reroll'].includes(d.deliveryAction)))throw fail('GIVEAWAY_INVALID','Pending delivery requires review');
+ if(d.deliveryClaimedAt!==undefined&&(!Number.isSafeInteger(d.deliveryClaimedAt)||d.deliveryClaimedAt<0))throw fail('GIVEAWAY_INVALID','Delivery claim time requires review');
+ if(d.deletion!==undefined&&(!plain(d.deletion)||!tokenPattern.test(d.deletion.token||'')||!id(d.deletion.by)||typeof d.deletion.at!=='string'))throw fail('GIVEAWAY_INVALID','Deletion marker requires review');
  return d;
 }
 async function assertNoLegacy(conn,guildId){
@@ -49,18 +51,23 @@ async function transaction(client,guildId,messageId,fn){
   const time=await conn.query('SELECT floor(extract(epoch FROM clock_timestamp())*1000)::text AS now_ms');
   const now=Number(time.rows[0]?.now_ms);
   if(!Number.isSafeInteger(now))throw fail('GIVEAWAY_INVALID','Invalid database time');
-  const {patch,value}=fn(data,now,row);
-  if(patch){const saved=await conn.query(`UPDATE ${pgConfig.tables.giveaways} SET data=data || $3::jsonb,updated_at=CURRENT_TIMESTAMP WHERE guild_id=$1 AND message_id=$2 RETURNING id`,[guildId,messageId,JSON.stringify(patch)]);if(saved.rowCount!==1||saved.rows[0].id!==row.id)throw fail('GIVEAWAY_STALE','Giveaway changed');}
+  const {patch,value,remove,unset}=fn(data,now,row);
+  if(remove){const gone=await conn.query(`DELETE FROM ${pgConfig.tables.giveaways} WHERE guild_id=$1 AND message_id=$2 RETURNING id`,[guildId,messageId]);if(gone.rowCount!==1||gone.rows[0].id!==row.id)throw fail('GIVEAWAY_STALE','Giveaway changed');}
+  else if(unset){const saved=await conn.query(`UPDATE ${pgConfig.tables.giveaways} SET data=data - $3::text,updated_at=CURRENT_TIMESTAMP WHERE guild_id=$1 AND message_id=$2 RETURNING id`,[guildId,messageId,unset]);if(saved.rowCount!==1||saved.rows[0].id!==row.id)throw fail('GIVEAWAY_STALE','Giveaway changed');}
+  else if(patch){const saved=await conn.query(`UPDATE ${pgConfig.tables.giveaways} SET data=data || $3::jsonb,updated_at=CURRENT_TIMESTAMP WHERE guild_id=$1 AND message_id=$2 RETURNING id`,[guildId,messageId,JSON.stringify(patch)]);if(saved.rowCount!==1||saved.rows[0].id!==row.id)throw fail('GIVEAWAY_STALE','Giveaway changed');}
   await conn.query('COMMIT');begun=false;return value;
  }catch(error){if(begun)await conn.query('ROLLBACK').catch(()=>{});throw error}finally{conn.release()}
 }
 function pending(data){if(data.deliveryStatus==='pending')throw fail('GIVEAWAY_DELIVERY_PENDING','Previous delivery must be inspected and reconciled');}
+// A deletion in progress freezes the giveaway: no entries, draws or delivery updates.
+function deleting(data){if(data.deletion!==undefined)throw fail('GIVEAWAY_DELETING','Giveaway is being deleted');}
 function pick(participants,count){const list=[...participants],n=Math.min(count,list.length);for(let i=0;i<n;i++){const j=i+randomInt(list.length-i);[list[i],list[j]]=[list[j],list[i]];}return list.slice(0,n);}
 
 // No Discord side effect. Concurrent joins/claims serialize on the giveaway row.
 export async function joinPostgresGiveaway(client,guildId,messageId,userId){
  if(!id(userId))throw fail('GIVEAWAY_INVALID','Invalid participant');
  return transaction(client,guildId,messageId,(d,now)=>{
+  deleting(d);
   if(d.ended||now>=d.endsAt)throw fail('GIVEAWAY_ENDED','Giveaway has ended');
   if(d.participants.includes(userId))return {value:{status:'already',entries:d.participants.length}};
   if(d.participants.length>=10000)throw fail('GIVEAWAY_FULL','Giveaway has reached its entry limit');
@@ -73,13 +80,13 @@ export async function joinPostgresGiveaway(client,guildId,messageId,userId){
 export async function claimPostgresGiveaway(client,guildId,messageId,action,actorId,expectedChannelId=null,expectedRevision=null){
  if(!['manual_end','scheduled_end','reroll'].includes(action)||(action==='scheduled_end'?actorId!==null:!id(actorId))||(expectedChannelId!==null&&!id(expectedChannelId))||(expectedRevision!==null&&!/^[0-9a-f]{64}$/.test(expectedRevision)))throw fail('GIVEAWAY_INVALID','Invalid claim');
  return transaction(client,guildId,messageId,(d,now,row)=>{
-  pending(d);
+  deleting(d);pending(d);
   if(expectedRevision!==null&&revision(row)!==expectedRevision)throw fail('GIVEAWAY_STALE','Giveaway changed; inspect again');
   if(expectedChannelId!==null&&d.channelId!==expectedChannelId)throw fail('GIVEAWAY_STALE','Giveaway channel changed');
   if(action==='reroll'){if(!d.ended||d.deliveryStatus!=='delivered'||!Array.isArray(d.winnerIds)||d.participants.length===0)throw fail('GIVEAWAY_STATE','Cannot reroll this giveaway');}
   else {if(d.ended)throw fail('GIVEAWAY_ENDED','Giveaway has ended');if(action==='scheduled_end'&&now<d.endsAt)throw fail('GIVEAWAY_NOT_DUE','Giveaway is not due');}
   const winners=pick(d.participants,d.winnerCount),token=randomUUID(),when=new Date(now).toISOString();
-  const patch={ended:true,isEnded:true,winnerIds:winners,deliveryStatus:'pending',deliveryAction:action,deliveryToken:token,...(action==='reroll'?{rerolledAt:when,rerolledBy:actorId}:{endedAt:when,endedBy:actorId})};
+  const patch={ended:true,isEnded:true,winnerIds:winners,deliveryStatus:'pending',deliveryAction:action,deliveryToken:token,deliveryClaimedAt:now,...(action==='reroll'?{rerolledAt:when,rerolledBy:actorId}:{endedAt:when,endedBy:actorId})};
   return {patch,value:{token,action,winners,entries:d.participants.length,prize:d.prize,channelId:d.channelId,hostId:d.hostId,winnerCount:d.winnerCount,winnerPingMessageId:id(d.winnerPingMessageId)?d.winnerPingMessageId:null}};
  });
 }
@@ -89,6 +96,7 @@ export async function claimPostgresGiveaway(client,guildId,messageId,action,acto
 export async function completePostgresGiveawayDelivery(client,guildId,messageId,token,winnerPingMessageId=null){
  if(typeof token!=='string'||!tokenPattern.test(token)||(winnerPingMessageId!==null&&(!id(winnerPingMessageId)||winnerPingMessageId===messageId)))throw fail('GIVEAWAY_INVALID','Invalid delivery acknowledgement');
  return transaction(client,guildId,messageId,d=>{
+  deleting(d);
   if(d.deliveryStatus!=='pending'||d.deliveryToken!==token)throw fail('GIVEAWAY_STALE','Delivery claim changed');
   const patch={deliveryStatus:'delivered',...(winnerPingMessageId===null?{}:{winnerPingMessageId})};return {patch,value:{status:'delivered'}};
  });
@@ -113,10 +121,155 @@ export async function createPostgresGiveaway(client,guildId,input){
 
 // A bounded read of a single validated record, for Discord preflight only.
 export async function inspectPostgresGiveaway(client,guildId,messageId){
- return transaction(client,guildId,messageId,(d,now,row)=>({value:{channelId:d.channelId,deliveryStatus:d.deliveryStatus??null,ended:d.ended,entries:d.participants.length,prize:d.prize,hasWinners:Array.isArray(d.winnerIds),winnerPingMessageId:d.winnerPingMessageId??null,revision:revision(row)}}));
+ return transaction(client,guildId,messageId,(d,now,row)=>({value:{channelId:d.channelId,deliveryStatus:d.deliveryStatus??null,ended:d.ended,entries:d.participants.length,prize:d.prize,hasWinners:Array.isArray(d.winnerIds),winnerPingMessageId:d.winnerPingMessageId??null,revision:revision(row),deleting:d.deletion!==undefined,pendingSettled:d.deliveryStatus==='pending'&&settled(d,now)}}));
 }
 export async function duePostgresGiveaways(client,guildId){
  const pool=store(client,guildId,'10000000000000000');
- const result=await pool.query(`SELECT message_id FROM ${pgConfig.tables.giveaways} WHERE guild_id=$1 AND ends_at <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') AND data->>'ended'='false' AND data->>'isEnded'='false' ORDER BY ends_at,message_id LIMIT 1000`,[guildId]);
+ const result=await pool.query(`SELECT message_id FROM ${pgConfig.tables.giveaways} WHERE guild_id=$1 AND ends_at <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') AND data->>'ended'='false' AND data->>'isEnded'='false' AND NOT (data ? 'deletion') ORDER BY ends_at,message_id LIMIT 1000`,[guildId]);
  return result.rows.map(r=>r.message_id).filter(id);
+}
+
+// ---------------------------------------------------------------------------
+// Deletion and recovery of an unfinished delivery.
+//
+// Deletion is two database steps around one Discord step:
+//   begin  -> the record is marked; joins, draws and the scheduler now refuse it
+//   (the caller deletes the Discord message)
+//   finish -> the row is removed, only with the token that marked it
+// If the process stops in between, the mark stays and the deletion can be
+// continued later with the same result.
+// ---------------------------------------------------------------------------
+
+/**
+ * A delivery that was claimed this recently may still be running in this or
+ * another process. Recovery and deletion wait until it can no longer be.
+ */
+export const GIVEAWAY_PENDING_SETTLE_MS = 120_000;
+
+function pendingSince(data) {
+    if (Number.isSafeInteger(data.deliveryClaimedAt)) return data.deliveryClaimedAt;
+    // Records claimed before deliveryClaimedAt existed carry only these.
+    const text = data.deliveryAction === 'reroll' ? data.rerolledAt : data.endedAt;
+    const parsed = typeof text === 'string' ? Date.parse(text) : NaN;
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function settled(data, now) {
+    const since = pendingSince(data);
+    return since === null || now - since >= GIVEAWAY_PENDING_SETTLE_MS;
+}
+
+function requireSettledPending(data, now) {
+    if (data.deliveryStatus !== 'pending') throw fail('GIVEAWAY_STATE', 'No delivery is pending');
+    if (!settled(data, now)) throw fail('GIVEAWAY_IN_PROGRESS', 'Delivery may still be in progress');
+}
+
+const validActor = (actorId) => id(actorId);
+const validRevision = (value) => value === null || (typeof value === 'string' && /^[0-9a-f]{64}$/.test(value));
+
+function requireRevision(row, expectedRevision) {
+    if (expectedRevision !== null && revision(row) !== expectedRevision) {
+        throw fail('GIVEAWAY_STALE', 'Giveaway changed; inspect again');
+    }
+}
+
+/**
+ * Mark a giveaway for deletion. Calling it again on a marked record returns
+ * the existing token, so an interrupted deletion can be continued.
+ */
+export async function beginPostgresGiveawayDeletion(client, guildId, messageId, actorId, expectedRevision = null) {
+    if (!validActor(actorId) || !validRevision(expectedRevision)) throw fail('GIVEAWAY_INVALID', 'Invalid deletion');
+    return transaction(client, guildId, messageId, (d, now, row) => {
+        requireRevision(row, expectedRevision);
+        const value = {
+            channelId: d.channelId,
+            prize: d.prize,
+            entries: d.participants.length,
+            ended: d.ended,
+            winners: Array.isArray(d.winnerIds) ? d.winnerIds.length : 0,
+        };
+        if (d.deletion !== undefined) return { value: { ...value, token: d.deletion.token, resumed: true } };
+        if (d.deliveryStatus === 'pending' && !settled(d, now)) {
+            throw fail('GIVEAWAY_IN_PROGRESS', 'Delivery may still be in progress');
+        }
+        const token = randomUUID();
+        const deletion = { token, by: actorId, at: new Date(now).toISOString() };
+        return { patch: { deletion }, value: { ...value, token, resumed: false } };
+    });
+}
+
+/** Remove a marked record. The token proves this caller holds the mark. */
+export async function finishPostgresGiveawayDeletion(client, guildId, messageId, token) {
+    if (typeof token !== 'string' || !tokenPattern.test(token)) throw fail('GIVEAWAY_INVALID', 'Invalid deletion token');
+    return transaction(client, guildId, messageId, (d) => {
+        if (d.deletion === undefined || d.deletion.token !== token) throw fail('GIVEAWAY_STALE', 'Deletion mark changed');
+        return { remove: true, value: { status: 'deleted' } };
+    });
+}
+
+/** Take the mark off again; the giveaway returns to the state it was in. */
+export async function cancelPostgresGiveawayDeletion(client, guildId, messageId, token) {
+    if (typeof token !== 'string' || !tokenPattern.test(token)) throw fail('GIVEAWAY_INVALID', 'Invalid deletion token');
+    return transaction(client, guildId, messageId, (d) => {
+        if (d.deletion === undefined || d.deletion.token !== token) throw fail('GIVEAWAY_STALE', 'Deletion mark changed');
+        return { unset: 'deletion', value: { status: 'restored' } };
+    });
+}
+
+/**
+ * An administrator has looked at Discord and states that the saved result was
+ * announced. No Discord request is made. The winners are not changed.
+ */
+export async function markPostgresGiveawayDelivered(client, guildId, messageId, actorId, expectedRevision = null) {
+    if (!validActor(actorId) || !validRevision(expectedRevision)) throw fail('GIVEAWAY_INVALID', 'Invalid resolution');
+    return transaction(client, guildId, messageId, (d, now, row) => {
+        deleting(d);
+        requireRevision(row, expectedRevision);
+        requireSettledPending(d, now);
+        const patch = {
+            deliveryStatus: 'delivered',
+            deliveryResolvedBy: actorId,
+            deliveryResolvedAt: new Date(now).toISOString(),
+        };
+        return { patch, value: { status: 'delivered', winners: (d.winnerIds ?? []).length, entries: d.participants.length } };
+    });
+}
+
+/**
+ * Start a second delivery of the SAME saved winners. No new draw. The old
+ * token stops working, so a delivery still running elsewhere cannot also be
+ * recorded as complete.
+ */
+export async function retryPostgresGiveawayDelivery(client, guildId, messageId, actorId, expectedChannelId = null, expectedRevision = null) {
+    if (!validActor(actorId) || !validRevision(expectedRevision) || (expectedChannelId !== null && !id(expectedChannelId))) {
+        throw fail('GIVEAWAY_INVALID', 'Invalid retry');
+    }
+    return transaction(client, guildId, messageId, (d, now, row) => {
+        deleting(d);
+        requireRevision(row, expectedRevision);
+        if (expectedChannelId !== null && d.channelId !== expectedChannelId) throw fail('GIVEAWAY_STALE', 'Giveaway channel changed');
+        requireSettledPending(d, now);
+        if (!Array.isArray(d.winnerIds)) throw fail('GIVEAWAY_INVALID', 'Saved winners require review');
+        const token = randomUUID();
+        const patch = {
+            deliveryToken: token,
+            deliveryClaimedAt: now,
+            deliveryRetriedBy: actorId,
+            deliveryRetriedAt: new Date(now).toISOString(),
+        };
+        return {
+            patch,
+            value: {
+                token,
+                action: d.deliveryAction,
+                winners: [...d.winnerIds],
+                entries: d.participants.length,
+                prize: d.prize,
+                channelId: d.channelId,
+                hostId: d.hostId,
+                winnerCount: d.winnerCount,
+                winnerPingMessageId: id(d.winnerPingMessageId) ? d.winnerPingMessageId : null,
+            },
+        };
+    });
 }

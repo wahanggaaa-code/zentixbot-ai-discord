@@ -10,7 +10,7 @@ import {
 } from 'discord.js';
 import { buildStandardLogEmbed, formatLogLine } from '../utils/logging/logEmbeds.js';
 import { getGuildConfig } from './config/guildConfig.js';
-import { getTicketData, saveTicketData, deleteTicketData, getOpenTicketCountForUser, incrementTicketCounter } from '../utils/database.js';
+import { getTicketData, saveTicketData, getOpenTicketCountForUser, listOpenTicketsForUser, incrementTicketCounter } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
 import { createEmbed, errorEmbed } from '../utils/embeds.js';
 import { logTicketEvent } from '../utils/ticket/ticketLogging.js';
@@ -40,6 +40,15 @@ function requireTicket(ticketData, channel) {
 }
 
 function rethrowTicketError(error, operation, userMessage, context = {}) {
+  if (error?.code === 'TICKET_STALE') {
+    // The save is the first change of every action, so nothing else has happened yet.
+    throw createError(
+      `Ticket changed during ${operation}`,
+      ErrorTypes.VALIDATION,
+      'This ticket was changed by someone else at the same moment. Your action was not applied. Please try again.',
+      { service: TICKET_SERVICE, operation, ticketCode: 'TICKET_STALE', ...context },
+    );
+  }
   throw ensureTypedServiceError(error, {
     service: TICKET_SERVICE,
     operation,
@@ -50,6 +59,95 @@ function rethrowTicketError(error, operation, userMessage, context = {}) {
 }
 
 
+
+function buildClosedControlRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('ticket_reopen')
+      .setLabel('Reopen Ticket')
+      .setStyle(ButtonStyle.Success)
+      .setEmoji('🔓'),
+    new ButtonBuilder()
+      .setCustomId('ticket_delete')
+      .setLabel('Delete Ticket')
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji('🗑️')
+  );
+}
+
+const DEFAULT_MAX_TICKETS_PER_USER = 3;
+
+/** The configured per-user limit; anything that is not a positive whole number means the default. */
+export function getTicketLimit(config) {
+  const value = config?.maxTicketsPerUser;
+  return Number.isInteger(value) && value > 0 ? value : DEFAULT_MAX_TICKETS_PER_USER;
+}
+
+/** Runs tasks with the same key one after another, within this bot process. */
+const creationQueues = new Map();
+function runInTurn(key, task) {
+  const previous = creationQueues.get(key) ?? Promise.resolve();
+  const run = previous.then(task);
+  const tail = run.catch(() => {});
+  creationQueues.set(key, tail);
+  tail.then(() => {
+    if (creationQueues.get(key) === tail) creationQueues.delete(key);
+  });
+  return run;
+}
+
+/**
+ * The first message of a ticket (embed and control buttons). New tickets store
+ * its ID. Older tickets are searched in the most recent messages, which misses
+ * the message once the conversation is longer than one page.
+ */
+async function findTicketMessage(channel, ticketData, recentMessages) {
+  if (ticketData.messageId) {
+    try {
+      return await channel.messages.fetch(ticketData.messageId);
+    } catch (error) {
+      if (error?.code !== 10008) throw error;
+    }
+  }
+  return recentMessages.find(m =>
+    m.embeds.length > 0 &&
+    m.embeds[0].title?.startsWith('Ticket #')
+  );
+}
+
+/**
+ * Open tickets of a user. When the limit seems reached, records whose channel
+ * no longer exists in Discord are marked deleted first, so that a channel
+ * removed while the bot was offline does not block the user forever.
+ */
+export async function countOpenTickets(guild, userId, limit) {
+  const count = await getOpenTicketCountForUser(guild.id, userId);
+  if (count < limit) return count;
+  const open = await listOpenTicketsForUser(guild.id, userId);
+  if (!open) return count;
+  let missing = 0;
+  for (const { channelId, data } of open) {
+    if (guild.channels.cache.has(channelId)) continue;
+    try {
+      await guild.channels.fetch(channelId);
+      continue;
+    } catch (error) {
+      // Only "Unknown Channel" proves that the channel is gone.
+      if (error?.code !== 10003) continue;
+    }
+    try {
+      data.status = 'deleted';
+      data.closedAt = new Date().toISOString();
+      data.deletedReason = 'channel_missing';
+      await saveTicketData(guild.id, channelId, data);
+      missing += 1;
+      logger.info(`Ticket ${channelId} in guild ${guild.id} marked deleted: its channel no longer exists`);
+    } catch (error) {
+      logger.warn(`Could not mark ticket ${channelId} as deleted: ${error.message}`);
+    }
+  }
+  return missing > 0 ? getOpenTicketCountForUser(guild.id, userId) : count;
+}
 
 function buildTicketControlRow({ claimedBy = null } = {}) {
   return new ActionRowBuilder().addComponents(
@@ -84,18 +182,26 @@ export const getUserTicketCount = wrapServiceBoundary(async function getUserTick
 export async function createTicket(guild, member, categoryId, reason = 'No reason provided', priority = 'none') {
   try {
     if (isSQLiteTicketBackend(ticketDb) || guild?.client?.db?.db?.sqlite?.dialect==='sqlite') ticketUserError('SQLite ticket creation unavailable','Ticket creation is temporarily unavailable. No channel was created.',ErrorTypes.DATABASE);
+    // One creation at a time per user: the limit check and the new record must not interleave.
+    return await runInTurn(`${guild.id}:${member.id}`, () => createTicketInTurn(guild, member, categoryId, reason, priority));
+  } catch (error) {
+    rethrowTicketError(error, 'createTicket', 'Failed to create ticket. Please try again in a moment.', { guildId: guild?.id, userId: member?.id });
+  }
+}
+
+async function createTicketInTurn(guild, member, categoryId, reason, priority) {
     const config = await getGuildConfig(guild.client, guild.id);
     const ticketConfig = config.tickets || {};
     
-    const maxTicketsPerUser = config.maxTicketsPerUser ?? 3;
-    const currentTicketCount = await getUserTicketCount(guild.id, member.id);
+    const maxTicketsPerUser = getTicketLimit(config);
+    const currentTicketCount = await countOpenTickets(guild, member.id, maxTicketsPerUser);
     
     if (currentTicketCount >= maxTicketsPerUser) {
       ticketUserError(
         `Max open tickets reached for ${member.id}`,
         `You have reached the maximum number of open tickets (${maxTicketsPerUser}). Please close your existing tickets before creating a new one.`,
         ErrorTypes.VALIDATION,
-        { guildId: guild.id, userId: member.id, operation: 'createTicket' }
+        { guildId: guild.id, userId: member.id, operation: 'createTicket', ticketCode: 'TICKET_LIMIT' }
       );
     }
     
@@ -171,47 +277,71 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
       priority: priority || 'none',
       reason,
     };
-    
-    await saveTicketData(guild.id, channel.id, ticketData);
-    
-    const priorityInfo = PRIORITY_MAP[priority] || PRIORITY_MAP.none;
-    
-    const embed = createEmbed({
-      title: `Ticket #${ticketNumber}`,
-      description: `${member.toString()}, thanks for creating a ticket!\n\n**Reason:** ${reason}\n**Priority:** ${priorityInfo.emoji} ${priorityInfo.label}`,
-      color: priorityInfo.color,
-      fields: [
-        { name: 'Status', value: '🟢 Open', inline: true },
-        { name: 'Claimed By', value: 'Not claimed', inline: true },
-        { name: 'Created', value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true },
-      ],
-    });
-    
-    const row = buildTicketControlRow();
-    
-    if (ticketConfig.enablePriority) {
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId('ticket_priority:low')
-          .setLabel('Low')
-          .setStyle(ButtonStyle.Secondary)
-          .setEmoji('🔵'),
-        new ButtonBuilder()
-          .setCustomId('ticket_priority:high')
-          .setLabel('High')
-          .setStyle(ButtonStyle.Danger)
-          .setEmoji('🔴')
+
+    // From here on a channel exists. If the ticket cannot be completed, the
+    // channel is removed again so that no channel is left without a record.
+    let ticketMessage;
+    try {
+      const priorityInfo = PRIORITY_MAP[priority] || PRIORITY_MAP.none;
+
+      const embed = createEmbed({
+        title: `Ticket #${ticketNumber}`,
+        description: `${member.toString()}, thanks for creating a ticket!\n\n**Reason:** ${reason}\n**Priority:** ${priorityInfo.emoji} ${priorityInfo.label}`,
+        color: priorityInfo.color,
+        fields: [
+          { name: 'Status', value: '🟢 Open', inline: true },
+          { name: 'Claimed By', value: 'Not claimed', inline: true },
+          { name: 'Created', value: `<t:${Math.floor(Date.now() / 1000)}:R>`, inline: true },
+        ],
+      });
+
+      const row = buildTicketControlRow();
+
+      if (ticketConfig.enablePriority) {
+        row.addComponents(
+          new ButtonBuilder()
+            .setCustomId('ticket_priority:low')
+            .setLabel('Low')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('🔵'),
+          new ButtonBuilder()
+            .setCustomId('ticket_priority:high')
+            .setLabel('High')
+            .setStyle(ButtonStyle.Danger)
+            .setEmoji('🔴')
+        );
+      }
+
+      const staffMention = config.ticketStaffRoleId ? ` <@&${config.ticketStaffRoleId}>` : '';
+      const messageContent = `${member.toString()}${staffMention}`;
+
+      ticketMessage = await channel.send({
+        content: messageContent,
+        embeds: [embed],
+        components: [row]
+      });
+      ticketData.messageId = ticketMessage.id;
+
+      await saveTicketData(guild.id, channel.id, ticketData);
+    } catch (error) {
+      let removed = false;
+      try {
+        await channel.delete('Ticket creation failed');
+        removed = true;
+      } catch (cleanupError) {
+        if (cleanupError?.code === 10003) removed = true;
+        else logger.error(`Could not remove channel ${channel.id} of a failed ticket: ${cleanupError.message}`);
+      }
+      logger.error(`Ticket creation failed after channel ${channel.id} was created (channel removed: ${removed}): ${error.message}`);
+      ticketUserError(
+        `Ticket creation failed after channel creation: ${error.message}`,
+        removed
+          ? 'The ticket could not be created. No ticket was opened; please try again in a moment.'
+          : `The ticket could not be created, and the unfinished channel <#${channel.id}> could not be removed. Please ask staff to delete it.`,
+        ErrorTypes.UNKNOWN,
+        { guildId: guild.id, userId: member.id, channelId: channel.id, operation: 'createTicket', ticketCode: removed ? 'TICKET_CREATE_FAILED' : 'TICKET_CREATE_ORPHAN' }
       );
     }
-    
-    const staffMention = config.ticketStaffRoleId ? ` <@&${config.ticketStaffRoleId}>` : '';
-    const messageContent = `${member.toString()}${staffMention}`;
-    
-    const ticketMessage = await channel.send({ 
-      content: messageContent,
-      embeds: [embed],
-      components: [row] 
-    });
 
     await ticketMessage.pin().catch(() => {});
     
@@ -234,18 +364,45 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
     });
     
     return { channel, ticketData };
-    
-  } catch (error) {
-    rethrowTicketError(error, 'createTicket', 'Failed to create ticket. Please try again in a moment.', { guildId: guild?.id, userId: member?.id });
-  }
 }
 
 export async function closeTicket(channel, closer, reason = 'No reason provided') {
   try {
     const ticketData = requireTicket(await getTicketData(channel.guild.id, channel.id), channel);
     
+    if (ticketData.status === 'closed') {
+      // An earlier close may have stopped after saving, before the Reopen and
+      // Delete buttons were posted. Closing again restores them and does nothing else.
+      let hasControls = false;
+      try {
+        const recent = await channel.messages.fetch();
+        hasControls = recent.some(m => m.components?.some(row => row.components?.some(c => c.customId === 'ticket_reopen')));
+      } catch (fetchError) {
+        logger.warn(`Could not look for the controls of closed ticket ${channel.id}: ${fetchError.message}`);
+      }
+      if (!hasControls) {
+        await channel.send({
+          embeds: [createEmbed({
+            title: 'Ticket Closed',
+            description: `This ticket is closed.\n**Reason:** ${ticketData.closeReason || 'No reason provided'}`,
+            color: '#e74c3c',
+            footer: { text: `Ticket ID: ${ticketData.id}` }
+          })],
+          components: [buildClosedControlRow()]
+        });
+        return ticketData;
+      }
+      ticketUserError(
+        'Ticket already closed',
+        'This ticket is already closed.',
+        ErrorTypes.VALIDATION,
+        { channelId: channel.id, operation: 'closeTicket', ticketCode: 'TICKET_NOT_OPEN' }
+      );
+    }
+
     const config = await getGuildConfig(channel.client, channel.guild.id);
     const dmOnClose = config.dmOnClose !== false;
+    let dmSent = false;
     const closedCategoryId = config.ticketClosedCategoryId || null;
     let movedToClosedCategory = false;
     
@@ -284,6 +441,7 @@ export async function closeTicket(channel, closer, reason = 'No reason provided'
           });
 
           await ticketCreator.send({ embeds: [dmEmbed] });
+          dmSent = true;
 
           try {
             const feedbackEmbed = createEmbed({
@@ -347,55 +505,44 @@ export async function closeTicket(channel, closer, reason = 'No reason provided'
         logger.warn(`Could not update user permissions for closed ticket: ${permError.message}`);
     }
     
-    const messages = await channel.messages.fetch();
-    const ticketMessage = messages.find(m => 
-      m.embeds.length > 0 && 
-      m.embeds[0].title?.startsWith('Ticket #')
-    );
+    // Cosmetic: a failure here must not prevent the Reopen and Delete buttons below.
+    try {
+      const messages = await channel.messages.fetch();
+      const ticketMessage = await findTicketMessage(channel, ticketData, messages);
     
-    if (ticketMessage) {
-      const embed = ticketMessage.embeds[0];
-      const statusField = embed.fields?.find(f => f.name === 'Status');
+      if (ticketMessage) {
+        const embed = ticketMessage.embeds[0];
+        const statusField = embed.fields?.find(f => f.name === 'Status');
       
-      if (statusField) {
-        statusField.value = '🔴 Closed';
+        if (statusField) {
+          statusField.value = '🔴 Closed';
+        }
+      
+        const updatedEmbed = createEmbed({
+          title: embed.title || 'Ticket',
+          description: embed.description || 'Ticket discussion',
+          color: '#e74c3c',
+          fields: embed.fields || [],
+          footer: embed.footer
+        });
+      
+        await ticketMessage.edit({
+          embeds: [updatedEmbed],
+          components: []
+        });
       }
-      
-      const updatedEmbed = createEmbed({
-        title: embed.title || 'Ticket',
-        description: embed.description || 'Ticket discussion',
-        color: '#e74c3c',
-        fields: embed.fields || [],
-        footer: embed.footer
-      });
-      
-      await ticketMessage.edit({ 
-        embeds: [updatedEmbed],
-components: []
-      });
+    } catch (editError) {
+      logger.warn(`Could not update the first message of closed ticket ${channel.id}: ${editError.message}`);
     }
     
     const closeEmbed = createEmbed({
       title: 'Ticket Closed',
-      description: `This ticket has been closed by ${closer}.\n**Reason:** ${reason}${dmOnClose ? '\n\n📩 A DM has been sent to the ticket creator.' : ''}`,
+      description: `This ticket has been closed by ${closer}.\n**Reason:** ${reason}${dmOnClose ? (dmSent ? '\n\n📩 A DM has been sent to the ticket creator.' : '\n\n⚠️ The ticket creator could not be notified by DM.') : ''}`,
       color: '#e74c3c',
       footer: { text: `Ticket ID: ${ticketData.id}` }
     });
     
-    const controlRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId('ticket_reopen')
-        .setLabel('Reopen Ticket')
-        .setStyle(ButtonStyle.Success)
-        .setEmoji('🔓'),
-      new ButtonBuilder()
-        .setCustomId('ticket_delete')
-        .setLabel('Delete Ticket')
-        .setStyle(ButtonStyle.Danger)
-        .setEmoji('🗑️')
-    );
-    
-    await channel.send({ embeds: [closeEmbed], components: [controlRow] });
+    await channel.send({ embeds: [closeEmbed], components: [buildClosedControlRow()] });
     
     await logTicketEvent({
       client: channel.client,
@@ -408,7 +555,7 @@ components: []
         executorId: closer.id,
         reason: reason,
         metadata: {
-          dmSent: dmOnClose,
+          dmSent,
           closedAt: ticketData.closedAt,
           movedToClosedCategory
         }
@@ -426,12 +573,21 @@ export async function claimTicket(channel, claimer) {
   try {
     const ticketData = requireTicket(await getTicketData(channel.guild.id, channel.id), channel);
     
+    if (ticketData.status === 'closed') {
+      ticketUserError(
+        'Ticket is closed',
+        'This ticket is closed. Reopen it before claiming it.',
+        ErrorTypes.VALIDATION,
+        { channelId: channel.id, operation: 'claimTicket', ticketCode: 'TICKET_NOT_OPEN' }
+      );
+    }
+
     if (ticketData.claimedBy) {
       ticketUserError(
         'Ticket already claimed',
         `This ticket is already claimed by <@${ticketData.claimedBy}>`,
         ErrorTypes.VALIDATION,
-        { channelId: channel.id, claimedBy: ticketData.claimedBy, operation: 'claimTicket' }
+        { channelId: channel.id, claimedBy: ticketData.claimedBy, operation: 'claimTicket', ticketCode: 'TICKET_CLAIMED' }
       );
     }
     
@@ -441,10 +597,7 @@ export async function claimTicket(channel, claimer) {
     await saveTicketData(channel.guild.id, channel.id, ticketData);
     
     const messages = await channel.messages.fetch();
-    const ticketMessage = messages.find(m => 
-      m.embeds.length > 0 && 
-      m.embeds[0].title?.startsWith('Ticket #')
-    );
+    const ticketMessage = await findTicketMessage(channel, ticketData, messages);
     
     if (ticketMessage) {
       const embed = ticketMessage.embeds[0];
@@ -518,7 +671,7 @@ export async function reopenTicket(channel, reopener) {
         'Ticket not closed',
         'This ticket is not currently closed.',
         ErrorTypes.VALIDATION,
-        { channelId: channel.id, operation: 'reopenTicket' }
+        { channelId: channel.id, operation: 'reopenTicket', ticketCode: 'TICKET_NOT_CLOSED' }
       );
     }
 
@@ -567,10 +720,7 @@ export async function reopenTicket(channel, reopener) {
     }
     
     const messages = await channel.messages.fetch();
-    const ticketMessage = messages.find(m => 
-      m.embeds.length > 0 && 
-      m.embeds[0].title?.startsWith('Ticket #')
-    );
+    const ticketMessage = await findTicketMessage(channel, ticketData, messages);
     
     if (ticketMessage) {
       const embed = ticketMessage.embeds[0];
@@ -709,156 +859,188 @@ ${rows}
   }
 }
 
-export async function deleteTicket(channel, deleter) {
+/** Channels with a deletion already scheduled in this bot process. */
+const pendingDeletions = new Set();
+
+export async function deleteTicket(channel, deleter, { delayMs = TICKET_DELETE_DELAY_MS } = {}) {
   try {
     if (isSQLiteTicketBackend(ticketDb) || channel?.client?.db?.db?.sqlite?.dialect==='sqlite') ticketUserError('SQLite ticket deletion unavailable','Ticket deletion is temporarily unavailable. No channel was deleted.',ErrorTypes.DATABASE);
     const ticketData = requireTicket(await getTicketData(channel.guild.id, channel.id), channel);
-    
-    const deleteEmbed = createEmbed({
-      title: 'Ticket Deleted',
-      description: `🗑️ This ticket will be permanently deleted in ${TICKET_DELETE_DELAY_SECONDS} seconds.`,
-      color: '#e74c3c',
-      footer: { text: `Ticket ID: ${ticketData.id}` }
-    });
-    
-    await channel.send({ embeds: [deleteEmbed] });
-    
-    await logTicketEvent({
-      client: channel.client,
-      guildId: channel.guild.id,
-      event: {
-        type: 'delete',
-        ticketId: channel.id,
-        ticketNumber: ticketData.id,
-        userId: ticketData.userId,
-        executorId: deleter.id,
-        metadata: {
-          deletedAt: new Date().toISOString()
-        }
-      }
-    });
 
-    setTimeout(async () => {
-      try {
-        logger.debug('Starting ticket deletion process', {
-          channelId: channel.id,
-          ticketId: ticketData.id
-        });
+    if (pendingDeletions.has(channel.id)) {
+      ticketUserError(
+        'Ticket deletion already scheduled',
+        'This ticket is already being deleted.',
+        ErrorTypes.VALIDATION,
+        { channelId: channel.id, operation: 'deleteTicket', ticketCode: 'TICKET_DELETE_PENDING' }
+      );
+    }
+    pendingDeletions.add(channel.id);
 
-        let attachment = null;
-        try {
-          attachment = await generateTranscript(channel);
-          if (attachment) {
-            logger.info('Transcript generated successfully, attempting to send', {
-              channelId: channel.id,
-              ticketNumber: ticketData.id
-            });
-          } else {
-            logger.warn('Transcript generation returned null', {
-              channelId: channel.id,
-              ticketNumber: ticketData.id
-            });
-          }
-        } catch (transcriptError) {
-          logger.error('Error during transcript generation', {
+    try {
+      const deleteEmbed = createEmbed({
+        title: 'Ticket Deleted',
+        description: `🗑️ This ticket will be permanently deleted in ${TICKET_DELETE_DELAY_SECONDS} seconds.`,
+        color: '#e74c3c',
+        footer: { text: `Ticket ID: ${ticketData.id}` }
+      });
+
+      await channel.send({ embeds: [deleteEmbed] });
+    } catch (error) {
+      pendingDeletions.delete(channel.id);
+      throw error;
+    }
+
+    setTimeout(() => {
+      performTicketDeletion(channel, ticketData, deleter)
+        .catch((error) => {
+          logger.error('❌ Unexpected error during ticket deletion:', {
             channelId: channel.id,
-            ticketNumber: ticketData.id,
-            error: transcriptError.message
+            channelName: channel?.name,
+            ticketNumber: ticketData?.id,
+            errorMessage: error.message,
+            errorName: error.name,
+            errorStack: error.stack
           });
-        }
+        })
+        .finally(() => pendingDeletions.delete(channel.id));
+    }, delayMs);
 
-        if (attachment) {
-          try {
-            const guildConfig = await getGuildConfig(channel.client, channel.guild.id);
-            if (!guildConfig.ticketTranscriptChannelId) {
-              logger.warn('No transcript channel configured, skipping transcript send', {
-                channelId: channel.id,
-                ticketNumber: ticketData.id
-              });
-            } else {
-              const transcriptChannel = await channel.client.channels.fetch(guildConfig.ticketTranscriptChannelId).catch(() => null);
-              
-              if (!transcriptChannel) {
-                logger.error('Could not fetch transcript channel', {
-                  channelId: channel.id,
-                  transcriptChannelId: guildConfig.ticketTranscriptChannelId
-                });
-              } else if (!transcriptChannel.isSendable()) {
-                logger.error('Transcript channel exists but is not sendable', {
-                  channelId: channel.id,
-                  transcriptChannelId: transcriptChannel.id
-                });
-              } else {
-                
-                const transcriptEmbed = buildStandardLogEmbed({
-                  color: 0x3498db,
-                  title: 'Ticket Transcript',
-                  description: [
-                    formatLogLine('Ticket', `#${ticketData.id}`),
-                    formatLogLine('Channel', `#${channel.name}`),
-                    formatLogLine('Generated', `<t:${Math.floor(Date.now() / 1000)}:F>`),
-                  ].join('\n'),
-                  footer: deleter?.username
-                    ? { text: `Deleted by ${deleter.username}`, iconURL: deleter.displayAvatarURL?.() }
-                    : undefined,
-                  timestamp: true,
-                });
-
-                await transcriptChannel.send({
-                  embeds: [transcriptEmbed],
-                  files: [attachment]
-                });
-
-                logger.info('✅ Transcript sent successfully', {
-                  channelId: channel.id,
-                  ticketNumber: ticketData.id,
-                  transcriptChannelId: transcriptChannel.id
-                });
-              }
-            }
-          } catch (sendError) {
-            logger.error('Failed to send transcript to channel:', {
-              channelId: channel.id,
-              ticketNumber: ticketData.id,
-              error: sendError.message
-            });
-          }
-        }
-
-        try {
-          await channel.delete('Ticket deleted permanently');
-          logger.info('✅ Channel deleted', {
-            channelId: channel.id,
-            channelName: channel.name,
-            ticketNumber: ticketData.id
-          });
-        } catch (deleteError) {
-          logger.error('❌ Failed to delete ticket channel:', {
-            channelId: channel.id,
-            channelName: channel.name,
-            ticketNumber: ticketData.id,
-            errorMessage: deleteError.message,
-            errorCode: deleteError.code,
-            errorName: deleteError.name
-          });
-        }
-      } catch (error) {
-        logger.error('❌ Unexpected error during ticket deletion:', {
-          channelId: channel.id,
-          channelName: channel?.name,
-          ticketNumber: ticketData?.id,
-          errorMessage: error.message,
-          errorName: error.name,
-          errorStack: error.stack
-        });
-      }
-    }, TICKET_DELETE_DELAY_MS);
-    
     return ticketData;
-    
+
   } catch (error) {
     rethrowTicketError(error, 'deleteTicket', 'Failed to delete ticket. Please try again in a moment.', { guildId: channel?.guild?.id, channelId: channel?.id, deleterId: deleter?.id });
   }
+}
+
+/** Sends the transcript to the configured channel. Returns whether it arrived. */
+async function deliverTranscript(channel, ticketData, deleter, transcriptChannelId) {
+  const attachment = await generateTranscript(channel);
+  if (!attachment) return false;
+
+  try {
+    const transcriptChannel = await channel.client.channels.fetch(transcriptChannelId).catch(() => null);
+
+    if (!transcriptChannel) {
+      logger.error('Could not fetch transcript channel', { channelId: channel.id, transcriptChannelId });
+      return false;
+    }
+    if (!transcriptChannel.isSendable()) {
+      logger.error('Transcript channel exists but is not sendable', { channelId: channel.id, transcriptChannelId });
+      return false;
+    }
+
+    const transcriptEmbed = buildStandardLogEmbed({
+      color: 0x3498db,
+      title: 'Ticket Transcript',
+      description: [
+        formatLogLine('Ticket', `#${ticketData.id}`),
+        formatLogLine('Channel', `#${channel.name}`),
+        formatLogLine('Generated', `<t:${Math.floor(Date.now() / 1000)}:F>`),
+      ].join('\n'),
+      footer: deleter?.username
+        ? { text: `Deleted by ${deleter.username}`, iconURL: deleter.displayAvatarURL?.() }
+        : undefined,
+      timestamp: true,
+    });
+
+    await transcriptChannel.send({ embeds: [transcriptEmbed], files: [attachment] });
+
+    logger.info('✅ Transcript sent successfully', {
+      channelId: channel.id,
+      ticketNumber: ticketData.id,
+      transcriptChannelId: transcriptChannel.id
+    });
+    return true;
+  } catch (sendError) {
+    logger.error('Failed to send transcript to channel:', {
+      channelId: channel.id,
+      ticketNumber: ticketData.id,
+      error: sendError.message
+    });
+    return false;
+  }
+}
+
+async function announceDeletionCancelled(channel, text) {
+  try {
+    await channel.send({ embeds: [createEmbed({ title: 'Deletion Cancelled', description: text, color: '#f39c12' })] });
+  } catch (error) {
+    logger.warn(`Could not announce the cancelled deletion in ticket ${channel.id}: ${error.message}`);
+  }
+}
+
+/**
+ * Deletes the ticket channel. When a transcript channel is configured, the
+ * channel is deleted only after the transcript has arrived there: deleting
+ * the channel is the point of no return for the conversation.
+ *
+ * Returns { deleted, transcript } with transcript one of
+ * 'sent', 'not_configured', 'failed'.
+ */
+export async function performTicketDeletion(channel, ticketData, deleter) {
+  let transcriptChannelId;
+  try {
+    const guildConfig = await getGuildConfig(channel.client, channel.guild.id);
+    transcriptChannelId = guildConfig.ticketTranscriptChannelId || null;
+  } catch (error) {
+    logger.error(`Ticket ${channel.id} not deleted: settings could not be read: ${error.message}`);
+    await announceDeletionCancelled(channel, '⚠️ The ticket settings could not be read, so this ticket was **not** deleted. Please try again in a moment.');
+    return { deleted: false, transcript: 'failed' };
+  }
+
+  let transcript = 'not_configured';
+  if (transcriptChannelId) {
+    if (!await deliverTranscript(channel, ticketData, deleter, transcriptChannelId)) {
+      await announceDeletionCancelled(
+        channel,
+        `⚠️ The transcript could not be saved to <#${transcriptChannelId}>, so this ticket was **not** deleted.\n\nCheck the transcript channel in the ticket settings and the bot's permissions there, then press **Delete Ticket** again.`
+      );
+      return { deleted: false, transcript: 'failed' };
+    }
+    transcript = 'sent';
+  }
+
+  try {
+    await channel.delete('Ticket deleted permanently');
+  } catch (deleteError) {
+    if (deleteError?.code !== 10003) {
+      logger.error('❌ Failed to delete ticket channel:', {
+        channelId: channel.id,
+        channelName: channel.name,
+        ticketNumber: ticketData.id,
+        errorMessage: deleteError.message,
+        errorCode: deleteError.code,
+        errorName: deleteError.name
+      });
+      await announceDeletionCancelled(channel, '⚠️ The bot could not delete this channel. Check its **Manage Channels** permission, then press **Delete Ticket** again.');
+      return { deleted: false, transcript };
+    }
+  }
+
+  logger.info('✅ Channel deleted', {
+    channelId: channel.id,
+    channelName: channel.name,
+    ticketNumber: ticketData.id
+  });
+
+  await logTicketEvent({
+    client: channel.client,
+    guildId: channel.guild.id,
+    event: {
+      type: 'delete',
+      ticketId: channel.id,
+      ticketNumber: ticketData.id,
+      userId: ticketData.userId,
+      executorId: deleter.id,
+      metadata: {
+        deletedAt: new Date().toISOString(),
+        transcript
+      }
+    }
+  });
+
+  return { deleted: true, transcript };
 }
 
 export async function unclaimTicket(channel, unclaimer) {
@@ -890,10 +1072,7 @@ export async function unclaimTicket(channel, unclaimer) {
     await saveTicketData(channel.guild.id, channel.id, ticketData);
     
     const messages = await channel.messages.fetch();
-    const ticketMessage = messages.find(m => 
-      m.embeds.length > 0 && 
-      m.embeds[0].title?.startsWith('Ticket #')
-    );
+    const ticketMessage = await findTicketMessage(channel, ticketData, messages);
     
     if (ticketMessage) {
       const embed = ticketMessage.embeds[0];
@@ -977,6 +1156,7 @@ export async function updateTicketPriority(channel, priority, updater) {
     );
     }
     
+    const previousPriority = ticketData.priority || 'none';
     ticketData.priority = priority;
     ticketData.priorityUpdatedBy = updater.id;
     ticketData.priorityUpdatedAt = new Date().toISOString();
@@ -1000,10 +1180,7 @@ export async function updateTicketPriority(channel, priority, updater) {
     }
     
     const messages = await channel.messages.fetch();
-    const ticketMessage = messages.find(m => 
-      m.embeds.length > 0 && 
-      m.embeds[0].title?.startsWith('Ticket #')
-    );
+    const ticketMessage = await findTicketMessage(channel, ticketData, messages);
     
     if (ticketMessage) {
       const embed = ticketMessage.embeds[0];
@@ -1038,7 +1215,7 @@ export async function updateTicketPriority(channel, priority, updater) {
         executorId: updater.id,
         priority: priority,
         metadata: {
-          previousPriority: ticketData.priority,
+          previousPriority,
           updatedAt: ticketData.priorityUpdatedAt
         }
       }

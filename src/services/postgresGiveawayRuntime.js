@@ -1,12 +1,28 @@
 import {MessageFlags} from 'discord.js';
-import {TitanBotError,ErrorTypes} from '../utils/errorHandler.js';
+import {ZentixBotError,ErrorTypes} from '../utils/errorHandler.js';
 import {successEmbed} from '../utils/embeds.js';
 import {InteractionHelper} from '../utils/interactionHelper.js';
 import {createGiveawayEmbed,createGiveawayButtons} from './giveawayService.js';
 import {inspectPostgresGiveaway,claimPostgresGiveaway,completePostgresGiveawayDelivery,duePostgresGiveaways} from './storage/postgresGiveawayTransactions.js';
 import {logger} from '../utils/logger.js';
 
-const error=(message)=>new TitanBotError('PostgreSQL giveaway operation failed',ErrorTypes.DATABASE,message);
+const error=(message)=>new ZentixBotError('PostgreSQL giveaway operation failed',ErrorTypes.DATABASE,message);
+// The Discord half of a delivery, for a claim that is already stored: edit the
+// giveaway message, announce the winners, then record the delivery as complete.
+// Any throw leaves the record pending; the caller must not repeat it blindly.
+export async function performPostgresGiveawayDelivery(client,guildId,messageId,claim,{message,channel,previousPing=null}){
+ const action=claim.action;
+ const status=action==='reroll'?'reroll':'ended';
+ const giveaway={...claim,participants:{length:claim.entries}};
+ const embed=createGiveawayEmbed(giveaway,status,claim.winners);
+ await message.edit({content:action==='reroll'?'🔄 **GIVEAWAY REROLLED** 🔄':'🎉 **GIVEAWAY ENDED** 🎉',embeds:[embed],components:[createGiveawayButtons(true)],allowedMentions:{parse:[]}});
+ const mention=claim.winners.length?claim.winners.map(x=>`<@${x}>`).join(', '):'No valid entries';
+ const payload={content:action==='reroll'?`🔄 New winner(s): ${mention}. Prize: **${claim.prize}**.`:`🎉 Giveaway ended! Winner(s): ${mention}. Prize: **${claim.prize}**.`,allowedMentions:{parse:[],users:claim.winners}};
+ const announcement=previousPing?await previousPing.edit(payload):await channel.send(payload);
+ const announcementId=previousPing?.id??announcement?.id;
+ if(!/^\d{17,20}$/.test(announcementId||''))throw Error('Discord announcement identity unavailable');
+ await completePostgresGiveawayDelivery(client,guildId,messageId,claim.token,announcementId);
+}
 // Preflight reads Discord without writing it. A locked snapshot revision is
 // checked during the claim, so changing entries while preflight waits fails.
 export async function deliverPostgresGiveaway(client,guildId,messageId,action,actorId,expectedChannelId=null,expectedRevision=null){
@@ -28,18 +44,8 @@ export async function deliverPostgresGiveaway(client,guildId,messageId,action,ac
  let claim;
  try{claim=await claimPostgresGiveaway(client,guildId,messageId,action,actorId,snapshot.channelId,snapshot.revision)}
  catch(e){if(e.code==='GIVEAWAY_DELIVERY_PENDING')throw error('A previous delivery is pending or unknown. Inspect Discord and reconcile it before retrying.');if(['GIVEAWAY_STALE','GIVEAWAY_ENDED','GIVEAWAY_NOT_DUE','GIVEAWAY_STATE'].includes(e.code))throw error('Giveaway state changed or does not allow this action. Reload and inspect before retrying.');throw error('The claim outcome may be unknown. Inspect the database and Discord before retrying.')}
- try{
-  const status=action==='reroll'?'reroll':'ended';
-  const giveaway={...claim,participants:{length:claim.entries}};
-  const embed=createGiveawayEmbed(giveaway,status,claim.winners);
-  await message.edit({content:action==='reroll'?'🔄 **GIVEAWAY REROLLED** 🔄':'🎉 **GIVEAWAY ENDED** 🎉',embeds:[embed],components:[createGiveawayButtons(true)],allowedMentions:{parse:[]}});
-  const mention=claim.winners.length?claim.winners.map(x=>`<@${x}>`).join(', '):'No valid entries';
-  const payload={content:action==='reroll'?`🔄 New winner(s): ${mention}. Prize: **${claim.prize}**.`:`🎉 Giveaway ended! Winner(s): ${mention}. Prize: **${claim.prize}**.`,allowedMentions:{parse:[],users:claim.winners}};
-  const announcement=previousPing?await previousPing.edit(payload):await channel.send(payload);
-  const announcementId=previousPing?.id??announcement?.id;
-  if(!/^\d{17,20}$/.test(announcementId||''))throw Error('Discord announcement identity unavailable');
-  await completePostgresGiveawayDelivery(client,guildId,messageId,claim.token,announcementId);
- }catch(e){throw error('The result was saved, but Discord delivery or its final status is pending or unknown. Inspect Discord and the database; do not repeat automatically.')}
+ try{await performPostgresGiveawayDelivery(client,guildId,messageId,claim,{message,channel,previousPing})}
+ catch(e){throw error('The result was saved, but Discord delivery or its final status is pending or unknown. Inspect Discord and the database; do not repeat automatically.')}
  return {winners:claim.winners.length,entries:claim.entries};
 }
 export async function runPostgresGiveawayInteraction(interaction,client,action,messageId,expectedChannelId=null){

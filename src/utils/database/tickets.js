@@ -6,6 +6,48 @@ import {isSQLiteTicketBackend,readSQLiteTicket,saveSQLiteTicket,listSQLiteTicket
 
 export { getTicketKey, getTicketCounterKey } from './keys.js';
 
+// A PostgreSQL ticket is saved back only if the stored record is still the one
+// that was read. Without this, two actions on the same ticket (for example a
+// claim and a close) would each write a full record and one change would be lost.
+const postgresSnapshots = new WeakMap();
+const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+function trackPostgresTicket(value, pool, guildId, channelId) {
+    if (isRecord(value)) postgresSnapshots.set(value, { pool, guildId, channelId, raw: JSON.stringify(value) });
+    return value;
+}
+const staleTicket = (message) => Object.assign(new Error(message), { code: 'TICKET_STALE' });
+
+async function savePostgresTicket(guildId, channelId, data) {
+    const pool = requireTicketPool();
+    if (!isRecord(data)) throw Object.assign(new Error('Invalid ticket data'), { code: 'TICKET_INVALID' });
+    const serialized = JSON.stringify(data);
+    const snapshot = postgresSnapshots.get(data);
+    const tracked = snapshot && snapshot.pool === pool && snapshot.guildId === guildId && snapshot.channelId === channelId;
+    let result;
+    if (tracked) {
+        result = await pool.query(
+            `UPDATE ${pgConfig.tables.tickets}
+             SET data = $3::jsonb, expires_at = NULL, updated_at = CURRENT_TIMESTAMP
+             WHERE guild_id = $1 AND channel_id = $2 AND data = $4::jsonb`,
+            [guildId, channelId, serialized, snapshot.raw],
+        );
+        if (result.rowCount !== 1) throw staleTicket('Ticket changed; reload before saving');
+    } else {
+        // A record that was not read from the database may only create a new ticket.
+        await pool.query(
+            `INSERT INTO ${pgConfig.tables.guilds} (id, created_at) VALUES ($1, CURRENT_TIMESTAMP) ON CONFLICT (id) DO NOTHING`,
+            [guildId],
+        );
+        result = await pool.query(
+            `INSERT INTO ${pgConfig.tables.tickets} (guild_id, channel_id, data) VALUES ($1, $2, $3::jsonb)
+             ON CONFLICT (channel_id) DO NOTHING`,
+            [guildId, channelId, serialized],
+        );
+        if (result.rowCount !== 1) throw staleTicket('Ticket already exists; reload before saving');
+    }
+    trackPostgresTicket(data, pool, guildId, channelId);
+}
+
 function requireTicketPool() {
     if (db.useFallback || !db.db?.isAvailable?.() || !db.db.pool) throw Object.assign(new Error('Persistent ticket database unavailable'), {code: 'TICKET_DB_UNAVAILABLE'});
     return db.db.pool;
@@ -17,8 +59,34 @@ export async function getTicketData(guildId, channelId) {
     }
 
     if (isSQLiteTicketBackend(db)) return readSQLiteTicket(db,guildId,channelId);
-    const result = await requireTicketPool().query(`SELECT data FROM ${pgConfig.tables.tickets} WHERE guild_id = $1 AND channel_id = $2`, [guildId, channelId]);
-    return result.rows.length ? result.rows[0].data : null;
+    const pool = requireTicketPool();
+    const result = await pool.query(`SELECT data FROM ${pgConfig.tables.tickets} WHERE guild_id = $1 AND channel_id = $2`, [guildId, channelId]);
+    return result.rows.length ? trackPostgresTicket(result.rows[0].data, pool, guildId, channelId) : null;
+}
+
+/**
+ * The user's open tickets on PostgreSQL, as tracked records that can be saved back.
+ * Returns null on other backends, where this listing is not available.
+ */
+export async function listOpenTicketsForUser(guildId, userId, limit = 25) {
+    if (!db.initialized) {
+        await db.initialize();
+    }
+    if (isSQLiteTicketBackend(db)) return null;
+    const pool = requireTicketPool();
+    const result = await pool.query(
+        `SELECT channel_id, data FROM ${pgConfig.tables.tickets}
+         WHERE guild_id = $1
+           AND data->>'userId' = $2
+           AND data->>'status' = 'open'
+         ORDER BY channel_id
+         LIMIT $3`,
+        [guildId, userId, limit],
+    );
+    return result.rows.map((row) => ({
+        channelId: row.channel_id,
+        data: trackPostgresTicket(row.data, pool, guildId, row.channel_id),
+    }));
 }
 
 export async function getOpenTicketCountForUser(guildId, userId) {
@@ -67,8 +135,7 @@ export async function saveTicketData(guildId, channelId, data) {
     }
 
     if (isSQLiteTicketBackend(db)) {saveSQLiteTicket(db,guildId,channelId,data);return;}
-    const key = getTicketKey(guildId, channelId);
-    if (!await db.set(key, data)) throw new Error('Ticket data could not be saved');
+    await savePostgresTicket(guildId, channelId, data);
 }
 
 export async function deleteTicketData(guildId, channelId) {

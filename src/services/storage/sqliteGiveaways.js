@@ -1,8 +1,8 @@
 import {sqliteBackend} from './sqlite.js';
 import {getGiveawaySnapshot,trackGiveawaySnapshot} from './giveawaySnapshots.js';
-import {TitanBotError,ErrorTypes} from '../../utils/errorHandler.js';
+import {ZentixBotError,ErrorTypes} from '../../utils/errorHandler.js';
 const validId=x=>typeof x==='string'&&/^\d{17,20}$/.test(x);
-const fail=(message,userMessage)=>new TitanBotError(message,ErrorTypes.DATABASE,userMessage);
+const fail=(message,userMessage)=>new ZentixBotError(message,ErrorTypes.DATABASE,userMessage);
 const invalid=()=>fail('Invalid SQLite giveaway data','Giveaway data is invalid. Contact an administrator.');
 function storeFor(client,guildId){if(client?.db?.db?.sqlite?.dialect!=='sqlite')return null;const sqlite=sqliteBackend(client);if(!sqlite)throw fail('SQLite unavailable','Persistent storage is unavailable.');if(!validId(guildId)||(client.homeGuildId&&client.homeGuildId!==guildId))throw invalid();return sqlite;}
 function mapFor(tx,key,guildId){const raw=tx.botGet(key);if(raw===null)return Object.create(null);if(!raw||typeof raw!=='object'||(raw.ok!==undefined&&raw.value!==undefined))throw invalid();

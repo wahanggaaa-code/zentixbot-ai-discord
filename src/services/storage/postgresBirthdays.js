@@ -62,3 +62,30 @@ export async function updatePostgresBirthdayFromDashboard(client,guild,user,expe
   return true;
  });
 }
+
+/**
+ * New record from the dashboard. Never replaces an existing date (that is an
+ * edit, with its own stale check) and never bypasses a leave backup, which
+ * may hold a different date for the same member.
+ */
+export async function addPostgresBirthdayFromDashboard(client, guild, user, next) {
+    if (!obj(next) || Object.keys(next).sort().join(',') !== 'day,month' || !validBirthday(next.month, next.day)) {
+        throw failure('Invalid birthday input');
+    }
+    return locked(client, guild, user, async (conn) => {
+        if (await current(conn, guild, user)) throw failure('Birthday already exists', 'BIRTHDAY_EXISTS');
+        const saved = await backup(conn, guild, user);
+        if (saved.exists) throw failure('Birthday leave backup requires review', 'BIRTHDAY_BACKUP_CONFLICT');
+        await put(conn, guild, user, { month: next.month, day: next.day });
+        return true;
+    });
+}
+
+/** Whether a member has a stored date. Does not return the date. */
+export async function hasPostgresBirthday(client, guild, user) {
+    const result = await pool(client, guild, user).query(
+        `SELECT 1 FROM ${t.birthdays} WHERE guild_id=$1 AND user_id=$2`,
+        [guild, user],
+    );
+    return result.rowCount > 0;
+}

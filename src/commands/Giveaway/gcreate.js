@@ -2,7 +2,7 @@ import {isPostgresGiveawayBackend,assertPostgresGiveawayReady} from '../../servi
 import { SlashCommandBuilder, PermissionFlagsBits, PermissionsBitField, ChannelType, MessageFlags } from 'discord.js';
 import { errorEmbed, successEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
-import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
+import { ZentixBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { saveGiveaway } from '../../utils/giveaways.js';
 import { 
     parseDuration, 
@@ -59,7 +59,7 @@ export default {
         await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
 
         if (!interaction.inGuild()) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'Giveaway command used outside guild',
                 ErrorTypes.VALIDATION,
                 'This command can only be used in a server.',
@@ -68,7 +68,7 @@ export default {
         }
 
         if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'User lacks ManageGuild permission',
                 ErrorTypes.PERMISSION,
                 "You need the 'Manage Server' permission to start a giveaway.",
@@ -88,7 +88,7 @@ export default {
         const prizeName = validatePrize(prize);
 
         if (!targetChannel.isTextBased()) {
-            throw new TitanBotError(
+            throw new ZentixBotError(
                 'Target channel is not text-based',
                 ErrorTypes.VALIDATION,
                 'The channel must be a text channel.',
@@ -116,7 +116,7 @@ export default {
         const embed = createGiveawayEmbed(initialGiveawayData, "active");
         const row = createGiveawayButtons(false);
 
-        if(isPostgresGiveawayBackend(interaction.client)){try{await assertPostgresGiveawayReady(interaction.client,interaction.guildId)}catch{throw new TitanBotError('Giveaway storage unavailable',ErrorTypes.DATABASE,'Giveaway storage is unavailable or needs review. No message was sent.')}}
+        if(isPostgresGiveawayBackend(interaction.client)){try{await assertPostgresGiveawayReady(interaction.client,interaction.guildId)}catch{throw new ZentixBotError('Giveaway storage unavailable',ErrorTypes.DATABASE,'Giveaway storage is unavailable or needs review. No message was sent.')}}
         const giveawayMessage = await targetChannel.send({
             content: "🎉 **NEW GIVEAWAY** 🎉",
             embeds: [embed],
@@ -129,12 +129,12 @@ export default {
             saved = await saveGiveaway(interaction.client, interaction.guildId, initialGiveawayData);
         } catch (error) {
             logger.warn(`Giveaway message ${giveawayMessage.id} was sent but storage failed:`,error.message);
-            throw new TitanBotError('Giveaway message sent but database save failed',ErrorTypes.DATABASE,'The message was sent but the giveaway could not be saved. Inspect the channel before retrying.');
+            throw new ZentixBotError('Giveaway message sent but database save failed',ErrorTypes.DATABASE,'The message was sent but the giveaway could not be saved. Inspect the channel before retrying.');
         }
 
         if (!saved) {
             logger.warn(`Failed to save giveaway to database: ${giveawayMessage.id}`);
-            throw new TitanBotError('Giveaway message sent but database save failed',ErrorTypes.DATABASE,'The message was sent but the giveaway could not be saved. Inspect the channel before retrying.');
+            throw new ZentixBotError('Giveaway message sent but database save failed',ErrorTypes.DATABASE,'The message was sent but the giveaway could not be saved. Inspect the channel before retrying.');
         }
 
         try {

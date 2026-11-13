@@ -11,11 +11,29 @@ import {WarningService} from '../services/moderation/warningService.js';
 import {logModerationAction} from '../utils/moderation.js';
 import {closeTicket,reopenTicket,claimTicket} from '../services/ticket.js';
 import {getMaxBankCapacity} from '../utils/economy.js';
-import {calculateTotalXp} from '../services/leveling/leveling.js';
+import {calculateTotalXp, getLevelingConfig, getLevelLockKey} from '../services/leveling/leveling.js';
+import {syncMemberRewardRoles} from '../services/leveling/rewardRoles.js';
 import { Mutex } from '../utils/mutex.js';
 
 const tables=pgConfig.tables;
 const idRe=/^\d{17,20}$/;
+
+// After a level was stored from the web: give the reward roles the member is
+// now entitled to. The level stays stored whatever happens here; the answer
+// only reports what was given and what was not.
+async function rewardRolesAfterLevel(client, guild, member, level) {
+    try {
+        const config = await getLevelingConfig(client, guild.id);
+        const result = await syncMemberRewardRoles(guild, member, level, config, { source: 'web dashboard' });
+        return {
+            added: result.added.map(({ level: at, roleId }) => ({ level: at, roleId })),
+            notGiven: [...result.skipped, ...result.failed].map(({ level: at, roleId, code }) => ({ level: at, roleId, code })),
+        };
+    } catch (error) {
+        console.error('[dashboard] reward role sync failed:', error?.message);
+        return null;
+    }
+}
 function safeMusicQuery(value){
  if(typeof value!=='string'||!value.trim()||value.length>300)throw bad('Masukkan judul lagu atau tautan.');
  const query=value.trim();
@@ -30,6 +48,12 @@ function safeMusicQuery(value){
 const bad=(message,status=400)=>Object.assign(new Error(message),{status});
 function pool(client){const d=client.db;if(!d||d.getStatus?.().isDegraded||!d.isAvailable?.()||!d.db?.isAvailable?.()||!d.db.pool)throw bad('Database persisten tidak tersedia.',503);return d.db.pool;}
 function requireStorage(client){const sqlite=sqliteBackend(client);if(sqlite)return sqlite;return pool(client)}
+const TICKET_REFUSALS={
+ TICKET_STALE:'Tiket baru saja diubah oleh tindakan lain. Tindakan Anda tidak diterapkan; muat ulang lalu coba lagi.',
+ TICKET_NOT_OPEN:'Tiket sudah ditutup.',
+ TICKET_NOT_CLOSED:'Tiket tidak dalam keadaan tertutup.',
+ TICKET_CLAIMED:'Tiket sudah diklaim.',
+};
 function fail(res,e){if(!e.status)console.error('[dashboard operations]',e.message);res.status(e.status||503).json({error:e.status?e.message:'Operasi gagal; periksa izin bot dan log server. Bila tindakan Discord sudah terjadi, periksa sebelum mencoba lagi.'});}
 function sqliteLeaderboard(sqlite,guildId){return sqlite.botLevels(guildId).map(({userId,data})=>{
  if(!data||typeof data!=='object'||Array.isArray(data))throw bad('Data leveling tidak valid.',503);
@@ -69,7 +93,12 @@ export function createOperationsApi(client,{auth,csrf}) {
   const data=await ticket(client,req.guild,req.params.id),channel=req.guild.channels.cache.get(req.params.id);if(!channel)throw bad('Channel tiket tidak tersedia.',404);
   if(b.action==='close' && data.status!=='open')throw bad('Tiket tidak terbuka.');if(b.action==='reopen' && data.status!=='closed')throw bad('Tiket tidak tertutup.');if(b.action==='claim'&&data.status!=='open')throw bad('Tiket tidak terbuka.');
   if(b.action==='close')await closeTicket(channel,req.member.user,'Ditutup melalui dashboard');else if(b.action==='reopen')await reopenTicket(channel,req.member.user);else await claimTicket(channel,req.member.user);res.json({ok:true});
- }catch(e){fail(res,e)}});
+ }catch(e){
+  // The ticket service refused before changing anything: say why instead of a generic failure.
+  const refused=TICKET_REFUSALS[e?.context?.ticketCode];
+  if(refused)return res.status(409).json({error:refused,code:e.context.ticketCode});
+  fail(res,e);
+ }});
  router.get('/public/leaderboard',async(req,res)=>{try{
   if(!client.isReady?.()||!client.guilds.cache.has(client.homeGuildId))throw bad('Server tidak tersedia.',503);
   const sqlite=sqliteBackend(client);let leaderboard;
@@ -91,8 +120,13 @@ export function createOperationsApi(client,{auth,csrf}) {
   const sqlite=sqliteBackend(client);if(sqlite){if(client.homeGuildId&&client.homeGuildId!==req.guild.id)throw bad('Server tidak valid.',403);sqlite.transaction(tx=>{
    if(b.type==='wallet'||b.type==='bank'){const data=readSQLiteBotValue(tx,`guild:${req.guild.id}:economy:${member.id}`);if(!data)throw bad('Data ekonomi belum tersedia.',404);if(!Number.isSafeInteger(data.wallet)||data.wallet<0||!Number.isSafeInteger(data.bank)||data.bank<0)throw bad('Saldo ekonomi tidak valid.',503);if(data[b.type]!==b.expected)throw bad('Saldo berubah; muat ulang sebelum menyimpan.',409);if(b.type==='bank'&&b.value>getMaxBankCapacity(data))throw bad('Saldo melebihi kapasitas bank anggota.');data[b.type]=b.value;tx.setAccount(req.guild.id,member.id,data);}
    else{mutateLevelInTransaction(tx,req.guild.id,member.id,(data,exists)=>{if(!exists)throw bad('Data leveling belum tersedia.',404);if(data.level!==b.expected)throw bad('Level berubah; muat ulang sebelum menyimpan.',409);data.level=b.value;data.xp=0;data.totalXp=calculateTotalXp(b.value,0);return {result:true}});}
-  });console.info(`[dashboard] member update guild=${req.guild.id} moderator=${req.member.id} member=${member.id} type=${b.type}`);return res.json({ok:true});}
-  const db=pool(client);await Mutex.runExclusive(`dashboard-member:${req.guild.id}:${member.id}`,async()=>{
+  });console.info(`[dashboard] member update guild=${req.guild.id} moderator=${req.member.id} member=${member.id} type=${b.type}`);
+   if(b.type==='level')return res.json({ok:true,rewardRoles:await rewardRolesAfterLevel(client,req.guild,member,b.value)});
+   return res.json({ok:true});}
+  // A level write takes the lock shared with XP awards and the level commands,
+  // so a message that arrives at the same moment cannot overwrite it.
+  const levelExclusive=task=>b.type==='level'?Mutex.runExclusive(getLevelLockKey(req.guild.id,member.id),task):task();
+  const db=pool(client);await Mutex.runExclusive(`dashboard-member:${req.guild.id}:${member.id}`,()=>levelExclusive(async()=>{
    const c=await db.connect();try{await c.query('BEGIN');
     if(b.type==='wallet'||b.type==='bank'){
      const r=await c.query(`SELECT balance,bank,data FROM ${tables.economy} WHERE guild_id=$1 AND user_id=$2 FOR UPDATE`,[req.guild.id,member.id]);if(!r.rows[0])throw bad('Data ekonomi belum tersedia.',404);
@@ -105,7 +139,9 @@ export function createOperationsApi(client,{auth,csrf}) {
     }
     await c.query('COMMIT');console.info(`[dashboard] member update guild=${req.guild.id} moderator=${req.member.id} member=${member.id} type=${b.type}`);
    }catch(e){await c.query('ROLLBACK').catch(()=>{});throw e}finally{c.release()}
-  });res.json({ok:true});
+  }));
+  if(b.type==='level')return res.json({ok:true,rewardRoles:await rewardRolesAfterLevel(client,req.guild,member,b.value)});
+  res.json({ok:true});
  }catch(e){fail(res,e)}});
  router.get('/logs',auth,async(req,res)=>{try{
   const sqlite=sqliteBackend(client);const config=sqlite?sqlite.botGet(`guild:${req.guild.id}:config`):(await pool(client).query(`SELECT config FROM ${tables.guilds} WHERE id=$1`,[req.guild.id])).rows[0]?.config;const id=config?.logging?.channels?.audit;

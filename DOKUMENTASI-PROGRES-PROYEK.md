@@ -3,9 +3,10 @@
 - **Tanggal inventaris:** 12 November 2026 (WIB)
 - **Repositori kerja:** `zentixbot-bot-only`
 - **Basis kode yang ditinjau:** commit `98b2bee`
+- **Pembaruan terakhir:** 13 November 2026, branch `arena/7ea7d915-zentixbot-ai-discord` di repositori `zentixbot-ai-discord` (lihat bagian 8). Tiga baris di atas menggambarkan inventaris awal.
 - **Tujuan:** mengintegrasikan fitur bot ke dashboard web secara bertahap, dengan penyimpanan dan operasi Discord yang aman untuk jalur yang digunakan.
 
-> **Kesimpulan singkat:** dashboard sudah mempunyai banyak jalur terhubung ke bot, tetapi integrasi seluruh fitur **belum selesai** dan proyek **belum dinyatakan siap produksi**. Join to Create sudah memiliki inventaris baca-saja; transaksi dan alur create yang baru masih prototipe terisolasi. PostgreSQL adalah backend runtime saat ini. SQLite masih eksperimental dan belum bisa digunakan sebagai backend runtime.
+> **Kesimpulan singkat:** dashboard sudah mempunyai banyak jalur terhubung ke bot, tetapi integrasi seluruh fitur **belum selesai** dan proyek **belum dinyatakan siap produksi**. Join to Create di sisi bot sudah memakai satu protokol transaksi PostgreSQL untuk semua penulisnya dan belum pernah diuji di Discord sungguhan; dashboard dapat mengubah pengaturan trigger, sedangkan inventaris channel sementara tetap baca-saja. PostgreSQL adalah backend runtime saat ini. SQLite masih eksperimental dan belum bisa digunakan sebagai backend runtime.
 
 ## 1. Cara membaca status
 
@@ -22,7 +23,7 @@ Preview statis `dashboard-preview/` yang dibuka sendiri adalah **simulasi**. Aks
 - Jalur PostgreSQL diperkuat: pemeriksaan startup, versi dan kelengkapan skema, audit key legacy yang dikenal, TLS dengan verifikasi, serta `/health` dan `/ready` dengan fungsi yang berbeda.
 - Penguncian/transaksi dan pemeriksaan konflik telah ditambahkan pada jalur tertentu untuk konfigurasi guild/welcome, verification, Birthday, warning, tiket, ekonomi dan Giveaway. Jaminan hanya berlaku bagi jalur yang benar-benar mengikuti protokol dan diuji.
 - Backup PostgreSQL dan latihan restore ke target uji terpisah tersedia. **Restore produksi masih dinonaktifkan.**
-- Dashboard Giveaway sudah memiliki daftar dan aksi akhiri/undi ulang dengan pengaman; Join to Create sudah memiliki inventaris baca-saja dan pemeriksaan Discord untuk ID pending yang tercatat.
+- Dashboard Giveaway sudah memiliki daftar, pembuatan, akhiri/undi ulang, penghapusan dan perbaikan pengiriman tertunda dengan pengaman; Join to Create sudah memiliki pengaturan trigger lewat web, inventaris baca-saja dan pemeriksaan Discord untuk ID pending yang tercatat.
 - Fondasi SQLite, sejumlah adapter dan importer terbatas telah dibuat untuk eksperimen, tetapi belum merupakan migrasi atau backend produksi.
 - Workspace telah dirapikan dan sembilan arsip ZIP yang ditemukan telah dihapus sesuai permintaan. Kode proyek, gambar unggahan, direktori referensi dan hasil pengujian akhir dipertahankan. Penghapusan ZIP tidak membuktikan bahwa seluruh backup atau salinan lain telah dihapus.
 
@@ -33,17 +34,17 @@ Preview statis `dashboard-preview/` yang dibuka sendiri adalah **simulasi**. Aks
 | **Overview & hosting** | Status bot dan informasi resource hosting bila dikonfigurasi. | Koneksi dan resource hosting nyata belum diverifikasi; data yang tidak tersedia bukan bukti host mati. |
 | **Welcome & verification** | Pengaturan Welcome, Goodbye non-AI, verification dan pengiriman panel verification memiliki jalur dashboard. Pengamanan konflik dan stale edit diterapkan pada jalur PostgreSQL yang diuji. | Discord dan event nyata belum diuji; efek Discord dan database tidak atomik. Beberapa event lama masih dapat kembali ke default saat pembacaan database gagal. |
 | **Moderation** | Tampilan kasus dan tindakan dashboard; operasi warning PostgreSQL memakai protokol transaksi/lock pada jalur yang diuji. | Audit permission/hierarki dan hasil Discord nyata masih diperlukan. `/wipedata` dan tombol lama dinonaktifkan untuk semua backend; belum ada penghapusan data menyeluruh yang terverifikasi. |
-| **Ticket** | Pengaturan/panel, daftar, detail, tindakan dan transcript terbatas; counter PostgreSQL atomik pada jalur yang diuji. | Batas tiket per pengguna masih dapat balapan dengan pembuatan Discord; aksi Discord/DB tidak atomik, transcript bergantung channel dan izin. |
-| **Leveling & economy** | Pengaturan leveling, leaderboard, pencarian anggota dan sebagian pengelolaan saldo. Sejumlah perintah ekonomi PostgreSQL sudah memakai transaksi. | Reward role tidak tersinkron otomatis; pembelian role premium dan penulis ekonomi lain masih perlu audit. Poin Activities belum disambungkan ke wallet. |
+| **Ticket** | Pengaturan/panel, daftar, detail, tindakan dan transcript terbatas; counter PostgreSQL atomik. Diaudit: penyimpanan bersyarat (perubahan bersamaan tidak saling menimpa), batas tiket per pengguna diserialkan per proses, pembersihan saat pembuatan gagal, penutupan tidak bisa ganda, channel tidak dihapus bila transcript gagal. Diuji lokal. | Discord dan database bukan satu transaksi; penjaga hanya berlaku dalam satu proses bot; tiket lama tanpa `messageId` dan penghapusan terjadwal di memori tetap terbatas. Rincian di `DOKUMENTASI-AUDIT-TIKET.md`. Belum diuji di Discord nyata. |
+| **Leveling & economy** | Pengaturan leveling, leaderboard, pencarian anggota dan sebagian pengelolaan saldo. Sejumlah perintah ekonomi PostgreSQL sudah memakai transaksi. | Reward role sudah diaudit (`DOKUMENTASI-AUDIT-REWARD-ROLE.md`): role hadiah diberikan setelah level tersimpan, juga saat level diubah staf atau lewat web, dan ada sinkronisasi manual di web; belum diuji di Discord nyata dan role tidak pernah dicabut otomatis. Penulis ekonomi sudah diaudit (`DOKUMENTASI-AUDIT-EKONOMI.md`): pembelian role premium memotong dulu lalu memberi role dan bisa dilanjutkan tanpa potongan ganda, role premium diperiksa keamanannya di Discord dan web, batas toko berlaku, dan `/economy dashboard` tidak lagi menulis ke file sumber; belum diuji di Discord nyata. Simbol mata uang hanya berlaku di `/economy dashboard`. Poin Activities sengaja tidak disambungkan ke wallet. |
 | **Music** | Player, antrean, pencarian dan kontrol yang didukung memiliki jalur dashboard. | Memerlukan Lavalink dan Discord; operasi nyata dan resource hosting belum diuji. Sebagian state musik berada di memori proses. |
 | **Logging** | Pengaturan dan riwayat terbatas dari channel audit. | Bukan riwayat seluruh event; bergantung pada channel, izin dan pesan Discord yang tersedia. |
-| **Birthday** | Pengaturan channel, melihat daftar serta mengubah/menghapus entri yang sudah ada pada PostgreSQL. Jalur transaksi per anggota telah diuji lokal. | Penambahan entri baru via web dan audit khusus perubahan belum ada. Scheduler/Discord belum diuji live; penanganan 29 Februari pada web dan command lama belum seragam. |
+| **Birthday** | Pengaturan channel, melihat daftar serta menambah/mengubah/menghapus entri pada PostgreSQL, dengan catatan ke channel audit. Satu aturan tanggal untuk web, command dan scheduler: 29 Februari selalu dapat disimpan dan dirayakan 28 Februari pada tahun non-kabisat; semuanya memakai tanggal UTC. Diuji lokal. | Scheduler/Discord belum diuji live. Catatan audit best-effort dan tidak memuat tanggal. Belum ada zona waktu per server, pencarian anggota berdasarkan nama, atau pengejaran pengumuman yang terlewat. |
 | **Core & command access** | Melihat, memfilter dan mengaktifkan/menonaktifkan akses perintah atau kategori pada PostgreSQL, dengan konfirmasi dan pemeriksaan stale. | Mengelola akses perintah, bukan seluruh konfigurasi fitur atau hak Discord. Penulis lama/SQL langsung tidak dijamin mengikuti lock. |
-| **Giveaway** | Inventaris PostgreSQL, aksi web akhiri/undi ulang, dan jalur runtime PostgreSQL tertentu memakai transaksi per giveaway dan status pengiriman. | Web belum bisa create/delete; `/gdelete` PostgreSQL diblokir. Hasil `pending`, create yang tidak pasti dan hasil lama tanpa `delivered` memerlukan pemeriksaan manual. |
-| **Join to Create** | Inventaris PostgreSQL baca-saja, peringatan data pending, dan tombol pemeriksaan Discord terbatas untuk ID pending yang telah tercatat. | Pengeditan, create/delete, transfer dan rekonsiliasi via web **belum tersedia**. Prototipe penulis/reservasi belum dipakai bot; kondisi Discord dapat berubah setelah pemeriksaan. |
+| **Giveaway** | Inventaris PostgreSQL; web dapat membuat, mengakhiri, mengundi ulang dan menghapus; `/gdelete` di PostgreSQL aktif kembali lewat jalur yang sama; pengiriman `pending` dapat ditandai terkirim atau dikirim ulang oleh admin. Transaksi per giveaway dengan status pengiriman dan tanda penghapusan. Diuji lokal. | Belum diuji di Discord nyata. Setiap aksi bisa terhenti di antara Discord dan database dan perlu dilanjutkan manual. Hasil lama tanpa `delivered` belum bisa diundi ulang; catatan yang datanya rusak belum bisa dihapus dari web; `/gcreate` belum membersihkan pesan yatim; SQLite masih menolak `/gdelete`. |
+| **Join to Create** | Pengaturan trigger lewat web (aktifkan pada channel suara yang ada, ubah template/batas/bitrate, lepas trigger) dengan konfirmasi dan pemeriksaan perubahan bertabrakan. Inventaris PostgreSQL baca-saja, peringatan data pending, dan pemeriksaan Discord terbatas untuk ID pending. | Web tidak membuat atau menghapus channel Discord dan tidak mengelola channel sementara (hapus, transfer, rekonsiliasi). Belum diuji dengan Discord sungguhan; tampilan belum dilihat di browser. |
 | **AI Studio** | Fondasi provider dan jalur parsial untuk AI Welcome/Goodbye, Activities, chat/agent, pengetahuan, tools, gambar dan Server Builder. | Memerlukan pengaturan provider, kuota, biaya, izin, privasi dan konfirmasi sesuai fitur. Provider/model dan Discord nyata belum diuji; beberapa fungsi tetap terbatas. |
-| **Pengaturan utama** | Struktur halaman dan beberapa pengaturan tersedia di area fitur masing-masing. | Halaman utama pengaturan masih placeholder, bukan panel umum yang lengkap. |
-| **Kategori lain** | Kategori bot sudah terdaftar dalam kode/struktur. | Community, Fun, Reaction Roles, Search, Server Stats, Tools dan Utility belum memiliki integrasi dashboard terpadu untuk masing-masing kategori. |
+| **Pengaturan utama** | Pusat kendali baca-saja: kondisi server dan izin bot di Discord, jenis dan status penyimpanan, dasar akses sesi, status konfigurasi hosting (owner bot), serta pintasan ke halaman fitur. Diuji lokal. | Tidak menyimpan apa pun; hanya izin tingkat server; prefix perintah belum dapat diatur lewat web. Opsi simulasi di halaman fitur dan AI Studio belum diaudit. |
+| **Kategori lain** | Kategori bot sudah terdaftar dalam kode/struktur. | Server Stats, Reaction Roles dan Fun sudah diaudit dan memiliki halaman dashboard (`DOKUMENTASI-AUDIT-SERVER-STATS.md`, `DOKUMENTASI-AUDIT-REACTION-ROLES.md`, `DOKUMENTASI-AUDIT-FUN.md`). Search sudah diaudit; ia tidak menyimpan pengaturan sehingga tidak punya halaman sendiri, dan subperintahnya diatur lewat halaman Akses perintah (`DOKUMENTASI-AUDIT-SEARCH.md`). Utility sudah diaudit; ia tidak punya pengaturan server sendiri (to-do adalah data pribadi anggota, channel laporan diatur di halaman Logging) sehingga tidak punya halaman sendiri (`DOKUMENTASI-AUDIT-UTILITY.md`). Community dan Tools belum diaudit dan belum memiliki integrasi dashboard. |
 
 Rincian batas tiap area ada di `DOKUMENTASI-DASHBOARD.md`, `DOKUMENTASI-CORE-DASHBOARD.md` dan `DOKUMENTASI-TAHAP-8.md`.
 
@@ -53,18 +54,23 @@ Rincian batas tiap area ada di `DOKUMENTASI-DASHBOARD.md`, `DOKUMENTASI-CORE-DAS
 
 - Inventaris owner/admin membaca konfigurasi PostgreSQL dan daftar channel sementara yang tersimpan. ID pemilik dan token pending tidak dikirim ke browser; respons memakai `no-store`.
 - Data hilang, kedaluwarsa, terlalu besar, rusak atau konflik key ditangani secara berbeda; data tersimpan **bukan bukti** channel masih ada di Discord.
-- Jika metadata pending prototipe memuat ID channel, dashboard dapat meminta pemeriksaan baca-saja ke Discord. ID dari browser hanya pembanding terhadap ID yang tersimpan; tidak dapat dipakai sebagai lookup channel sembarang.
-- Telah dibuat prototipe transaksi, reservasi sebelum create, pencatatan ID hasil adapter dan acknowledgement. Ada tes race, rollback, batas ukuran, timeout, serta simulasi respons commit yang hilang.
-- Tidak ada retry, penghapusan, pembatalan atau rekonsiliasi otomatis pada prototipe ketika hasil tidak pasti.
+- **Cutover penulis bot selesai.** Perintah `/jointocreate`, event `voiceStateUpdate` dan `channelDelete`, serta rekonsiliasi saat startup memakai satu protokol transaksi (`postgresJoinToCreateTransactions.js`) lewat satu runtime (`joinToCreateRuntime.js`). Penulis lama yang menyimpan ulang seluruh objek tanpa kunci sudah dihapus.
+- Penulis key/value generik (`set`, `delete`, `increment`, `decrement`) menolak key Join to Create.
+- Urutan create: reservasi di database → create di Discord → pendaftaran. Delete: Discord dulu, baru record. Create yang terputus diselesaikan otomatis hanya bila tepat satu channel cocok; bila ragu, tidak ada yang dihapus.
+- Rekonsiliasi saat bot menyala: record tanpa channel, channel kosong, pemilik yang sudah pergi, trigger yang hilang, anggota yang menunggu di trigger.
+- Tes memakai PostgreSQL lokal dan guild Discord tiruan: 20 anggota masuk bersamaan, penolakan dan timeout Discord, respons COMMIT yang hilang, enam skenario mati di tengah create.
+- **Pengaturan trigger di dashboard.** Memakai runtime yang sama dengan perintah slash, dengan login owner/admin, Origin, CSRF, konfirmasi dan `configRevision`. Hanya bidang yang diubah yang dikirim.
 
 ### Belum dan risiko yang masih ada
 
-- **Prototipe penulis belum terhubung** ke command, event maupun operasi dashboard. Implementasi bot yang aktif masih memiliki beberapa penulis read-modify-write seluruh objek tanpa lock bersama dan dapat saling menimpa.
-- Semua penulis command, collector, event dan akses key generik harus dipindahkan/diamankan bersama, disertai audit data legacy, TTL, backup, cutover dan pengujian konkurensi.
-- Alur create, pemindahan anggota, delete dan transfer harus menangani kegagalan serta hasil tidak pasti antara Discord dan PostgreSQL. Belum ada workflow pemulihan pending yang aman dan teruji.
-- Cleanup event saat fitur nonaktif/tanpa trigger masih dapat terlewat. Kategori yang tersimpan saat ini tidak dipakai saat membuat channel; bot memakai parent trigger.
-- Pemeriksaan Discord hanya snapshot respons untuk ID tersebut: **bukan bukti** asal channel, pemilik, izin, atau bahwa channel masih ada sesudahnya. Timeout/gagal bukan bukti channel tidak ada. Perbandingan isi tidak mendeteksi A→B→A.
-- Jangan gunakan prototipe untuk mengubah data produksi atau mengaktifkan tombol edit sebelum cutover selesai. Lihat `DOKUMENTASI-JOIN-TO-CREATE-PG.md`.
+- **Belum pernah dijalankan di Discord sungguhan.** Rate limit, urutan event gateway dan izin yang sebenarnya belum terbukti.
+- Antrean operasi hanya ada di dalam satu proses bot. Dua proses pada guild yang sama tidak merusak record, tetapi alurnya belum diuji.
+- Channel yang dibuat Discord setelah bot selesai memeriksa, lalu bot mati sebelum jawaban terlambat tiba, tidak terdaftar; cari lewat audit log dengan alasan `Join to Create <token>`.
+- Event yang gagal diproses (misalnya database mati) tidak diulang; sisanya baru dibersihkan saat bot menyala lagi.
+- Dashboard hanya mengubah pengaturan tersimpan; channel sementara tidak bisa dikelola dari web. Nama channel dan izin bot yang ditampilkan berasal dari cache bot. Pemeriksaan Discord di dashboard hanya snapshot untuk ID tersimpan: **bukan bukti** asal channel, pemilik atau izin.
+- Tampilan halaman pengaturan belum dilihat di browser sungguhan.
+- SQL langsung dan restore backup tidak menghormati advisory lock.
+- Rincian: `DOKUMENTASI-JOIN-TO-CREATE-PG.md`.
 
 ## 5. Penyimpanan, keamanan dan operasional
 
@@ -95,11 +101,38 @@ Untuk basis kode `98b2bee`:
 | Pemeriksaan | Hasil | Cakupan/batas |
 |---|---:|---|
 | Regresi Node 22, PostgreSQL lokal dan tes TLS opt-in | **511/511 lulus** | Database PostgreSQL 17 disposable; Discord/provider tiruan dan jsdom. Bukan server Discord, Neon atau hosting nyata. |
-| Tes terfokus Join to Create dengan Node 20 | **45/45 lulus** | API/UI, prototipe transaksi dan create; tidak mencakup seluruh proyek pada Node 20. |
+| Regresi Node 22 setelah pengaturan Join to Create di dashboard (2026-11-13) | **542 lulus, 0 gagal, 4 dilewati** dari 546 | PostgreSQL 16 disposable tanpa TLS, sehingga 4 tes TLS **dilewati, bukan lulus**. Discord tiruan. |
+| Tes terfokus Join to Create dengan Node 20.20 (2026-11-13) | **80/80 lulus** | Protokol, runtime, API dan UI inventaris serta pengaturan; tidak mencakup seluruh proyek pada Node 20. |
+| Regresi Node 22 setelah penambahan Birthday lewat web dan aturan 29 Februari (2026-11-13) | **567 lulus, 0 gagal, 4 dilewati** dari 571 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. |
+| Tes terfokus Birthday dengan Node 20.20 (2026-11-13) | **47/47 lulus** | Aturan tanggal, API tambah/ubah/hapus, UI, scheduler dengan Discord tiruan, keamanan transaksi PostgreSQL. Tes Birthday SQLite tidak termasuk: SQLite memerlukan Node 22.5 dan gagal di Node 20 juga sebelum perubahan ini. |
+| Regresi Node 22 setelah create/delete dan pemulihan Giveaway (2026-11-13) | **604 lulus, 0 gagal, 4 dilewati** dari 608 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. |
+| Tes terfokus Giveaway dengan Node 20.20 (2026-11-13) | **65/65 lulus** | Protokol, runtime, create/delete/pemulihan, API dan UI. Tes Giveaway SQLite tidak termasuk (SQLite memerlukan Node 22.5). |
+| Regresi Node 22 setelah halaman pengaturan utama (2026-11-13) | **617 lulus, 0 gagal, 4 dilewati** dari 621 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. |
+| Tes pengaturan utama dengan Node 20.20 (2026-11-13) | **13/13 lulus** | API pusat kendali (akses, izin bot, penyimpanan, hosting tanpa rahasia) dan halaman dengan jsdom. |
+| Regresi Node 22 setelah audit tiket (2026-11-13) | **639 lulus, 0 gagal, 4 dilewati** dari 643 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. |
+| Tes tiket dengan Node 20.20 (2026-11-13) | **31/31 lulus** | Service tiket (22), runtime tiket PostgreSQL, feedback dan rute operasi dashboard. Tes tiket SQLite tidak termasuk (SQLite memerlukan Node 22.5). |
+| Regresi Node 22 setelah audit reward role (2026-11-13) | **673 lulus, 0 gagal, 4 dilewati** dari 677 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. Lingkungan dibangun ulang dengan `scripts/setup-test-postgres.sh`. |
+| Tes reward role dengan Node 20.20 (2026-11-13) | **46/46 lulus** | Layanan (20), API dan `/level dashboard` (8), halaman dengan jsdom (6), rute modul dan operasi dashboard (12). Tes leveling SQLite tidak termasuk (SQLite memerlukan Node 22.5). |
+| Regresi Node 22 setelah audit penulis ekonomi (2026-11-13) | **705 lulus, 0 gagal, 4 dilewati** dari 709 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. |
+| Tes ekonomi dengan Node 20.20 (2026-11-13) | **64/64 lulus** | Penulis ekonomi dan `/economy dashboard` (23), halaman dengan jsdom (4), transaksi ekonomi (21), audit ekonomi lama (4), rute modul dan operasi dashboard (12). Tes ekonomi SQLite tidak termasuk (SQLite memerlukan Node 22.5). |
+| Regresi Node 22 setelah audit simulasi dashboard (2026-11-13) | **717 lulus, 0 gagal, 4 dilewati** dari 721 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. |
+| Tes dashboard dengan Node 20.20 (2026-11-13) | **64/64 lulus** | Sembilan berkas: label simulasi, penelusuran dashboard dengan router asli, login dan `/api/me`, serta tes halaman AI chat, AI welcome, Activities, pengetahuan, goodbye dan ekonomi. |
+| Regresi Node 22 setelah audit Server Stats (2026-11-13) | **769 lulus, 0 gagal, 4 dilewati** dari 773 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. |
+| Tes Server Stats dengan Node 20.20 (2026-11-13) | **64/64 lulus** | Empat berkas: layanan dan perintah Server Stats (38), API dan halaman Server Stats (14), label simulasi (10), penelusuran dashboard dengan router asli (2). |
+| Regresi Node 22 setelah audit Reaction Roles (2026-11-13) | **821 lulus, 0 gagal, 4 dilewati** dari 825 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. |
+| Tes Reaction Roles dengan Node 20.20 (2026-11-13) | **64/64 lulus** | Empat berkas: layanan dan perintah Reaction Roles (35), API dan halaman Reaction Roles (17), label simulasi (10), penelusuran dashboard dengan router asli (2). |
+| Regresi Node 22 setelah audit Fun (2026-11-13) | **873 lulus, 0 gagal, 4 dilewati** dari 877 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. |
+| Tes Fun dengan Node 20.20 (2026-11-13) | **64/64 lulus** | Enam berkas: sistem angka (6), `/roll` `/fight` `/flip` (6), permainan hitung dan `/count` (26), API dan halaman permainan hitung (14), label simulasi (10), penelusuran dashboard dengan router asli (2). |
+| Regresi Node 22 setelah audit Search (2026-11-13) | **893 lulus, 0 gagal, 4 dilewati** dari 897 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. Layanan kamus dan Urban Dictionary tidak dihubungi; tes memakai server HTTP lokal dan tiruan. |
+| Tes Search dengan Node 20.20 (2026-11-13) | **32/32 lulus** | Lima berkas: permintaan HTTP dan escape teks (8), perintah `/search` (11), akses per subperintah (1), label simulasi (10), penelusuran dashboard dengan router asli (2). |
+| Regresi Node 22 setelah audit Utility (2026-11-13) | **943 lulus, 0 gagal, 4 dilewati** dari 947 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. Layanan cuaca Open-Meteo tidak dihubungi; tes memakai tiruan. |
+| Tes Utility dengan Node 20.20 (2026-11-13) | **62/62 lulus** | Lima berkas: to-do pribadi dan bersama, tombol, formulir, router interaksi (25), `/report` (6), `/weather` dan perintah info (19), label simulasi (10), penelusuran dashboard dengan router asli (2). |
 | `npm audit --omit=dev` | **0 kerentanan dilaporkan** | Saat pengujian; hanya dependency produksi dan hasil advisory dapat berubah. |
 | Git diff check | **Bersih** sebelum dokumentasi ini | Pemeriksaan whitespace, bukan audit kode/keamanan. |
 
 Log di workspace ini: `/home/user/jtc-discord-check-regresi-final.txt`, `/home/user/jtc-discord-check-node20-final.txt`, dan `/home/user/jtc-discord-check-audit-final.txt`. File tersebut berada di luar repo dan mungkin tidak ikut jika repo dipindahkan.
+
+PostgreSQL disposable tanpa TLS dapat disiapkan di Linux x86_64 dengan `source scripts/setup-test-postgres.sh`; skrip itu mengunduh PostgreSQL 16 dan alat klien ke direktori cache, membuat cluster kosong di `/tmp` dan menyetel `ZENTIX_TEST_PG_SOCKET`. Empat tes TLS tetap dilewati tanpa sertifikat uji.
 
 Contoh perintah regresi yang dipakai, **hanya setelah PostgreSQL disposable dan sertifikat uji lokal disiapkan**:
 
@@ -115,17 +148,29 @@ Jangan arahkan tes ke database produksi. Sertifikat dan direktori `/tmp` bersifa
 
 ### Prioritas 1 — keselamatan dan Join to Create
 
-- [ ] Rancang dan uji recovery yang diaudit untuk operasi pending, termasuk ketidakpastian commit dan respons Discord; jangan mengulangi efek secara otomatis.
-- [ ] Selesaikan desain create, move, delete dan transfer, termasuk permission, voice state, event terlambat, cleanup saat disabled dan category behavior.
-- [ ] Migrasikan **semua** penulis Join to Create yang aktif ke satu protokol; blokir penulis generik yang melewatinya setelah jalur pengganti siap. Uji beberapa instance/konkurensi, kegagalan dan bot lama.
-- [ ] Baru setelah itu pertimbangkan aksi dashboard dengan autentikasi, CSRF/Origin, konfirmasi dan kontrol stale. Uji Discord sungguhan di server uji sebelum cutover.
+- [x] Recovery operasi pending, termasuk ketidakpastian commit dan respons Discord, tanpa mengulangi create secara otomatis. Diuji dengan Discord tiruan.
+- [x] Desain create, move, delete dan transfer, termasuk permission, jawaban terlambat, cleanup saat disabled dan perilaku kategori.
+- [x] Semua penulis Join to Create memakai satu protokol; penulis generik diblokir. Konkurensi dan kegagalan diuji dalam satu proses.
+- [ ] Uji Join to Create di server Discord uji (lihat daftar di `DOKUMENTASI-JOIN-TO-CREATE-PG.md`). Uji dua proses bot bila deployment seperti itu direncanakan.
+- [x] Pengaturan trigger di dashboard dengan autentikasi, CSRF/Origin, konfirmasi dan kontrol stale. Dikerjakan sebelum uji Discord sungguhan karena hanya mengubah data tersimpan; uji itu tetap harus dilakukan.
 
 ### Prioritas 2 — integrasi dashboard yang belum lengkap
 
 - [ ] Audit dan integrasikan kategori Community, Fun, Reaction Roles, Search, Server Stats, Tools dan Utility satu per satu, termasuk izin, penyimpanan, efek Discord dan tes.
-- [ ] Lengkapi halaman pengaturan utama dan opsi yang masih simulasi. Bedakan informasi tersimpan dari kondisi Discord aktual.
-- [ ] Lengkapi Giveaway create/delete dan pemulihan pending dengan protokol yang aman; audit fitur tiket, reward role dan seluruh penulis ekonomi sebelum memperluas perubahan.
-- [ ] Tambahkan kemampuan dan audit Birthday yang masih kurang, termasuk penambahan lewat web bila diperlukan dan penyelarasan perilaku 29 Februari.
+  - [x] Server Stats: 15 masalah diperbaiki, 15 keterbatasan dicatat, halaman dashboard ditambahkan. Rincian di `DOKUMENTASI-AUDIT-SERVER-STATS.md`. Masih perlu diuji di server Discord nyata.
+  - [ ] Community
+  - [x] Fun: 20 masalah diperbaiki, 20 keterbatasan dicatat, halaman dashboard permainan hitung ditambahkan. Rincian di `DOKUMENTASI-AUDIT-FUN.md`. Masih perlu diuji di server Discord nyata.
+  - [x] Reaction Roles: 23 masalah diperbaiki, 16 keterbatasan dicatat, halaman dashboard ditambahkan. Rincian di `DOKUMENTASI-AUDIT-REACTION-ROLES.md`. Masih perlu diuji di server Discord nyata.
+  - [x] Search: 15 masalah diperbaiki, 14 keterbatasan dicatat. Tidak ada halaman baru karena tidak ada pengaturan; dashboard menautkan ke Akses perintah. `/search urban` kini hanya di channel berbatas usia. Rincian di `DOKUMENTASI-AUDIT-SEARCH.md`. Layanan luar dan server Discord nyata belum diuji.
+  - [ ] Tools
+  - [x] Utility: 23 masalah diperbaiki, 23 keterbatasan dicatat. Penyimpanan to-do ditulis ulang (transaksi, batas, halaman); semua jawaban `/todo` kini pribadi; `/report` tidak lagi mengaku terkirim bila tidak terkirim. Tidak ada halaman baru; dashboard menautkan ke Logging dan Akses perintah. Rincian di `DOKUMENTASI-AUDIT-UTILITY.md`. Layanan cuaca dan server Discord nyata belum diuji.
+- [x] Halaman pengaturan utama: pusat kendali baca-saja yang memisahkan kondisi Discord saat ini dari data tersimpan. Rincian di `DOKUMENTASI-DASHBOARD.md`.
+- [x] Audit opsi simulasi di halaman fitur dan AI Studio: tidak ada opsi simulasi di dashboard login (27 formulir, 174 kontrol diukur); label yang keliru, tab ganda dan keterangan untuk akun bukan owner bot diperbaiki. Rincian di `DOKUMENTASI-DASHBOARD.md` bagian "Audit simulasi".
+- [x] Giveaway: create/delete lewat web, `/gdelete` PostgreSQL, dan pemulihan pengiriman `pending` (tandai terkirim/kirim ulang). Rincian di `DOKUMENTASI-GIVEAWAY-PG.md`. Masih perlu diuji di server Discord nyata.
+- [x] Audit fitur tiket: 12 masalah diperbaiki, 11 keterbatasan dicatat. Rincian di `DOKUMENTASI-AUDIT-TIKET.md`.
+- [x] Audit reward role: 12 masalah diperbaiki, 11 keterbatasan dicatat. Rincian di `DOKUMENTASI-AUDIT-REWARD-ROLE.md`. Masih perlu diuji di server Discord nyata.
+- [x] Audit seluruh penulis ekonomi (termasuk pembelian role premium): 10 masalah diperbaiki, 13 keterbatasan dicatat. Rincian di `DOKUMENTASI-AUDIT-EKONOMI.md`. Masih perlu diuji di server Discord nyata.
+- [x] Birthday: penambahan entri lewat web, catatan audit perubahan dari dashboard, dan satu aturan 29 Februari/UTC untuk web, command dan scheduler. Rincian di `DOKUMENTASI-DASHBOARD.md` bagian Birthday. Masih perlu diuji di server Discord nyata.
 
 ### Prioritas 3 — deployment dan pemulihan
 
@@ -138,11 +183,16 @@ Jangan arahkan tes ke database produksi. Sertifikat dan direktori `/tmp` bersifa
 
 Pada saat inventaris, `HEAD` kode adalah `98b2bee`; referensi **lokal** `origin/main` menunjuk ke `51cfc24fa63b74b6f40b7961e7e30b53a0eecaa6`, dan ada **11 commit kode lokal** di depannya. Dokumentasi ini serta pembaruan tabel status ditambahkan sebagai commit dokumentasi terpisah, sehingga bila commit tersebut dibuat dan belum ada push, total menjadi **12 commit lokal**. Angka ini dapat berubah; referensi remote lokal belum membuktikan keadaan GitHub terkini tanpa fetch. Tidak ada push yang dilakukan dalam tahap dokumentasi ini.
 
+**Pembaruan 2026-11-13 (sesi Arena):** paragraf di atas menggambarkan repositori lama. Pekerjaan sejak itu berada di branch `arena/7ea7d915-zentixbot-ai-discord`, bercabang dari commit `87bafcc` di `main`, dan **sudah di-push** ke GitHub. Commit-commit awal sesi ini (protokol Join to Create, penggantian nama, pengaturan Join to Create di web, Birthday, Giveaway, halaman pengaturan utama, audit tiket, audit reward role) hilang dari riwayat Git lokal dua kali ketika lingkungan kerja direset; isi berkasnya utuh dan kini tercatat sebagai satu commit, `fd11ff3`. Audit penulis ekonomi (`b65dd5e`), audit simulasi dashboard (`47369d1`), audit Server Stats (`f9670c3`), audit Reaction Roles (`2c21fd6`), audit Fun (`15c523a`), audit Search (`de3832d`) dan audit Utility adalah commit berikutnya di atasnya. Belum ada pull request.
+
 | Berkas / direktori | Kegunaan |
 |---|---|
 | `DOKUMENTASI-DASHBOARD.md` | Inventaris dashboard dan batas fitur. |
-| `DOKUMENTASI-JOIN-TO-CREATE-PG.md` | Audit penulis, prototipe dan syarat cutover Join to Create. |
+| `DOKUMENTASI-JOIN-TO-CREATE-PG.md` | Protokol, urutan Discord/database, pemulihan, risiko dan pengujian Join to Create. |
 | `DOKUMENTASI-GIVEAWAY-PG.md` | Cutover, operasi, `pending` dan batas Giveaway PostgreSQL. |
+| `DOKUMENTASI-AUDIT-TIKET.md` | Hasil audit fitur tiket: perbaikan, perubahan perilaku, keterbatasan. |
+| `DOKUMENTASI-AUDIT-REWARD-ROLE.md` | Hasil audit role hadiah leveling: perbaikan, aturan role, sinkronisasi manual, keterbatasan. |
+| `scripts/setup-test-postgres.sh` | Menyiapkan PostgreSQL disposable untuk tes (Linux x86_64). |
 | `DOKUMENTASI-POSTGRESQL.md` | Startup, TLS, health/readiness, backup dan restore drill. |
 | `DOKUMENTASI-MIGRASI-SQLITE.md` | Fondasi dan batas migrasi SQLite eksperimental. |
 | `DOKUMENTASI-CORE-DASHBOARD.md` | Akses perintah Core dan batas konkurensi. |

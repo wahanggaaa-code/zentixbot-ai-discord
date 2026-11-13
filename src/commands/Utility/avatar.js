@@ -1,8 +1,9 @@
-import { SlashCommandBuilder, MessageFlags } from 'discord.js';
+import { SlashCommandBuilder } from 'discord.js';
 import { createEmbed } from '../../utils/embeds.js';
 import { logger } from '../../utils/logger.js';
 
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+import { plainText } from '../../services/searchLookup.js';
 export default {
     data: new SlashCommandBuilder()
     .setName("avatar")
@@ -17,10 +18,10 @@ export default {
 
   async execute(interaction) {
     const user = interaction.options.getUser("target") || interaction.user;
-    const avatarUrl = user.displayAvatarURL({ size: 2048, dynamic: true });
+    const avatarUrl = user.displayAvatarURL({ size: 2048 });
 
     const embed = createEmbed({ 
-      title: `${user.username}'s Avatar`, 
+      title: `${plainText(user.username, 100)}'s Avatar`,
       description: `[Download Link](${avatarUrl})` 
     })
       .setImage(avatarUrl);

@@ -1,7 +1,7 @@
 services:
   bot:
     build: .
-    container_name: titanbot
+    container_name: zentixbot
     restart: unless-stopped
     env_file:
       - .env
@@ -10,12 +10,12 @@ services:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - CLIENT_ID=${CLIENT_ID}
       - GUILD_ID=${GUILD_ID}
-      - DATABASE_URL=postgres://${POSTGRES_USER:-titanbot}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-titanbot}
-      - POSTGRES_URL=postgres://${POSTGRES_USER:-titanbot}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-titanbot}
+      - DATABASE_URL=postgres://${POSTGRES_USER:-zentixbot}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-zentixbot}
+      - POSTGRES_URL=postgres://${POSTGRES_USER:-zentixbot}:${POSTGRES_PASSWORD:-password}@db:5432/${POSTGRES_DB:-zentixbot}
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
-      - POSTGRES_DB=${POSTGRES_DB:-titanbot}
-      - POSTGRES_USER=${POSTGRES_USER:-titanbot}
+      - POSTGRES_DB=${POSTGRES_DB:-zentixbot}
+      - POSTGRES_USER=${POSTGRES_USER:-zentixbot}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
       - POSTGRES_SSL=false
       - AUTO_MIGRATE=true
@@ -35,29 +35,29 @@ services:
       retries: 3
       start_period: 40s
     networks:
-      - titan-network
+      - zentix-network
 
   lavalink:
     profiles:
       - local-lavalink
     image: ghcr.io/lavalink-devs/lavalink:4
-    container_name: titanbot-lavalink
+    container_name: zentixbot-lavalink
     restart: unless-stopped
     environment:
       - LAVALINK_PASSWORD=${LAVALINK_PASSWORD:-youshallnotpass}
     volumes:
       - ./lavalink/application.yml:/opt/Lavalink/application.yml
     networks:
-      - titan-network
+      - zentix-network
 
   db:
     image: postgres:15-alpine
-    container_name: titanbot-db
+    container_name: zentixbot-db
     restart: unless-stopped
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-titanbot}
+      - POSTGRES_USER=${POSTGRES_USER:-zentixbot}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
-      - POSTGRES_DB=${POSTGRES_DB:-titanbot}
+      - POSTGRES_DB=${POSTGRES_DB:-zentixbot}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -66,10 +66,10 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - titan-network
+      - zentix-network
 
 networks:
-  titan-network:
+  zentix-network:
     driver: bridge
 
 volumes:

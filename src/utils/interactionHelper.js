@@ -32,7 +32,7 @@ export class InteractionHelper {
     }
 
     static patchInteractionResponses(interaction) {
-        if (!interaction || interaction.__titanResponsePatched) {
+        if (!interaction || interaction.__zentixResponsePatched) {
             return;
         }
 
@@ -70,7 +70,7 @@ export class InteractionHelper {
             return await originalFollowUp(options);
         };
 
-        interaction.__titanResponsePatched = true;
+        interaction.__zentixResponsePatched = true;
     }
 
     static isInteractionValid(interaction) {
