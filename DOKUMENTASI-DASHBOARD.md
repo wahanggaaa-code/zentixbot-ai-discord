@@ -23,7 +23,8 @@ Inventaris kode per perubahan dashboard ini, bukan sertifikasi produksi. **Live*
 | Reaction Roles | Panel pilih role: daftar PostgreSQL dengan status pesan; buat, ubah teks, tambah/lepas role, gambar ulang, pasang ulang dan hapus | **Bertindak di Discord**: mengirim, mengubah dan menghapus pesan. Discord dan database bukan satu transaksi; pesan dapat tertinggal dari catatan sampai digambar ulang. Belum diuji di Discord nyata. Lihat `DOKUMENTASI-AUDIT-REACTION-ROLES.md`. |
 | Fun | Permainan hitung: keadaan dan papan skor dari PostgreSQL; aktifkan, ganti sistem, mulai ulang, nonaktifkan | Hanya mengubah pengaturan tersimpan; tidak mengirim atau menghapus pesan Discord. Angka yang tampil adalah keadaan saat halaman dimuat, bukan tampilan langsung. `/roll`, `/fight`, `/flip` tidak punya pengaturan. Belum diuji di Discord nyata. Lihat `DOKUMENTASI-AUDIT-FUN.md`. |
 | Search | Tidak ada halaman: kategori ini tidak menyimpan pengaturan. Indeks fitur menampilkannya di blok "tanpa halaman sendiri" dengan tautan ke Akses perintah | Tiap subperintah (`search define`, `search google`, `search urban`) dapat dimatikan per server di Akses perintah. Pembatas channel berbatas usia untuk `search urban` tidak dapat diatur dari dashboard. Lihat `DOKUMENTASI-AUDIT-SEARCH.md`. |
-| Kategori lainnya | Community, Tools, Utility ditampilkan sebagai daftar berlabel "belum ada halaman" | Belum ada halaman dashboard terpadu untuk setiap kategori; integrasikan dan uji satu per satu. |
+| Utility | Tidak ada halaman: kategori ini tidak punya pengaturan server sendiri. Indeks fitur menampilkannya di blok "tanpa halaman sendiri" dengan tautan ke Logging dan Akses perintah | Daftar to-do adalah data pribadi anggota dan hanya dikelola lewat `/todo`. Channel `/report` diatur di halaman Logging ("Channel reports"). Tiap perintah dapat dimatikan per server di Akses perintah. Lihat `DOKUMENTASI-AUDIT-UTILITY.md`. |
+| Kategori lainnya | Community dan Tools ditampilkan sebagai daftar berlabel "belum ada halaman" | Belum ada halaman dashboard terpadu untuk setiap kategori; integrasikan dan uji satu per satu. |
 
 ## Goodbye non-AI
 
@@ -241,7 +242,7 @@ Preview statis tidak berubah perilakunya: semua tab lama tetap ada, semua berlab
 - Label "terhubung" berarti halaman mengirim ke bot dan bot menjawab. Itu bukan bukti Discord, Lavalink atau provider AI berfungsi; semuanya tiruan atau tidak tersedia dalam tes.
 - Formulir AI tetap ditampilkan kepada admin yang bukan owner bot, hanya diberi label. Penolakannya dilakukan server, seperti sebelumnya.
 - `botOwner` dibaca dari `OWNER_IDS` saat permintaan; label mengikuti nilai saat halaman dimuat.
-- Saat audit ini ada tujuh kategori tanpa halaman. Server Stats sejak itu sudah punya halaman (`DOKUMENTASI-AUDIT-SERVER-STATS.md`), lalu Reaction Roles (`DOKUMENTASI-AUDIT-REACTION-ROLES.md`) dan Fun (`DOKUMENTASI-AUDIT-FUN.md`), sehingga angka audit ini bertambah menjadi 33 tab, 31 formulir dan 187 kontrol. Search sudah diaudit dan sengaja tidak diberi halaman (`DOKUMENTASI-AUDIT-SEARCH.md`); angka tidak berubah. Tiga kategori lain (Community, Tools, Utility) belum dikerjakan.
+- Saat audit ini ada tujuh kategori tanpa halaman. Server Stats sejak itu sudah punya halaman (`DOKUMENTASI-AUDIT-SERVER-STATS.md`), lalu Reaction Roles (`DOKUMENTASI-AUDIT-REACTION-ROLES.md`) dan Fun (`DOKUMENTASI-AUDIT-FUN.md`), sehingga angka audit ini bertambah menjadi 33 tab, 31 formulir dan 187 kontrol. Search sudah diaudit dan sengaja tidak diberi halaman (`DOKUMENTASI-AUDIT-SEARCH.md`); angka tidak berubah. Utility juga sudah diaudit dan tidak diberi halaman (`DOKUMENTASI-AUDIT-UTILITY.md`); angka tetap. Dua kategori lain (Community, Tools) belum dikerjakan.
 
 ### Tes
 

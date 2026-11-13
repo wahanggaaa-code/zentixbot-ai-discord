@@ -1,388 +1,139 @@
-import { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } from 'discord.js';
+// The three buttons under a shared to-do list, and the forms they open.
+
+import { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, MessageFlags } from 'discord.js';
 import { successEmbed } from '../utils/embeds.js';
-import { getFromDb, setInDb } from '../utils/database.js';
 import { checkRateLimit } from '../utils/rateLimiter.js';
 import { logger } from '../utils/logger.js';
-
 import { replyUserError, ErrorTypes } from '../utils/errorHandler.js';
-function buildSharedTodoViewPayload(listData, listId, guild) {
-  const memberList = (listData.members || []).map(memberId => {
-    const member = guild?.members?.cache?.get(memberId);
-    return member ? member.user.username : `<@${memberId}>`;
-  }).join(', ');
+import { MAX_TASK_LENGTH, addSharedTask, completeSharedTask, readShared, removeSharedTask } from '../services/todo/lists.js';
+import { isSharedViewOf, pageOfTask, refusalMessage, sharedPayload, shown, storageFailureMessage } from '../services/todo/view.js';
 
-  const owner = guild?.members?.cache?.get(listData.creatorId);
-  const ownerName = owner ? owner.user.username : `<@${listData.creatorId}>`;
+const refuse = (interaction, reason) => replyUserError(interaction, { type: ErrorTypes.VALIDATION, message: refusalMessage(reason) });
 
-  const tasks = Array.isArray(listData.tasks) ? listData.tasks : [];
+async function storageFailure(interaction, error, where) {
+    const message = storageFailureMessage(error);
+    if (!message) throw error;
+    logger.error(`Shared to-do ${where} storage failure (${error.code}): ${error.cause?.message ?? error.message}`, { userId: interaction.user.id });
+    return replyUserError(interaction, { type: ErrorTypes.DATABASE, message });
+}
 
-  if (tasks.length === 0) {
+const taskIdInput = (verb) => new TextInputBuilder()
+    .setCustomId('task_id')
+    .setLabel(`Enter the task number to ${verb}`)
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(10)
+    .setPlaceholder('e.g., 1, 2, 3');
+
+const FORMS = {
+    add: {
+        title: 'Add Task to Shared List',
+        input: () => new TextInputBuilder().setCustomId('task_text').setLabel('Enter the task description').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(MAX_TASK_LENGTH),
+    },
+    complete: { title: 'Complete Task in Shared List', input: () => taskIdInput('complete') },
+    remove: { title: 'Remove Task from Shared List', input: () => taskIdInput('remove') },
+};
+
+/** A button: only a member of the list gets the form. */
+function buttonHandler(kind) {
     return {
-      embeds: [
-        successEmbed(
-          `📋 **${listData.name}**\n\n` +
-          `👑 **Owner:** ${ownerName}\n` +
-          `👥 **Members:** ${memberList}\n\n` +
-          '*This list is currently empty. Use the "Add Task" button to add tasks!*',
-          `Shared List (ID: \`${listId}\`)`
-        )
-      ],
-      components: [
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`shared_todo_add_${listId}`)
-            .setLabel('Add Task')
-            .setStyle(ButtonStyle.Primary),
-          new ButtonBuilder()
-            .setCustomId(`shared_todo_complete_${listId}`)
-            .setLabel('Complete Task')
-            .setStyle(ButtonStyle.Success),
-          new ButtonBuilder()
-            .setCustomId(`shared_todo_remove_${listId}`)
-            .setLabel('Remove Task')
-            .setStyle(ButtonStyle.Danger)
-        )
-      ]
+        name: `shared_todo_${kind}`,
+        async execute(interaction, client, args) {
+            const listId = args[0];
+            try {
+                const access = await readShared(client, listId, interaction.user.id);
+                if (!access.ok) return await refuse(interaction, access.reason);
+            } catch (error) {
+                return await storageFailure(interaction, error, `${kind} button`);
+            }
+            const modal = new ModalBuilder().setCustomId(`shared_todo_${kind}_modal:${listId}`).setTitle(FORMS[kind].title);
+            modal.addComponents(new ActionRowBuilder().addComponents(FORMS[kind].input()));
+            await interaction.showModal(modal);
+        },
     };
-  }
-
-  const taskList = tasks
-    .map(task =>
-      `${task.completed ? '✅' : '📝'} #${task.id} ${task.text} ` +
-      `\`[${new Date(task.createdAt).toLocaleDateString()}]` +
-      (task.completed ? ` • Completed by <@${task.completedBy}>` : '') + '`'
-    )
-    .join('\n');
-
-  return {
-    embeds: [
-      successEmbed(
-        `📋 **${listData.name}**\n\n` +
-        `👑 **Owner:** ${ownerName}\n` +
-        `👥 **Members:** ${memberList}\n\n` +
-        `**Tasks:**\n${taskList}`,
-        `Shared List (ID: \`${listId}\`)`
-      )
-    ],
-    components: [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`shared_todo_add_${listId}`)
-          .setLabel('Add Task')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId(`shared_todo_complete_${listId}`)
-          .setLabel('Complete Task')
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId(`shared_todo_remove_${listId}`)
-          .setLabel('Remove Task')
-          .setStyle(ButtonStyle.Danger)
-      )
-    ]
-  };
 }
 
-async function refreshSharedTodoMessage(interaction, listId, messageId) {
-  if (!messageId || !interaction.channel) {
-    return;
-  }
-
-  const listKey = `shared_todo_${listId}`;
-  const listData = await getFromDb(listKey, null);
-  if (!listData) {
-    return;
-  }
-
-  try {
-    const targetMessage = await interaction.channel.messages.fetch(messageId);
-    if (!targetMessage) {
-      return;
+/**
+ * After a change: redraw the list message the button belongs to, and say what was done.
+ * Only a message of this bot that already shows this very list is redrawn. The change is
+ * stored at this point, so a redraw that fails is not reported as a failed change.
+ */
+async function showChange(interaction, client, list, page, title, body) {
+    const confirmation = { embeds: [successEmbed(title, body)], flags: MessageFlags.Ephemeral };
+    const botId = client?.user?.id ?? interaction.client?.user?.id;
+    if (!isSharedViewOf(interaction.message, list.id, botId) || typeof interaction.update !== 'function') {
+        return interaction.reply(confirmation);
     }
-
-    const updatedPayload = buildSharedTodoViewPayload(listData, listId, interaction.guild);
-    await targetMessage.edit(updatedPayload);
-  } catch (error) {
-    logger.warn('Unable to refresh shared todo view message', {
-      listId,
-      messageId,
-      guildId: interaction.guildId,
-      channelId: interaction.channelId,
-      error: error.message
+    try {
+        await interaction.update(sharedPayload(list, page));
+    } catch (error) {
+        logger.warn('Unable to refresh shared todo view message', { listId: list.id, guildId: interaction.guildId, channelId: interaction.channelId, error: error.message });
+        // The form may or may not count as answered; say what was done either way.
+        return interaction.replied || interaction.deferred ? interaction.followUp(confirmation).catch(() => null) : interaction.reply(confirmation);
+    }
+    return interaction.followUp(confirmation).catch((error) => {
+        logger.warn('Unable to confirm shared todo change', { listId: list.id, error: error.message });
+        return null;
     });
-  }
 }
 
-const sharedTodoAddHandler = {
-  name: 'shared_todo_add',
-  async execute(interaction, client, args) {
-    const listId = args[0];
-    const sourceMessageId = interaction.message?.id;
-
-    if (!listId || !/^[a-zA-Z0-9_-]{1,64}$/.test(listId)) {
-      await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Invalid shared list ID.' });
-      return;
-    }
-    
-    const modal = new ModalBuilder()
-      .setCustomId(`shared_todo_add_modal:${listId}:${sourceMessageId || ''}`)
-      .setTitle('Add Task to Shared List');
-
-    const taskInput = new TextInputBuilder()
-      .setCustomId('task_text')
-      .setLabel('Enter the task description')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true)
-      .setMaxLength(200);
-
-    const actionRow = new ActionRowBuilder().addComponents(taskInput);
-    modal.addComponents(actionRow);
-
-    await interaction.showModal(modal);
-  }
+const numberFrom = (interaction) => {
+    const raw = String(interaction.fields.getTextInputValue('task_id') ?? '').trim().replace(/^#/, '');
+    return /^\d{1,9}$/.test(raw) ? Number(raw) : null;
 };
 
-const sharedTodoCompleteHandler = {
-  name: 'shared_todo_complete',
-  async execute(interaction, client, args) {
-    const listId = args[0];
-    const sourceMessageId = interaction.message?.id;
+/** A submitted form. `act` does the change and returns the result of the list operation. */
+function modalHandler(kind, tooFast, act, describe) {
+    return {
+        name: `shared_todo_${kind}_modal`,
+        async execute(interaction, client, args) {
+            const listId = args[0];
+            const userId = interaction.user.id;
+            if (!(await checkRateLimit(`${userId}:shared_todo_${kind}`, 5, 30000))) {
+                return await replyUserError(interaction, { type: ErrorTypes.RATE_LIMIT, message: tooFast });
+            }
+            try {
+                const out = await act(client, listId, userId, interaction);
+                if (!out.ok) return await refuse(interaction, out.reason);
+                const page = kind === 'remove' ? 1 : pageOfTask(out.list, out.task.id);
+                return await showChange(interaction, client, out.list, page, ...describe(out));
+            } catch (error) {
+                return await storageFailure(interaction, error, `${kind} form`);
+            }
+        },
+    };
+}
 
-    if (!listId || !/^[a-zA-Z0-9_-]{1,64}$/.test(listId)) {
-      await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Invalid shared list ID.' });
-      return;
-    }
-    
-    const modal = new ModalBuilder()
-      .setCustomId(`shared_todo_complete_modal:${listId}:${sourceMessageId || ''}`)
-      .setTitle('Complete Task in Shared List');
+const sharedTodoAddHandler = buttonHandler('add');
+const sharedTodoCompleteHandler = buttonHandler('complete');
+const sharedTodoRemoveHandler = buttonHandler('remove');
 
-    const taskIdInput = new TextInputBuilder()
-      .setCustomId('task_id')
-      .setLabel('Enter the task ID to complete')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true)
-      .setPlaceholder('e.g., 1, 2, 3');
+const sharedTodoAddModalHandler = modalHandler(
+    'add',
+    'You are adding tasks too quickly. Please wait and try again.',
+    (client, listId, userId, interaction) => addSharedTask(client, listId, userId, interaction.fields.getTextInputValue('task_text')),
+    (out) => ['Task Added', `Added #${out.task.id} ${shown(out.task.text)} to the shared list.`],
+);
 
-    const actionRow = new ActionRowBuilder().addComponents(taskIdInput);
-    modal.addComponents(actionRow);
+const sharedTodoCompleteModalHandler = modalHandler(
+    'complete',
+    'You are completing tasks too quickly. Please wait and try again.',
+    (client, listId, userId, interaction) => completeSharedTask(client, listId, userId, numberFrom(interaction)),
+    (out) => ['Task Completed', `Marked #${out.task.id} ${shown(out.task.text)} as complete.`],
+);
 
-    await interaction.showModal(modal);
-  }
-};
-
-const sharedTodoRemoveHandler = {
-  name: 'shared_todo_remove',
-  async execute(interaction, client, args) {
-    const listId = args[0];
-    const sourceMessageId = interaction.message?.id;
-
-    if (!listId || !/^[a-zA-Z0-9_-]{1,64}$/.test(listId)) {
-      await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Invalid shared list ID.' });
-      return;
-    }
-
-    const modal = new ModalBuilder()
-      .setCustomId(`shared_todo_remove_modal:${listId}:${sourceMessageId || ''}`)
-      .setTitle('Remove Task from Shared List');
-
-    const taskIdInput = new TextInputBuilder()
-      .setCustomId('task_id')
-      .setLabel('Enter the task ID to remove')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true)
-      .setPlaceholder('e.g., 1, 2, 3');
-
-    const actionRow = new ActionRowBuilder().addComponents(taskIdInput);
-    modal.addComponents(actionRow);
-
-    await interaction.showModal(modal);
-  }
-};
-
-const sharedTodoAddModalHandler = {
-  name: 'shared_todo_add_modal',
-  async execute(interaction, client, args) {
-    const listId = args[0];
-    const sourceMessageId = args[1] || null;
-    const taskText = interaction.fields.getTextInputValue('task_text');
-    const userId = interaction.user.id;
-
-    try {
-      const allowed = await checkRateLimit(`${userId}:shared_todo_add`, 5, 30000);
-      if (!allowed) {
-        return await replyUserError(interaction, { type: ErrorTypes.RATE_LIMIT, message: 'You are adding tasks too quickly. Please wait and try again.' });
-      }
-
-      if (!listId || !/^[a-zA-Z0-9_-]{1,64}$/.test(listId)) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Invalid shared list ID.' });
-      }
-
-      if (!taskText || taskText.trim().length === 0) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Task text cannot be empty.' });
-      }
-
-      const listKey = `shared_todo_${listId}`;
-      let listData = await getFromDb(listKey, null);
-      
-      if (!listData) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Shared list not found.' });
-      }
-
-      if (!listData.members || !listData.members.includes(userId)) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'You don\'t have access to this list.' });
-      }
-
-      if (!listData.tasks) listData.tasks = [];
-      if (!listData.nextId) listData.nextId = 1;
-
-      const newTask = {
-        id: listData.nextId++,
-        text: taskText,
-        completed: false,
-        createdAt: new Date().toISOString(),
-        createdBy: userId
-      };
-      
-      listData.tasks.push(newTask);
-      await setInDb(listKey, listData);
-
-      await refreshSharedTodoMessage(interaction, listId, sourceMessageId);
-
-      return interaction.reply({
-        embeds: [successEmbed("Task Added", `Added "${taskText}" to the shared list.`)],
-        flags: MessageFlags.Ephemeral
-      });
-
-    } catch (error) {
-      logger.error('Error in shared todo add modal:', error);
-      return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while adding the task.' });
-    }
-  }
-};
-
-const sharedTodoCompleteModalHandler = {
-  name: 'shared_todo_complete_modal',
-  async execute(interaction, client, args) {
-    const listId = args[0];
-    const sourceMessageId = args[1] || null;
-    const taskId = parseInt(interaction.fields.getTextInputValue('task_id'), 10);
-    const userId = interaction.user.id;
-
-    try {
-      const allowed = await checkRateLimit(`${userId}:shared_todo_complete`, 5, 30000);
-      if (!allowed) {
-        return await replyUserError(interaction, { type: ErrorTypes.RATE_LIMIT, message: 'You are completing tasks too quickly. Please wait and try again.' });
-      }
-
-      if (!listId || !/^[a-zA-Z0-9_-]{1,64}$/.test(listId)) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Invalid shared list ID.' });
-      }
-
-      if (!Number.isInteger(taskId) || taskId <= 0) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Task ID must be a positive number.' });
-      }
-
-      const listKey = `shared_todo_${listId}`;
-      let listData = await getFromDb(listKey, null);
-      
-      if (!listData) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Shared list not found.' });
-      }
-
-      if (!listData.members || !listData.members.includes(userId)) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'You don\'t have access to this list.' });
-      }
-
-      if (!listData.tasks) listData.tasks = [];
-
-      const task = listData.tasks.find(t => t.id === taskId);
-      
-      if (!task) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Task not found.' });
-      }
-
-      if (task.completed) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: `Task #${task.id} is already completed.` });
-      }
-      
-      task.completed = true;
-      task.completedBy = userId;
-      task.completedAt = new Date().toISOString();
-      
-      await setInDb(listKey, listData);
-
-      await refreshSharedTodoMessage(interaction, listId, sourceMessageId);
-      
-      return interaction.reply({
-        embeds: [successEmbed("Task Completed", `Marked "${task.text}" as complete!`)],
-        flags: MessageFlags.Ephemeral
-      });
-
-    } catch (error) {
-      logger.error('Error in shared todo complete modal:', error);
-      return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while completing the task.' });
-    }
-  }
-};
-
-const sharedTodoRemoveModalHandler = {
-  name: 'shared_todo_remove_modal',
-  async execute(interaction, client, args) {
-    const listId = args[0];
-    const sourceMessageId = args[1] || null;
-    const taskId = parseInt(interaction.fields.getTextInputValue('task_id'), 10);
-    const userId = interaction.user.id;
-
-    try {
-      const allowed = await checkRateLimit(`${userId}:shared_todo_remove`, 5, 30000);
-      if (!allowed) {
-        return await replyUserError(interaction, { type: ErrorTypes.RATE_LIMIT, message: 'You are removing tasks too quickly. Please wait and try again.' });
-      }
-
-      if (!listId || !/^[a-zA-Z0-9_-]{1,64}$/.test(listId)) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Invalid shared list ID.' });
-      }
-
-      if (!Number.isInteger(taskId) || taskId <= 0) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Task ID must be a positive number.' });
-      }
-
-      const listKey = `shared_todo_${listId}`;
-      const listData = await getFromDb(listKey, null);
-
-      if (!listData) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Shared list not found.' });
-      }
-
-      if (!listData.members || !listData.members.includes(userId)) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'You don\'t have access to this list.' });
-      }
-
-      if (!Array.isArray(listData.tasks)) {
-        listData.tasks = [];
-      }
-
-      const taskIndex = listData.tasks.findIndex(task => task.id === taskId);
-      if (taskIndex === -1) {
-        return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'Task not found.' });
-      }
-
-      const [removedTask] = listData.tasks.splice(taskIndex, 1);
-      await setInDb(listKey, listData);
-
-      await refreshSharedTodoMessage(interaction, listId, sourceMessageId);
-
-      return interaction.reply({
-        embeds: [successEmbed('Task Removed', `Removed "${removedTask.text}" from the shared list.`)],
-        flags: MessageFlags.Ephemeral
-      });
-    } catch (error) {
-      logger.error('Error in shared todo remove modal:', error);
-      return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'An error occurred while removing the task.' });
-    }
-  }
-};
+const sharedTodoRemoveModalHandler = modalHandler(
+    'remove',
+    'You are removing tasks too quickly. Please wait and try again.',
+    (client, listId, userId, interaction) => removeSharedTask(client, listId, userId, numberFrom(interaction)),
+    (out) => ['Task Removed', `Removed #${out.task.id} ${shown(out.task.text)} from the shared list.`],
+);
 
 export default sharedTodoAddHandler;
-export { sharedTodoCompleteHandler, sharedTodoRemoveHandler, sharedTodoAddModalHandler, sharedTodoCompleteModalHandler, sharedTodoRemoveModalHandler };
+export {
+    sharedTodoCompleteHandler,
+    sharedTodoRemoveHandler,
+    sharedTodoAddModalHandler,
+    sharedTodoCompleteModalHandler,
+    sharedTodoRemoveModalHandler,
+};

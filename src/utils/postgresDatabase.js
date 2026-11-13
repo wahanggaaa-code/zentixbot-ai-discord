@@ -59,6 +59,15 @@ const PROTOCOL_ONLY_KEY_TYPES = [
     'reaction_role',
     'counting_game',
 ];
+// To-do lists have no key type of their own; they are written by src/services/todo/store.js
+// (lock from read to write, failures thrown instead of answered with "no data").
+const PROTOCOL_ONLY_KEY_PATTERN = /^(?:todo_|shared_todo_|user_shared_lists_)/;
+
+function isProtocolOnlyKey(key) {
+    if (typeof key !== 'string') return false;
+    const canonical = canonicalizeKey(key);
+    return PROTOCOL_ONLY_KEY_PATTERN.test(canonical) || PROTOCOL_ONLY_KEY_TYPES.includes(parseKey(canonical).type);
+}
 
 class PostgreSQLDatabase {
     constructor() {
@@ -458,7 +467,7 @@ class PostgreSQLDatabase {
     async set(key, value, ttl = null) {
         // Replacements require the configuration service's snapshot transaction.
         // Deleting a guild row can also cascade into unrelated guild data.
-        if (typeof key === 'string' && PROTOCOL_ONLY_KEY_TYPES.includes(parseKey(canonicalizeKey(key)).type)) return false;
+        if (isProtocolOnlyKey(key)) return false;
         const warningKey=canonicalizeKey(key);
         if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
@@ -500,7 +509,7 @@ class PostgreSQLDatabase {
     }
 
     async delete(key) {
-        if (typeof key === 'string' && PROTOCOL_ONLY_KEY_TYPES.includes(parseKey(canonicalizeKey(key)).type)) return false;
+        if (isProtocolOnlyKey(key)) return false;
         const warningKey=canonicalizeKey(key);
         if (typeof warningKey==='string' && (/^guild:[^:]+:warnings:[^:]+$/.test(warningKey) || /^guild:[^:]+:warning-sequence:[^:]+$/.test(warningKey))) return false;
         try {
@@ -634,7 +643,7 @@ class PostgreSQLDatabase {
     }
 
     async increment(key, amount = 1) {
-        if (typeof key === 'string' && PROTOCOL_ONLY_KEY_TYPES.includes(parseKey(canonicalizeKey(key)).type)) {
+        if (isProtocolOnlyKey(key)) {
             throw Object.assign(new Error('Generic configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
         }
         try {
@@ -653,7 +662,7 @@ class PostgreSQLDatabase {
     }
 
     async decrement(key, amount = 1) {
-        if (typeof key === 'string' && PROTOCOL_ONLY_KEY_TYPES.includes(parseKey(canonicalizeKey(key)).type)) {
+        if (isProtocolOnlyKey(key)) {
             throw Object.assign(new Error('Generic configuration mutation is disabled'), {code: 'CONFIG_WRITE_DISABLED'});
         }
         try {

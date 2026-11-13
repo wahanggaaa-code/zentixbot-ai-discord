@@ -168,20 +168,29 @@ test('dashboard: index pages', async (t) => {
     assert.doesNotMatch(page.main.querySelector('.f-index-bar').textContent, /SEBAGIAN|SIMULASI/);
     // Categories without a page: named as such, and not dressed up as links.
     const more = page.main.querySelector('.f-more:not(.f-settled)');
-    assert.deepEqual([...more.querySelectorAll('.f-chips span')].map((el) => el.textContent), ['Community', 'Tools', 'Utility']);
+    assert.deepEqual([...more.querySelectorAll('.f-chips span')].map((el) => el.textContent), ['Community', 'Tools']);
     assert.equal(more.querySelectorAll('a, button').length, 0);
     assert.doesNotMatch(more.querySelector('.f-chips').textContent, /↗/);
     assert.match(more.textContent, /BELUM ADA HALAMAN/);
     assert.match(more.textContent, /perintah bot di Discord/);
-    // Search stores nothing: it is not promised a page, and it points at the one place that does affect it.
+    // Audited categories without a page of their own: not promised one, and pointed at the pages that do affect them.
     const settled = page.main.querySelector('.f-settled');
-    assert.deepEqual([...settled.querySelectorAll('.f-chips span')].map((el) => el.textContent), ['Search']);
+    assert.deepEqual([...settled.querySelectorAll('.f-chips span')].map((el) => el.textContent), ['Search', 'Utility']);
     assert.doesNotMatch(settled.textContent, /BELUM ADA HALAMAN/);
     assert.match(settled.textContent, /TANPA HALAMAN SENDIRI/);
-    assert.match(settled.querySelector('p').textContent, /^Search \(\/search define, \/search google, \/search urban\) tidak menyimpan pengaturan apa pun\./);
-    const links = [...settled.querySelectorAll('a')];
-    assert.deepEqual(links.map((a) => [a.textContent, a.getAttribute('href')]), [['Akses perintah', '#features/core']]);
+    const [searchNote, utilityNote] = [...settled.querySelectorAll('p')];
+    assert.match(searchNote.textContent, /^Search \(\/search define, \/search google, \/search urban\) tidak menyimpan pengaturan apa pun\./);
+    assert.deepEqual([...searchNote.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')]), [['Akses perintah', '#features/core']]);
+    // Utility does store something, so it is not described as storing nothing.
+    assert.match(utilityNote.textContent, /^Utility \(\/avatar, \/userinfo, \/serverinfo, \/firstmsg, \/weather, \/todo, \/report, \/wipedata\) tidak punya pengaturan server sendiri\./);
+    assert.doesNotMatch(utilityNote.textContent, /tidak menyimpan pengaturan apa pun/);
+    assert.match(utilityNote.textContent, /Daftar to-do adalah data pribadi tiap anggota/);
+    assert.deepEqual([...utilityNote.querySelectorAll('a')].map((a) => [a.textContent, a.getAttribute('href')]), [['Logging', '#features/logging'], ['Akses perintah', '#features/core']]);
     assert.equal(settled.querySelectorAll('button, input, select, textarea').length, 0);
+    const links = [...searchNote.querySelectorAll('a')];
+    await page.go(utilityNote.querySelector('a').getAttribute('href'));
+    assert.match(page.main.textContent, /Logging\.Tentukan peristiwa dan tujuan log\./);
+    assert.match(page.main.textContent, /TERHUBUNG KE BOT · PENGATURAN TERSIMPAN/, 'the link opens the live logging page, where the report channel is chosen');
     await page.go(links[0].getAttribute('href'));
     assert.match(page.main.textContent, /Core & command access/);
     assert.match(page.main.textContent, /TERHUBUNG KE BOT · PERUBAHAN BERLAKU PADA AKSES PERINTAH/, 'the link opens the live command access page');

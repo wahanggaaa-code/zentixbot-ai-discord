@@ -183,6 +183,7 @@ test('live dashboard: every tab loads from the bot, without mock forms or script
     const page = await openDashboard(t);
     const tabs = await listTabs(page);
     assert.equal(tabs.length, 20 + 12 + 1);
+    let seenReportChannel = 0;
 
     for (const { hash, attr, tab, where } of tabs) {
         page.state.reads.length = 0;
@@ -195,7 +196,12 @@ test('live dashboard: every tab loads from the bot, without mock forms or script
         assert.doesNotMatch(text, /Memuat…|Memeriksa data bot…/, `${where} is still loading`);
         // Live modules catch their own failures and print the message; a script error must not hide in there.
         assert.doesNotMatch(text, /Cannot read|is not a function|is not defined|is not iterable|\[object |\bundefined\b|\bNaN\b/, `${where} shows a script error`);
+        // The features index sends managers here for the channel of /report.
+        if (hash === '#features/logging' && tab === 'setup') {
+            seenReportChannel = page.main.querySelectorAll('.f-content form select[name="reports"]').length;
+        }
     }
+    assert.equal(seenReportChannel, 1, 'the logging page offers the report channel');
     assert.deepEqual(page.state.errors, []);
 });
 
