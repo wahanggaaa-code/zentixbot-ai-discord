@@ -1,6 +1,6 @@
 import { getTicketData, saveTicketData } from '../utils/database.js';
 import { handleJoinToCreateChannelDelete } from '../services/joinToCreateRuntime.js';
-import { getServerCounters, saveServerCounters } from '../services/serverstatsService.js';
+import { forgetDeletedCounterChannel } from '../services/serverStats/manage.js';
 import { logger } from '../utils/logger.js';
 
 export default {
@@ -29,33 +29,22 @@ export default {
             }
         }
 
-if (channel.type !== 2 && channel.type !== 4) {
-            return;
-        }
-
+        if (!channel.guild) return;
         const guildId = channel.guild.id;
 
+        // A counter can be a voice or a text channel; the lookup is by channel id, so every type is checked.
         try {
-            
-            const counters = await getServerCounters(client, guildId);
-            const orphanedCounter = counters.find(c => c.channelId === channel.id);
-            
-            if (orphanedCounter) {
-                logger.info(`Counter channel ${channel.name} (${channel.id}) was deleted, removing counter ${orphanedCounter.id} from database`);
-                
-                const updatedCounters = counters.filter(c => c.channelId !== channel.id);
-                const success = await saveServerCounters(client, guildId, updatedCounters);
-                
-                if (success) {
-                    logger.info(`Successfully removed orphaned counter ${orphanedCounter.id} (type: ${orphanedCounter.type}) from guild ${guildId}`);
-                } else {
-                    logger.warn(`Failed to remove orphaned counter ${orphanedCounter.id} from guild ${guildId}`);
-                }
+            const removed = await forgetDeletedCounterChannel(client, guildId, channel.id);
+            if (removed) {
+                logger.info(`Counter channel ${channel.name} (${channel.id}) was deleted, removed counter ${removed.id} (type: ${removed.type}) from guild ${guildId}`);
             }
-
         } catch (error) {
-            logger.error(`Error in channelDelete event for guild ${guildId}:`, error);
+            // The scheduled counter check removes the record later.
+            logger.warn(`Could not remove the counter record of deleted channel ${channel.id} in guild ${guildId}:`, error);
         }
+
+        // Join to Create only concerns voice channels and categories, as before.
+        if (channel.type !== 2 && channel.type !== 4) return;
 
         try {
             await handleJoinToCreateChannelDelete(client, channel);

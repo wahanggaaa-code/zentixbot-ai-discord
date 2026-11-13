@@ -53,6 +53,8 @@ const PROTOCOL_ONLY_KEY_TYPES = [
     'guild_giveaways',
     'jointocreate_config',
     'jointocreate_channels',
+    // Written by src/services/serverStats/store.js (row lock from read to write).
+    'counters',
 ];
 
 class PostgreSQLDatabase {

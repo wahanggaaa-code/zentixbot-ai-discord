@@ -24,6 +24,7 @@ import { createOperationsApi } from '../src/dashboard/operationsApi.js';
 import { createHostingApi } from '../src/dashboard/hostingApi.js';
 import { createAIApi } from '../src/dashboard/aiApi.js';
 import { createSettingsApi } from '../src/dashboard/settingsApi.js';
+import { createServerStatsApi } from '../src/dashboard/serverStatsApi.js';
 
 const dir = 'dashboard-preview/';
 const raw = fs.readFileSync(dir + 'index.html', 'utf8');
@@ -65,7 +66,12 @@ async function openDashboard(t) {
     client.isReady = () => true;
     // One of each kind of thing a form lets the user pick, so that every select has a real choice.
     fx.addRole('623456789012345001', { name: 'Member', position: 5 });
-    guild.channels.cache.set('623456789012345002', { id: '623456789012345002', name: 'Tiket', type: ChannelType.GuildCategory });
+    // Two categories the bot may manage, so the server stats form has a category to pick and another to switch to.
+    guild.channels.cache.set('623456789012345002', { id: '623456789012345002', name: 'Tiket', type: ChannelType.GuildCategory, permissionsFor: () => ({ has: () => true }) });
+    guild.channels.cache.set('623456789012345005', { id: '623456789012345005', name: 'Statistik', type: ChannelType.GuildCategory, permissionsFor: () => ({ has: () => true }) });
+    // Creating a channel is refused here: the walk compares requests, and a counter that really got created would
+    // change the form between the two submits of a comparison.
+    guild.channels.create = async () => { throw new Error('channel creation is not available in this walk'); };
     guild.channels.cache.set('623456789012345003', { id: '623456789012345003', name: 'Musik', type: ChannelType.GuildVoice });
     // A text channel that reports its permissions; the giveaway form only offers channels the bot may post in.
     guild.channels.cache.set('623456789012345004', { id: '623456789012345004', name: 'umum', type: ChannelType.GuildText, permissionsFor: () => ({ has: () => true }) });
@@ -82,7 +88,7 @@ async function openDashboard(t) {
     };
     const csrf = (req, res, next) => next();
     app.get('/dashboard/api/me', (req, res) => res.json({ user: { username: 'Tester' }, guild: { name: 'Home' }, csrf: 'c', botOwner: true }));
-    for (const create of [createBotApiRouter, createGoodbyeApi, createBirthdayApi, createCoreApi, createGiveawayApi, createJoinToCreateSettingsApi, createModulesApi, createOperationsApi]) {
+    for (const create of [createBotApiRouter, createGoodbyeApi, createBirthdayApi, createCoreApi, createGiveawayApi, createJoinToCreateSettingsApi, createServerStatsApi, createModulesApi, createOperationsApi]) {
         app.use('/dashboard/api/bot', create(client, { auth, csrf }));
     }
     app.use('/dashboard/api/bot', createJoinToCreateApi(client, { auth }));
@@ -161,7 +167,7 @@ async function listTabs(page) {
 test('live dashboard: every tab loads from the bot, without mock forms or script errors', async (t) => {
     const page = await openDashboard(t);
     const tabs = await listTabs(page);
-    assert.equal(tabs.length, 17 + 12 + 1);
+    assert.equal(tabs.length, 18 + 12 + 1);
 
     for (const { hash, attr, tab, where } of tabs) {
         page.state.reads.length = 0;
@@ -264,7 +270,7 @@ test('live dashboard: every control of every form changes the request that is se
     }
 
     assert.deepEqual(unsent.sort(), Object.keys(NEEDS_PRECONDITION).sort());
-    assert.equal(formCount, 27, 'forms on the live dashboard');
-    assert.equal(checked, 174, 'controls on the live dashboard');
+    assert.equal(formCount, 28, 'forms on the live dashboard');
+    assert.equal(checked, 177, 'controls on the live dashboard');
     assert.deepEqual(state.errors, []);
 });

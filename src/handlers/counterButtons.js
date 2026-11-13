@@ -1,8 +1,9 @@
-import { MessageFlags } from 'discord.js';
+import { PermissionFlagsBits } from 'discord.js';
 import { createEmbed, successEmbed } from '../utils/embeds.js';
 import { performDeletionByCounterId } from '../commands/ServerStats/modules/serverstats_delete.js';
 import { logger } from '../utils/logger.js';
 import { ErrorTypes, replyUserError, handleInteractionError } from '../utils/errorHandler.js';
+import { replyCounterError } from '../commands/ServerStats/modules/shared.js';
 
 export const counterDeleteActionHandler = {
   name: 'counter-delete',
@@ -50,7 +51,20 @@ export const counterDeleteActionHandler = {
         return;
       }
 
-      const { message } = await performDeletionByCounterId(client, interaction.guild, counterId);
+      // The button may be pressed long after the command; the right to delete is checked again now.
+      if (!interaction.member?.permissions?.has(PermissionFlagsBits.ManageChannels)) {
+        await replyUserError(interaction, { type: ErrorTypes.PERMISSION, message: 'You need **Manage Channels** permission to delete counters.' }).catch(logger.error);
+        return;
+      }
+
+      let message;
+      try {
+        ({ message } = await performDeletionByCounterId(client, interaction.guild, counterId, interaction.user.tag));
+      } catch (error) {
+        if (typeof error?.code !== 'string' || !error.code.startsWith('SERVERSTATS_')) throw error;
+        await replyCounterError(interaction, error, 'The counter could not be deleted. Nothing was changed.');
+        return;
+      }
 
       await interaction.editReply({
         embeds: [successEmbed(message)],
