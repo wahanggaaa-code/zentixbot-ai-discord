@@ -7,6 +7,7 @@ import { createAIFoundation } from './services/ai/foundation.js';
 import { createAudioService } from './services/ai/audio.js';
 import { createImageService } from './services/ai/images.js';
 import { createSearchService } from './services/ai/search.js';
+import { describeExtraProviders } from './services/ai/extraProviders.js';
 import { runProactiveAgent } from './services/ai/chat.js';
 import { runScheduledActivity } from './services/ai/activities.js';
 import { requireHomeGuildId, isHomeGuild } from './utils/singleGuild.js';
@@ -76,6 +77,11 @@ class ZentixBot extends Client {
         throw Object.assign(new Error('Persistent database is unavailable; startup aborted.'), {code:'POSTGRES_UNAVAILABLE'});
       }
       startupLog(`Database Status: ${dbStatus.connectionType} (persistent)`);
+
+      for (const line of describeExtraProviders(process.env)) {
+        if (line.level === 'warn') logger.warn(line.text);
+        else startupLog(line.text);
+      }
 
       startupLog('Starting web server...');
       this.startWebServer();

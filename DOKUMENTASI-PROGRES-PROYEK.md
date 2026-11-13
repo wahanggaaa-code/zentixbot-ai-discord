@@ -133,6 +133,9 @@ Untuk basis kode `98b2bee`:
 | Tes Tools dengan Node 20.20 (2026-11-13) | **77/77 lulus** | Enam berkas: kalkulator (10), hitung mundur dan poll (19), perintah lain dan akses perintah (22), embed builder (14), label simulasi (10), penelusuran dashboard dengan router asli (2). |
 | Regresi Node 22 setelah perubahan port dan dashboard HTTP (2026-11-13) | **1073 lulus, 0 gagal, 4 dilewati** dari 1077 | Lingkungan yang sama: PostgreSQL 16 disposable tanpa TLS (4 tes TLS dilewati), Discord tiruan, jsdom. Bukan panel hosting sungguhan. |
 | Tes port dan dashboard HTTP dengan Node 20.20 (2026-11-13) | **31/31 lulus** | Tiga berkas: port dan login HTTP (9), pusat kendali dan halaman pengaturan (15), login, CSRF dan satu-server (7). |
+| Regresi Node 22 setelah pilihan penyedia suara, pencarian dan gambar (2026-11-13) | **1095 lulus, 0 gagal, 4 dilewati** dari 1099 | Lingkungan yang sama. Groq, Tavily, Cloudflare Workers AI dan Pollinations diwakili `fetch` tiruan; tidak ada panggilan ke layanan sungguhan. |
+| Tes pilihan penyedia dengan Node 20.20 (2026-11-13) | **38/38 lulus** | Lima berkas: pilihan penyedia (20) dan tes Tahap 8 untuk audio, gambar, tools dan riset (18). |
+| Uji mutasi pilihan penyedia (2026-11-13) | **95/95 mutan tertangkap** | Putaran pertama 93; dua sisanya ditutup dengan satu tes tambahan (JPEG tanpa penanda awal) dan penghapusan satu pemeriksaan yang hasilnya sama dengan pemeriksaan berikutnya. |
 | `npm audit --omit=dev` | **0 kerentanan dilaporkan** | Saat pengujian; hanya dependency produksi dan hasil advisory dapat berubah. |
 | Git diff check | **Bersih** sebelum dokumentasi ini | Pemeriksaan whitespace, bukan audit kode/keamanan. |
 
@@ -182,6 +185,7 @@ Jangan arahkan tes ke database produksi. Sertifikat dan direktori `/tmp` bersifa
 
 - [ ] Uji end-to-end dengan server Discord uji, OAuth, PostgreSQL/Neon, provider AI, Lavalink, browser dan lingkungan hosting yang dipilih, termasuk izin, rate limit, restart dan putus koneksi.
   - Persiapan hosting panel: bot menerima port dari `WEB_PORT`, `PORT` atau `SERVER_PORT`, dan dashboard dapat dibuka pada `http://ip:port` bila `DASHBOARD_ALLOW_HTTP=true` (sesi tidak terenkripsi; bawaan tetap HTTPS). Rincian dan daftar variabel di `DOKUMENTASI-HOSTING.md`. Belum dijalankan di panel sungguhan.
+  - Transkrip suara, pencarian web dan gambar kini dapat memakai penyedia lain lewat `AI_AUDIO_PROVIDER` (`groq`), `AI_SEARCH_PROVIDER` (`tavily`) dan `AI_IMAGE_PROVIDER` (`cloudflare`, `pollinations`); kosong berarti penyedia semula (OpenAI, Brave). Edit gambar tetap hanya dengan OpenAI. Belum diuji terhadap layanan sungguhan. Rincian di `DOKUMENTASI-HOSTING.md`.
 - [ ] Selesaikan prosedur backup terenkripsi/offsite, retensi, restore produksi yang aman dan latihan pemulihan; uji lagi dengan akun/target terisolasi.
 - [ ] Audit seluruh jalur yang masih mengembalikan default saat database gagal, key legacy, skema, data pribadi serta keamanan multi-instance.
 - [ ] Bila SQLite masih menjadi tujuan, selesaikan kompatibilitas runtime, migrasi data, backup/WAL/TTL dan tes beban sebelum mempertimbangkan cutover. Sampai itu selesai gunakan PostgreSQL yang dikonfigurasi dan diverifikasi dengan benar.

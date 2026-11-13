@@ -42,7 +42,54 @@ Untuk dashboard:
 
 Musik tidak memerlukan variabel: bot memakai enam node Lavalink publik yang tercantum di `lavalink/nodes.json` (vinster, trinium, nazha, serenetia, jirayu, millohost), diambil dari daftar di `lavalink.darrennathanael.com`. Node itu milik pihak ketiga dan belum diuji dari bot ini; untuk menggantinya, ubah berkas itu atau isi `LAVALINK_NODES`. Nama `LAVALINK_URI` dan `LAVALINK_NODE_NAME` tidak dibaca bot.
 
-Opsional: `AI_IMAGE_API_KEY` + `AI_IMAGE_MODEL`, `AI_AUDIO_API_KEY` + `AI_AUDIO_MODEL`, `AI_BRAVE_SEARCH_KEY`, `HOSTING_PANEL_URL` + `HOSTING_SERVER_ID` + `HOSTING_API_KEY`, `TMDB_API_KEY`, `LOG_LEVEL`, `SENTRY_DSN`. Daftar lengkap ada di `.env.example`.
+Opsional: transkrip suara, pencarian web dan gambar (lihat bagian berikut), `HOSTING_PANEL_URL` + `HOSTING_SERVER_ID` + `HOSTING_API_KEY`, `TMDB_API_KEY`, `LOG_LEVEL`, `SENTRY_DSN`. Daftar lengkap ada di `.env.example`.
+
+## Suara, pencarian web dan gambar: pilihan penyedia
+
+Tiga fitur AI ini memakai layanan di luar empat penyedia chat. Masing-masing dipilih dengan satu variabel; bila variabel itu kosong, bot memakai penyedia semula, sehingga pemasangan lama tidak berubah.
+
+| Fitur | Variabel pilihan | Nilai | Yang harus diisi |
+| --- | --- | --- | --- |
+| Transkrip suara | `AI_AUDIO_PROVIDER` | `openai` (bawaan) | `AI_AUDIO_API_KEY`, `AI_AUDIO_MODEL` |
+| | | `groq` | `AI_GROQ_API_KEY` (key chat yang sama). `AI_AUDIO_MODEL` boleh kosong: `whisper-large-v3-turbo` |
+| Pencarian web | `AI_SEARCH_PROVIDER` | `brave` (bawaan) | `AI_BRAVE_SEARCH_KEY` |
+| | | `tavily` | `AI_TAVILY_API_KEY` |
+| Gambar | `AI_IMAGE_PROVIDER` | `openai` (bawaan) | `AI_IMAGE_API_KEY`, `AI_IMAGE_MODEL` |
+| | | `cloudflare` | `AI_CLOUDFLARE_API_TOKEN`, `AI_CLOUDFLARE_ACCOUNT_ID`. `AI_IMAGE_MODEL` boleh kosong: `@cf/black-forest-labs/flux-1-schnell` |
+| | | `pollinations` | Tidak ada |
+
+Contoh untuk memakai ketiga alternatif tanpa OpenAI dan Brave:
+
+```
+AI_AUDIO_PROVIDER=groq
+AI_SEARCH_PROVIDER=tavily
+AI_TAVILY_API_KEY=tvly-...
+AI_IMAGE_PROVIDER=cloudflare
+AI_CLOUDFLARE_API_TOKEN=...
+AI_CLOUDFLARE_ACCOUNT_ID=...
+```
+
+Aturan yang berlaku:
+
+- Setiap penyedia hanya membaca kuncinya sendiri. Key OpenAI tidak dikirim ke Groq atau Cloudflare, dan sebaliknya.
+- Nilai yang tidak dikenal (salah ketik) mematikan fitur itu; bot tidak diam-diam kembali ke penyedia lain. Log startup menyebutkannya.
+- Saat startup bot menulis satu baris per fitur, misalnya `AI speech-to-text: Groq configured (whisper-large-v3-turbo)` atau `AI images: OpenAI off (missing or invalid: AI_IMAGE_API_KEY, AI_IMAGE_MODEL)`. "configured" berarti variabelnya terisi; bot tidak menghubungi penyedia saat startup, jadi kunci atau model yang salah baru terlihat saat fitur dipakai.
+- Jika `AI_AUDIO_PROVIDER=groq` tetapi `AI_AUDIO_MODEL` masih berisi nama model OpenAI, Groq akan menolaknya. Kosongkan `AI_AUDIO_MODEL` atau isi dengan model Groq.
+- Ketiga fitur tetap memerlukan fondasi AI yang aktif di dashboard dan ikut memakai batas harian yang sama.
+
+Batas tiap alternatif gambar:
+
+- **Edit gambar hanya dengan OpenAI.** Dengan Cloudflare atau Pollinations, permintaan edit ditolak sebelum ada yang dikirim.
+- **Cloudflare** (model bawaan): bot hanya mengirim instruksi; ukuran ditentukan model dan hasilnya JPEG. Pilihan ukuran di dashboard tidak diteruskan. Model lain dapat diisi di `AI_IMAGE_MODEL` dengan bentuk `@cf/<vendor>/<model>`, tetapi hanya format model bawaan yang dibaca dari dokumentasinya; model lain belum tentu cocok.
+- **Pollinations** (API "Classic" tanpa key): luas paling besar 768 × 768 piksel, JPEG dengan logo kecil, dan dibatasi per alamat IP. Di hosting bersama, alamat IP dipakai bersama pelanggan lain, jadi batas itu bisa sudah terpakai. Instruksi menjadi bagian alamat web, dan hasilnya dapat dibuka siapa pun yang memiliki alamat itu. Jangan dipakai untuk instruksi yang berisi hal pribadi.
+- Dashboard menampilkan nama penyedia dan ukuran hasil, dan memberi catatan bila ukurannya berbeda dari yang diminta.
+
+Kuota gratis yang dibaca dari halaman resmi tiap layanan pada 13 November 2026 (dapat berubah):
+
+- Groq: transkripsi tersedia di paket gratis; berkas paling besar 25 MB. Angka batas harian tidak dibaca dari halaman resminya.
+- Tavily: satu pencarian `basic` memakai 1 kredit. Jumlah kredit gratis per bulan tidak dibaca dari halaman resminya.
+- Cloudflare Workers AI: 10.000 Neuron per hari tanpa biaya; di paket gratis permintaan gagal setelah jatah habis. Model bawaan dihargai 4,80 Neuron per petak 512 × 512 dan 9,60 Neuron per langkah.
+- Pollinations Classic: satu gambar pada satu waktu, berjarak paling sedikit 45 detik, per alamat IP; di atas itu layanan menjawab 402 dan bot menampilkan waktu tunggunya.
 
 ## Port
 
@@ -103,3 +150,4 @@ Saran pemakaian: buka dashboard dari jaringan yang dipercaya, tekan KELUAR setel
 - Login Discord sungguhan pada alamat `http://ip:port`.
 - Koneksi dari panel ke penyedia PostgreSQL.
 - Dashboard di peramban sungguhan; tesnya memakai jsdom.
+- Groq (transkripsi), Tavily, Cloudflare Workers AI dan Pollinations yang sesungguhnya. Tesnya memakai penyedia tiruan: yang terbukti adalah permintaan yang disusun bot dan cara bot membaca jawaban, bukan bahwa layanan itu menerimanya. Bentuk permintaan diambil dari dokumentasi tiap layanan.
