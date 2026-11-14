@@ -39,7 +39,7 @@ const FEATURE_TABS = {
 const AI_TABS = {
     greeting: ['welcome', 'goodbye'],
     activities: ['settings', 'preview'],
-    agent: ['channel'],
+    agent: ['channel', 'interactive'],
     knowledge: ['library', 'test'],
     tools: ['summary', 'search'],
     image: ['create', 'edit'],
@@ -108,7 +108,7 @@ test('dashboard: no tab renders a mock form or calls itself a simulation', async
     await tick(30);
     const seen = await walk(page);
 
-    assert.equal(seen.length, 21 + 12 + 1, 'feature tabs + AI tabs + providers');
+    assert.equal(seen.length, 21 + 13 + 1, 'feature tabs + AI tabs + providers');
     for (const entry of seen) {
         assert.equal(entry.mock, 0, `${entry.where} renders a mock control`);
         assert.doesNotMatch(entry.banner, SIMULATION, `${entry.where} is labelled as simulation: ${entry.banner}`);
@@ -226,7 +226,7 @@ test('dashboard: an account that is not a bot owner is told so on every AI page'
     await page.go('#ai');
     assert.match(page.main.querySelector('.ai-intro-foot').textContent, NOT_OWNER);
     const seen = await walk(page, { features: false });
-    assert.equal(seen.length, 13);
+    assert.equal(seen.length, 14);
     for (const entry of seen) assert.match(entry.banner, NOT_OWNER, `${entry.where}: ${entry.banner}`);
 
     // Feature pages are open to every administrator and say nothing about bot ownership.

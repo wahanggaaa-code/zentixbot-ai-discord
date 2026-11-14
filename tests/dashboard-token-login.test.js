@@ -11,6 +11,7 @@ import { dashboardLoginStatus } from '../src/dashboard/origin.js';
 import { describeDashboard } from '../src/utils/startupReport.js';
 import { createWebRateLimit, webRateLimitBucket } from '../src/utils/webRateLimit.js';
 import { logger } from '../src/utils/logger.js';
+import { noticeText } from './helpers/login-page.js';
 
 const home = '123456789012345678';
 const ownerId = '323456789012345678';
@@ -343,7 +344,7 @@ test('links share the login limit with the form', async (t) => {
         const refused = await req(path);
         assert.equal(refused.status, 429, path);
         assert.equal(refused.headers.getSetCookie().length, 0);
-        assert.match(await refused.text(), /^Terlalu banyak percobaan login dari alamat ini\./);
+        assert.match(await noticeText(refused), /^Terlalu banyak percobaan login dari alamat ini\./);
     }
 });
 
@@ -358,7 +359,7 @@ test('a link does nothing while the token login is off, and follows DASHBOARD_UR
             const response = await req(path);
             assert.equal(response.status, 503, path);
             assert.equal(response.headers.getSetCookie().length, 0);
-            assert.match(await response.text(), text);
+            assert.match(await noticeText(response), text);
         }
     }
 
@@ -438,7 +439,7 @@ test('with both logins configured the page offers Discord, and each way gives it
     // Through Discord the account still has to be owner or administrator of the server.
     const callback = await req(`/dashboard/callback?code=mock&state=${authorize.searchParams.get('state')}`, { headers: { cookie: stateCookie } });
     assert.equal(callback.status, 403);
-    assert.equal(await callback.text(), 'Akses hanya untuk owner atau administrator server.');
+    assert.equal(await noticeText(callback), 'Akses hanya untuk owner atau administrator server.');
     assert.equal(discordCalls.length, 2);
 
     // Through the token the same account gets in.
@@ -453,7 +454,7 @@ test('without DASHBOARD_TOKEN nothing changes: the login goes to Discord and a p
     const response = await submit(TOKEN, { origin: 'https://bot.example.com' });
     assert.equal(response.status, 503);
     assert.equal(response.headers.getSetCookie().length, 0);
-    assert.match(await response.text(), /^Login dengan token belum aktif: isi DASHBOARD_TOKEN dan OWNER_IDS\.$/);
+    assert.match(await noticeText(response), /^Login dengan token belum aktif: isi DASHBOARD_TOKEN dan OWNER_IDS\.$/);
     assert.equal((await submit('', { origin: 'https://bot.example.com' })).status, 503, 'an empty token does not match an unset one');
     assert.deepEqual(warnings, []);
 });
@@ -468,7 +469,7 @@ test('a token that cannot be used keeps the login off and the page says what to 
         for (const path of ['/dashboard/', '/dashboard/login']) {
             const response = await req(path);
             assert.equal(response.status, 503, path);
-            assert.match(await response.text(), text, path);
+            assert.match(await noticeText(response), text, path);
         }
         const posted = await submit(env.DASHBOARD_TOKEN);
         assert.equal(posted.status, 503);
@@ -481,6 +482,103 @@ test('a token that cannot be used keeps the login off and the page says what to 
     for (const path of ['/dashboard/', '/dashboard/login']) {
         const response = await req(path);
         assert.equal(response.status, 503);
-        assert.match(await response.text(), /^Login belum dikonfigurasi\. Cara termudah: isi DASHBOARD_TOKEN \(minimal 12 karakter\) dan OWNER_IDS, lalu restart bot\./);
+        assert.match(await noticeText(response), /^Login belum dikonfigurasi\. Cara termudah: isi DASHBOARD_TOKEN \(minimal 12 karakter\) dan OWNER_IDS, lalu restart bot\./);
+    }
+});
+
+// ---------------------------------------------------------------------------------------------
+// The form as a real browser posts it (found on 14 November 2026: the form refused every login,
+// the link worked)
+// ---------------------------------------------------------------------------------------------
+
+/** POST the login form with a Host header of our choosing; fetch cannot set that header, node:http can. */
+const postForm = (base, host, headers, token = TOKEN) => new Promise((resolve, reject) => {
+    const body = new URLSearchParams({ token }).toString();
+    const request = http.request(`${base}/dashboard/login`, { method: 'POST', headers: { host, 'content-type': 'application/x-www-form-urlencoded', 'content-length': Buffer.byteLength(body), ...headers } }, (res) => {
+        let text = ''; res.on('data', (chunk) => { text += chunk; }); res.on('end', () => resolve({ status: res.statusCode, cookies: res.headers['set-cookie'] ?? [], body: text }));
+    });
+    request.on('error', reject);
+    request.end(body);
+});
+
+test('the login page lets the browser name it as the origin of the form; the dashboard itself still sends no referrer', async (t) => {
+    const { req, submit, login } = await site(t);
+    const page = await req('/dashboard/login');
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get('referrer-policy'), 'same-origin', 'under "no-referrer" a browser posts the form with "Origin: null"');
+    const html = await page.text();
+    assert.match(html, /<meta name="referrer" content="same-origin">/);
+    assert.equal(html.includes('no-referrer'), false);
+
+    const wrong = await submit('not-the-token-at-all');
+    assert.equal(wrong.status, 401);
+    assert.equal(wrong.headers.get('referrer-policy'), 'same-origin', 'the form shown again after a wrong token');
+
+    const cookie = await login();
+    for (const path of ['/dashboard/', '/dashboard/api/me', '/dashboard/style.css']) {
+        assert.equal((await req(path, { headers: { cookie } })).headers.get('referrer-policy'), 'no-referrer', path);
+    }
+});
+
+test('a browser that hides where the form came from ("Origin: null") can still log in', async (t) => {
+    const { submit } = await site(t);
+    const hidden = await submit(TOKEN, { origin: 'null' });
+    assert.equal(hidden.status, 303);
+    assert.equal(hidden.headers.get('location'), '/dashboard/');
+    assert.equal(hidden.headers.getSetCookie().filter((line) => line.startsWith('zx_session=')).length, 1);
+
+    const wrong = await submit(`${TOKEN}x`, { origin: 'null' });
+    assert.equal(wrong.status, 401, 'the token still has to be right');
+    assert.equal(wrong.headers.getSetCookie().length, 0);
+
+    // Where the browser says what kind of request it is, a form on another site is refused.
+    for (const [kind, status] of [['same-origin', 303], ['none', 303], ['cross-site', 403], ['same-site', 403], ['something-new', 403]]) {
+        const response = await submit(TOKEN, { origin: 'null', 'sec-fetch-site': kind });
+        assert.equal(response.status, status, kind);
+        assert.equal(response.headers.getSetCookie().length, status === 303 ? 1 : 0, kind);
+    }
+    assert.match(await (await submit(TOKEN, { origin: 'null', 'sec-fetch-site': 'cross-site' })).text(), /<p class="error" role="alert">Permintaan tidak valid\. Buka halaman login ini langsung dari alamat dashboard\.<\/p>/);
+
+    // A named origin is judged by its name, whatever else the request says.
+    assert.equal((await submit(TOKEN, { origin: 'http://evil.example', 'sec-fetch-site': 'same-origin' })).status, 403);
+    assert.equal((await submit(TOKEN, { origin: 'NULL' })).status, 403, 'only the exact word browsers send');
+});
+
+test('with DASHBOARD_URL set, a login with "Origin: null" has to arrive at that address', async (t) => {
+    const { base } = await site(t, { env: { ...TOKEN_ENV, DASHBOARD_URL: 'http://203.0.113.5:11991', DASHBOARD_ALLOW_HTTP: 'true' } });
+    const local = new URL(base).host;
+
+    const right = await postForm(base, '203.0.113.5:11991', { origin: 'null' });
+    assert.equal(right.status, 303);
+    assert.equal(right.cookies.length, 1);
+
+    const elsewhere = await postForm(base, local, { origin: 'null' });
+    assert.equal(elsewhere.status, 403);
+    assert.deepEqual(elsewhere.cookies, []);
+    assert.match(elsewhere.body, /<p class="error" role="alert">Login hanya diterima dari http:\/\/203\.0\.113\.5:11991\/dashboard\/login\. Buka alamat itu, atau sesuaikan DASHBOARD_URL/);
+    assert.equal((await postForm(base, '203.0.113.5:11992', { origin: 'null' })).status, 403, 'another port is another address');
+    assert.equal((await postForm(base, '203.0.113.5', { origin: 'null' })).status, 403);
+    assert.equal((await postForm(base, '203.0.113.5:11991', { origin: 'null', 'sec-fetch-site': 'cross-site' })).status, 403);
+    assert.equal((await postForm(base, '203.0.113.5:11991', { origin: 'null' }, 'not-the-token-at-all')).status, 401);
+
+    // Unchanged: a named origin decides by itself, and a client that sends none is let through.
+    assert.equal((await postForm(base, local, { origin: 'http://203.0.113.5:11991' })).status, 303);
+    assert.equal((await postForm(base, '203.0.113.5:11991', { origin: base })).status, 403);
+    assert.equal((await postForm(base, local, {})).status, 303);
+});
+
+test('"Origin: null" opens the login form only: changes inside the dashboard still need the real origin', async (t) => {
+    for (const env of [TOKEN_ENV, { ...TOKEN_ENV, DASHBOARD_URL: 'http://203.0.113.5:11991', DASHBOARD_ALLOW_HTTP: 'true' }]) {
+        const { req, base } = await site(t, { env });
+        const own = env.DASHBOARD_URL ?? base;
+        const response = await postForm(base, new URL(own).host, { origin: 'null' });
+        assert.equal(response.status, 303);
+        const cookie = response.cookies.find((line) => line.startsWith('zx_session=')).split(';')[0];
+        const me = await (await req('/dashboard/api/me', { headers: { cookie } })).json();
+        const logout = (headers) => req('/dashboard/api/logout', { method: 'POST', headers: { cookie, 'x-csrf-token': me.csrf, ...headers } });
+        assert.equal((await logout({ origin: 'null' })).status, 403);
+        assert.equal((await logout({ origin: 'null', 'sec-fetch-site': 'same-origin' })).status, 403);
+        assert.equal((await req('/dashboard/api/me', { headers: { cookie } })).status, 200, 'still logged in');
+        assert.equal((await logout({ origin: own })).status, 200);
     }
 });

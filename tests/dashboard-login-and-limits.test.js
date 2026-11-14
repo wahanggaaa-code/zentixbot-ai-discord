@@ -9,6 +9,9 @@ import { PermissionFlagsBits } from 'discord.js';
 import { mountDashboard } from '../src/dashboard/router.js';
 import { callbackProblem, loginProblemPage } from '../src/dashboard/loginProblem.js';
 import { createFixedWindowCounter, createWebRateLimit, webRateLimitBucket, WEB_RATE_LIMITS } from '../src/utils/webRateLimit.js';
+import { noticeText, noticeTextOf } from './helpers/login-page.js';
+import { loginFormPage } from '../src/dashboard/tokenLogin.js';
+import { noticePage } from '../src/dashboard/loginPage.js';
 
 const home = '123456789012345678';
 const userId = '323456789012345678';
@@ -80,8 +83,7 @@ test('the dashboard budget is finite, tells how long to wait, and opens again af
     const page = await req('/dashboard/', { headers: { cookie: session } });
     assert.equal(page.status, 429);
     assert.equal(page.headers.get('retry-after'), '60');
-    assert.match(page.headers.get('content-type'), /^text\/plain/);
-    assert.equal(await page.text(), 'Terlalu banyak permintaan ke dashboard dari alamat ini. Coba lagi dalam 1 menit.');
+    assert.equal(await noticeText(page), 'Terlalu banyak permintaan ke dashboard dari alamat ini. Coba lagi dalam 1 menit.');
 
     clock.now += 20 * 1000;
     const api = await req('/dashboard/api/me', { headers: { cookie: session } });
@@ -107,13 +109,13 @@ test('login attempts have their own tight budget, and spelling the path differen
         const refused = await req(path);
         assert.equal(refused.status, 429, path);
         assert.equal(refused.headers.get('retry-after'), '900', path);
-        assert.equal(await refused.text(), 'Terlalu banyak percobaan login dari alamat ini. Coba lagi dalam 15 menit.', path);
+        assert.equal(await noticeText(refused), 'Terlalu banyak percobaan login dari alamat ini. Coba lagi dalam 15 menit.', path);
     }
 
     clock.now += 100 * 1000;
     const later = await req('/dashboard/login');
     assert.equal(later.headers.get('retry-after'), '800');
-    assert.equal(await later.text(), 'Terlalu banyak percobaan login dari alamat ini. Coba lagi dalam 14 menit.', 'minutes are rounded up');
+    assert.equal(await noticeText(later), 'Terlalu banyak percobaan login dari alamat ini. Coba lagi dalam 14 menit.', 'minutes are rounded up');
     clock.now -= 100 * 1000;
 
     // Someone already signed in keeps working, and the bot's own routes are counted apart as well.
@@ -199,7 +201,7 @@ test('unusable limit numbers fall back to the defaults instead of switching the 
         const limit = createWebRateLimit({ general, login: general, dashboard: general, now: () => now });
         const count = (path) => {
             let passed = 0, status = null, retry = null;
-            const res = { set: (name, value) => { retry = value; }, status: (code) => { status = code; return res; }, json: () => res, type: () => res, send: () => res };
+            const res = { set: (name, value) => { if (name === 'Retry-After') retry = value; return res; }, status: (code) => { status = code; return res; }, json: () => res, type: () => res, send: () => res };
             for (let i = 0; i < 1000; i += 1) limit({ path, ip: '198.51.100.7' }, res, () => { passed += 1; });
             return { passed, status, retry };
         };
@@ -246,7 +248,7 @@ const problemText = async (response) => {
     const html = await response.text();
     assert.match(html, /<a href="\/dashboard\/login">Mulai login lagi<\/a>/);
     assert.match(html, /<meta name="viewport"/);
-    return html.match(/<p>(.*?)<\/p>/)[1];
+    return noticeTextOf(html);
 };
 
 test('a callback that cannot finish the login says which of the causes it was', async (t) => {
@@ -332,7 +334,7 @@ test('when 5000 logins are pending, new ones are refused but a browser already w
 
     const refused = await req('/dashboard/login');
     assert.equal(refused.status, 503);
-    assert.equal(await refused.text(), 'Terlalu banyak login yang menunggu.');
+    assert.equal(await noticeText(refused), 'Terlalu banyak login yang menunggu.');
     assert.equal(refused.headers.get('set-cookie'), null);
 
     assert.equal((await begin(waiting.cookie)).state, waiting.state);
@@ -387,7 +389,7 @@ test('a dashboard whose login is not configured says so on the callback as well'
     const { req } = await site(t, { env: { DASHBOARD_ALLOW_HTTP: '' } });
     const response = await req('/dashboard/callback?code=mock&state=x');
     assert.equal(response.status, 503);
-    assert.match(await response.text(), /^Login belum dikonfigurasi: DASHBOARD_URL memakai http:\/\//);
+    assert.match(await noticeText(response), /^Login belum dikonfigurasi: DASHBOARD_URL memakai http:\/\//);
 });
 
 test('the reasons are decided in a fixed order and the page escapes what it shows', () => {
@@ -407,4 +409,74 @@ test('the reasons are decided in a fixed order and the page escapes what it show
     assert.equal(html.includes('<script>'), false);
     assert.match(html, /selain http:\/\/x&#34;&#62;&#60;script&#62;alert\(&#39;1&#39;\)&#60;\/script&#62;&#38;,/);
     for (const problem of ['incomplete', 'spent', 'no_cookie', 'other_login', 'denied']) assert.match(loginProblemPage(problem, ORIGIN), /^<!doctype html><html lang="id">/);
+});
+
+// ---------------------------------------------------------------------------------------------
+// The pages shown before the dashboard opens
+// ---------------------------------------------------------------------------------------------
+
+test('the pages before login carry the dashboard\'s design tokens and load nothing from anywhere', () => {
+    const tokens = readFileSync(new URL('../dashboard-preview/style.css', import.meta.url), 'utf8').match(/^:root\{([^}]+)\}/)[1].split(';');
+    assert.equal(tokens.length, 8);
+    const pages = {
+        form: loginFormPage(),
+        'form with error and Discord': loginFormPage({ error: 'Token salah.', discord: true }),
+        problem: loginProblemPage('spent', ORIGIN),
+        notice: noticePage('Terlalu banyak login yang menunggu.'),
+    };
+    for (const [name, html] of Object.entries(pages)) {
+        assert.match(html, /^<!doctype html><html lang="id">/, name);
+        assert.match(html, /<meta name="viewport" content="width=device-width,initial-scale=1">/, name);
+        assert.match(html, /<meta name="theme-color" content="#a9a9a9">/, name);
+        for (const token of tokens) assert.ok(html.includes(`${token};`) || html.includes(`${token}}`), `${name}: ${token}`);
+        // Shown to people who are not logged in: no script, and no request for another file or site.
+        for (const banned of ['<script', '<link', '<img', '<iframe', ' src=', 'url(', '@import', 'http:', 'https:', '//', 'javascript:']) {
+            assert.equal(html.toLowerCase().includes(banned), false, `${name}: ${banned}`);
+        }
+        assert.equal(/\son[a-z]+\s*=/i.test(html), false, `${name}: no inline event handler`);
+        assert.match(html, /ZENTIX<span class="reg">®<\/span><small>DISCORD CONTROL SYSTEM<\/small>/, name);
+        assert.match(html, /© ZENTIXBOT <span class="sep">\/<\/span> DESIGNED FOR YOUR COMMUNITY/, name);
+        assert.equal((html.match(/<h1>/g) ?? []).length, 1, name);
+        assert.equal(html.includes('#5865f2'), false, `${name}: the old Discord-blue button is gone`);
+        assert.equal(/border-radius:(?!0|50%|20px)/.test(html), false, `${name}: square corners, as in the dashboard`);
+    }
+    assert.match(pages.form, /<title>Masuk — Zentix<\/title>/);
+    assert.match(pages.form, /<h1>Masuk<br><em>dashboard<\/em><span>\.<\/span><\/h1>/);
+    assert.match(pages.form, /<label for="token">Token<\/label><input id="token" /);
+    assert.match(pages.form, /<button class="primary" type="submit">Masuk<\/button><\/form>/);
+    assert.match(pages.form, /Sesi berlaku 12 jam\./);
+    assert.match(pages.form, /input\{[^}]*font:16px /, 'below 16px a phone zooms into the field');
+    assert.match(pages.problem, /<h1>Login dashboard<br><em>gagal<\/em><span>\.<\/span><\/h1>/);
+});
+
+test('a notice page escapes what it is given and offers a way on only when there is one', () => {
+    const html = noticePage('<mark>&"\'</mark>', { title: 'A <q>', label: '<u>', href: '/dashboard/login?a="b"', action: '<s>' });
+    for (const raw of ['<mark>', '<q>', '<u>', '<s>', 'a="b"']) assert.equal(html.includes(raw), false, raw);
+    assert.equal(noticeTextOf(html), '<mark>&"\'</mark>');
+    assert.match(html, /<title>A &#60;q&#62; — Zentix<\/title>/);
+    assert.match(html, /<a href="\/dashboard\/login\?a=&#34;b&#34;">&#60;s&#62;<\/a>/);
+
+    assert.match(noticePage('x'), /<p class="alt"><a href="\/dashboard\/login">Buka halaman login<\/a><\/p>/);
+    assert.match(noticePage('x'), /<h1>Belum bisa<br><em>masuk<\/em><span>\.<\/span><\/h1>/);
+    assert.equal(noticePage('x', { href: null }).includes('<p class="alt">'), false);
+    assert.match(noticePage('x', { title: 'Tunggu' }), /<h1>Tunggu<span>\.<\/span><\/h1>/, 'a one-word title has no line break');
+});
+
+test('a login that cannot go ahead points back to the form only where a form exists', async (t) => {
+    // Nothing configured: there is no login page to go to.
+    const bare = await site(t, { env: { CLIENT_ID: '', DISCORD_CLIENT_SECRET: '' } });
+    const off = await bare.req('/dashboard/login');
+    assert.equal(off.status, 503);
+    assert.equal((await off.text()).includes('<p class="alt">'), false);
+
+    // Too many attempts: the way on is to wait.
+    const limited = await site(t, { limits: { login: { windowMs: MINUTE, max: 1 } } });
+    await limited.req('/dashboard/login');
+    const refused = await limited.req('/dashboard/login');
+    assert.equal(refused.status, 429);
+    const html = await refused.text();
+    assert.match(html, /<h1>Terlalu banyak<br><em>percobaan<\/em><span>\.<\/span><\/h1>/);
+    assert.equal(html.includes('<p class="alt">'), false);
+    const api = await limited.req('/dashboard/api/me');
+    assert.match(api.headers.get('content-type'), /^application\/json/, 'the dashboard\'s own requests keep getting JSON');
 });

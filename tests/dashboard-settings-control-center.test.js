@@ -466,3 +466,25 @@ test('shortcuts open the feature pages and the offline preview stays a labelled 
     assert.match(offline.$('#main').textContent, /Preview statis/);
     assert.deepEqual(state.calls, []);
 });
+
+// jsdom does not lay a page out, so the phone layout is pinned by what causes it: on 14 November 2026 the settings
+// page was cut off on a phone, because one table kept a 530px minimum and the single column grew with it.
+test('the settings page fits a phone: no table keeps a fixed minimum width, and the column cannot grow with its content', async (t) => {
+    const page = await open(t, { center: ok(sample()) });
+    const tables = [...page.w.document.querySelectorAll('main table')];
+    assert.ok(tables.length >= 5, 'server, permissions, shortcuts, storage, access');
+    for (const table of tables) {
+        assert.ok(table.classList.contains('f-table-fit'), `a table without f-table-fit: ${table.textContent.slice(0, 40)}`);
+        assert.ok(table.parentElement.classList.contains('f-table-wrap'));
+    }
+    assert.ok(page.$('[data-permission]').closest('table').querySelector('th'), 'the permissions table is one of them');
+
+    const css = fs.readFileSync('dashboard-preview/features.css', 'utf8');
+    assert.match(css, /\.f-table-fit\{min-width:0\}/);
+    assert.match(css, /\.f-layout>\*\{min-width:0\}/);
+    const narrow = css.slice(css.indexOf('@media(max-width:850px)'));
+    // A bare `1fr` is `minmax(auto, 1fr)`: such a column is at least as wide as the widest thing in it.
+    assert.match(narrow, /\.f-layout,\.music-layout\{grid-template-columns:minmax\(0,1fr\)\}/);
+    assert.match(narrow, /\.f-layout aside\{display:grid;grid-template-columns:minmax\(0,1fr\)/);
+    assert.doesNotMatch(css, /\.f-layout[^{}]*\{[^{}]*grid-template-columns:1fr[;}]/);
+});

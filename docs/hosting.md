@@ -35,10 +35,10 @@ Disarankan:
 
 | Variabel | Isi |
 | --- | --- |
-| `OWNER_IDS` | ID Discord pemilik bot. Halaman AI dan statistik hosting di dashboard hanya untuk ID ini; login dashboard dengan token bertindak atas nama ID pertama |
+| `OWNER_IDS` | ID Discord pemilik bot. Halaman AI, pemakaian sistem di halaman ringkasan dan statistik hosting di dashboard hanya untuk ID ini; login dashboard dengan token bertindak atas nama ID pertama |
 | `DASHBOARD_TOKEN` | Rahasia minimal 12 karakter untuk login dashboard. Lihat "Login dashboard dengan token" |
 | `NODE_OPTIONS` | `--max-old-space-size=384` pada container 512 MB. Saran panduan referensi; diisi di panel, bukan di berkas `.env`. Pemakaian memori bot ini belum pernah diukur |
-| `AI_GROQ_API_KEY`, `AI_GEMINI_API_KEY`, `AI_OPENROUTER_API_KEY`, `AI_NVIDIA_API_KEY` | Minimal satu bila fitur AI dipakai |
+| `AI_GROQ_API_KEY`, `AI_GEMINI_API_KEY`, `AI_OPENROUTER_API_KEY`, `AI_NVIDIA_API_KEY` | Minimal satu bila fitur AI dipakai. Tiap provider cadangan memerlukan kuncinya sendiri; lihat "Provider chat AI" |
 
 Untuk dashboard:
 
@@ -50,7 +50,77 @@ Untuk dashboard:
 
 Musik tidak memerlukan variabel: bot memakai enam node Lavalink publik yang tercantum di `lavalink/nodes.json` (vinster, trinium, nazha, serenetia, jirayu, millohost), diambil dari daftar di `lavalink.darrennathanael.com`. Node itu milik pihak ketiga dan belum diuji dari bot ini; untuk menggantinya, ubah berkas itu atau isi `LAVALINK_NODES`. Nama `LAVALINK_URI` dan `LAVALINK_NODE_NAME` tidak dibaca bot.
 
-Opsional: transkrip suara, pencarian web dan gambar (lihat bagian berikut), `HOSTING_PANEL_URL` + `HOSTING_SERVER_ID` + `HOSTING_API_KEY`, `TMDB_API_KEY`, `LOG_LEVEL`, `SENTRY_DSN`. Daftar lengkap ada di `.env.example`.
+Opsional: transkrip suara, pencarian web dan gambar (lihat bagian berikut), `HOSTING_PANEL_URL` + `HOSTING_SERVER_ID` + `HOSTING_API_KEY`, `DISK_LIMIT_MB` (kuota disk untuk halaman ringkasan), `TMDB_API_KEY`, `LOG_LEVEL`, `SENTRY_DSN`. Daftar lengkap ada di `.env.example`.
+
+## Provider chat AI: satu utama dan sampai tiga cadangan
+
+Diatur di dashboard, **AI Studio → Provider & fallback**, bukan di `.env`. Di `.env` hanya kuncinya.
+
+| Di dashboard | Isi |
+| --- | --- |
+| Provider utama + Model utama | Dicoba lebih dulu |
+| Provider cadangan 1, 2, 3 + modelnya | Dicoba berurutan bila yang sebelumnya gagal. "Tidak ada" = slot dilewati |
+
+Provider yang tersedia ada empat: Groq, Gemini, OpenRouter dan NVIDIA NIM. Satu provider hanya boleh dipakai sekali, jadi utama ditambah tiga cadangan berarti keempatnya terpakai.
+
+- **Provider tanpa kunci di `.env` dilewati**, tanpa pesan. Baris "Kunci server" di halaman itu menunjukkan kunci mana yang terbaca. Cadangan Gemini, misalnya, hanya bekerja bila `AI_GEMINI_API_KEY` terisi.
+- **Kapan bot pindah ke cadangan:** provider tidak menjawab dalam batas waktu, jaringan gagal, atau jawabannya 401, 403, 404, 408, 429 atau 5xx. Itu mencakup kuota habis, kunci salah dan ID model yang tidak dikenal.
+- **Kapan bot tidak pindah:** provider menolak isi permintaan (jawaban 4xx lain) atau memblokir jawabannya. Permintaan itu gagal tanpa mencoba cadangan.
+- **Waktu tunggu** berlaku per provider. Dengan batas 20 detik dan empat provider yang semuanya macet, satu permintaan dapat menunggu sampai 80 detik.
+- **Kuota harian** dihitung satu kali per permintaan, berapa pun provider yang dicoba.
+- Tombol **Tes koneksi** memakai rantai yang sama dan menyebut provider mana yang menjawab. Ia tidak menguji tiap cadangan satu per satu: bila provider utama menjawab, cadangan tidak disentuh.
+
+Pengaturan yang disimpan sebelum 14 November 2026 (satu cadangan) tetap terbaca; cadangan 2 dan 3 dianggap kosong sampai diisi dan disimpan.
+
+## AI interaktif: bot yang ikut mengobrol di channel
+
+Sejak 14 November 2026 bot dapat menjawab pesan biasa tanpa perintah. Menyalakannya:
+
+1. **AI Studio → Provider & fallback**: AI aktif dan disetujui (sama seperti untuk `/aichat`).
+2. **AI Studio → Agent & chat → tab "AI interaktif"**: nyalakan "Aktifkan AI interaktif", centang channel chat, pilih cara yang diinginkan, lalu **Simpan**. Berlaku pada pesan berikutnya, tanpa restart.
+
+| Yang diinginkan | Saklar |
+|---|---|
+| Bot membalas saat di-mention atau pesannya di-reply | "Balas saat di-mention atau di-reply" (sudah nyala); "…di semua channel" bila tidak hanya di channel chat |
+| Bot nimbrung sendiri di tengah obrolan | "Ikut nimbrung", dengan peluang dan jedanya |
+| Bot menyapa saat channel sepi | "Menyapa saat channel sepi", dengan lama sepi, jam aktif dan batas per hari |
+| Bot mengomentari gambar di channel galeri | "Baca gambar" dan centang channel galeri |
+| Bot tahu jam | Selalu; pilih zona WIB, WITA atau WIT |
+| Bot menyapa dengan nama | "Panggil anggota dengan namanya" (sudah nyala) |
+
+Yang perlu diketahui sebelum menyalakannya:
+
+- Pesan anggota di channel yang dipilih dikirim ke provider AI tanpa persetujuan per pesan. Beri tahu anggota.
+- Setiap jawaban memakai kuota harian. Dengan "Ikut nimbrung" 20 % di channel yang ramai, kuota anggota (bawaan 20 per hari) dan kuota server (bawaan 200) cepat habis; naikkan kuota atau turunkan peluangnya. "Batas pesan bot per jam" adalah rem terakhir.
+- Gambar memerlukan model yang bisa membaca gambar pada provider utama. Model teks saja membuat komentar galeri tidak muncul.
+- Video tidak dibaca.
+- Bot memerlukan izin **View Channel**, **Send Messages** dan sebaiknya **Read Message History** di channel itu, dan **Message Content Intent** harus menyala di Discord Developer Portal (bot ini memang memintanya saat start).
+- Mematikan: matikan "Aktifkan AI interaktif" lalu simpan. Bot langsung berhenti membaca pesan untuk AI.
+
+Bila bot diam, lihat log. Contoh baris:
+
+```text
+12:00:03  WARN   AI interactive: reply skipped (AI belum diaktifkan atau belum disetujui.)
+12:00:03  WARN   AI interactive: reply skipped (Semua provider gagal atau timeout.)
+12:00:03  WARN   AI interactive: gallery skipped (Provider menolak permintaan.)
+```
+
+Tidak ada baris sama sekali berarti bot memang memutuskan diam: fitur mati, channel tidak dicentang, batas per jam tercapai, kuota anggota habis, atau bot tidak punya izin menulis. Rinciannya ada di [tahap-8.md](tahap-8.md).
+
+## Perintah `/…` yang menjawab "that command does not exist"
+
+Bot ini mendaftarkan perintahnya hanya untuk server di `GUILD_ID`. Bila aplikasi Discord yang sama pernah dipakai program bot lain, perintah **global** program itu tetap tersimpan di Discord dan tetap ditawarkan saat mengetik `/`, tetapi bot ini tidak mengenalnya. Contoh nyata (14 November 2026): `/ai chat`, `/ai config` dan `/ai status` muncul di samping `/aichat` milik bot ini.
+
+Sejak 14 November 2026 bot menghapus perintah global seperti itu setiap kali start, setelah perintah server terdaftar, dan melaporkannya sekali:
+
+```text
+04:48:22  START  Slash commands: 1 global command left by another program removed (/ai)
+```
+
+- Perintah titik masuk Activity (jenis 4) tidak dihapus.
+- Bila penghapusan gagal, bot tetap menyala dan menulis satu baris `WARN`.
+- `KEEP_GLOBAL_COMMANDS=true` mematikan penghapusan ini. Pakai hanya bila program lain yang masih berjalan dengan aplikasi yang sama memang memerlukan perintah globalnya.
+- Aplikasi Discord dapat menyimpan daftar lama sebentar. Tutup dan buka lagi bila perintah yang sudah dihapus masih ditawarkan.
 
 ## Suara, pencarian web dan gambar: pilihan penyedia
 
@@ -155,6 +225,22 @@ Bila halaman login menolak:
 | "Login hanya diterima dari …" | Dashboard dibuka lewat alamat yang berbeda dari `DASHBOARD_URL`. |
 | "Bot belum siap memverifikasi server." | Bot belum tersambung ke Discord; tunggu sampai log menulis ONLINE. |
 
+### Perbaikan 14 November 2026: formulir menolak, tautan diterima
+
+Sampai versi sebelumnya, mengetik token di `/dashboard/login` selalu dijawab "Login hanya diterima dari …" (atau "Permintaan tidak valid …" bila `DASHBOARD_URL` kosong), walaupun alamatnya benar. Tautan `/masuk/TOKEN` tetap bisa dipakai.
+
+Sebabnya: halaman login dikirim dengan kebijakan `Referrer-Policy: no-referrer`. Dengan kebijakan itu peramban berbasis Chromium (Chrome, Brave, Edge) mengirim formulir dengan header `Origin: null`, bukan alamat dashboard, dan server menolak karena `null` tidak sama dengan alamat dashboard. Tes yang ada mengirim alamat yang benar atau tidak mengirim `Origin` sama sekali, sehingga tidak menangkapnya.
+
+Yang berubah:
+
+- Halaman login dan halaman lain sebelum dashboard terbuka kini memakai `Referrer-Policy: same-origin`, sehingga peramban menyebut alamat dashboard saat mengirim formulir. Dashboard sendiri tetap `no-referrer`.
+- `Origin: null` pada formulir login diterima bila permintaan sampai di alamat dashboard (header `Host` sama dengan `DASHBOARD_URL` bila itu diisi), dan ditolak bila peramban menandainya sebagai permintaan dari situs lain (`Sec-Fetch-Site`; header ini hanya dikirim lewat HTTPS dan di `localhost`). Ini menolong tab login lama yang masih terbuka dan peramban yang menyembunyikan asal halaman.
+- Lewat HTTP biasa, formulir di situs lain jadi bisa mengirim token ke halaman login. Yang didapatnya tidak ada: jawabannya tidak bisa dibaca situs itu, percobaan tetap dihitung per alamat IP (30 per 15 menit), dan siapa pun yang tahu token memang bisa masuk. Perubahan di dalam dashboard (simpan, hapus, keluar) tetap menuntut `Origin` yang sama persis dengan alamat dashboard.
+
+### Tampilan halaman login
+
+Halaman login, halaman "login gagal", "login belum dikonfigurasi" dan "terlalu banyak percobaan" memakai sistem desain yang sama dengan dashboard (warna, huruf, panel bergaris tanpa sudut membulat, tombol lime). Sumbernya `src/dashboard/loginPage.js`; nilainya disalin dari `:root` pada `dashboard-preview/style.css`, dan tes gagal bila keduanya tidak lagi sama. Halaman itu satu dokumen utuh: tanpa skrip dan tanpa mengambil berkas lain, karena ditampilkan kepada orang yang belum login.
+
 ## Dashboard lewat HTTP
 
 Bagian ini tentang login lewat Discord. Bawaan: login itu hanya aktif pada alamat `https://` (atau `http://localhost` saat pengembangan). Dengan `DASHBOARD_URL=http://ip:port` saja, halaman login menjawab 503 dan menjelaskan sebabnya.
@@ -205,9 +291,33 @@ Server web membatasi jumlah permintaan per alamat IP. Ada tiga hitungan terpisah
 
 Sebelumnya hanya ada satu hitungan, 100 per 15 menit untuk semuanya. Satu kali membuka dashboard mengambil 31 berkas yang tidak di-cache, ditambah panggilan data, sehingga jatah itu habis setelah dua atau tiga kali buka dan peramban menerima `{"error":"Too many requests"}`.
 
-Permintaan yang ditolak mendapat status 429 dan header `Retry-After`. Di bawah `/dashboard` isinya kalimat berbahasa Indonesia yang menyebut berapa lama harus menunggu. Permintaan yang ditolak tidak memperpanjang waktu tunggu. Hitungan disimpan di memori dan kembali nol saat bot dimulai ulang. Angka login dan dashboard tetap di `src/utils/webRateLimit.js`; tidak ada variabel lingkungan untuk mengubahnya.
+Permintaan yang ditolak mendapat status 429 dan header `Retry-After`. Di bawah `/dashboard` isinya kalimat berbahasa Indonesia yang menyebut berapa lama harus menunggu: sebagai halaman bergaya dashboard untuk alamat yang dibuka orang, sebagai JSON untuk `/dashboard/api/…`. Permintaan yang ditolak tidak memperpanjang waktu tunggu. Hitungan disimpan di memori dan kembali nol saat bot dimulai ulang. Angka login dan dashboard tetap di `src/utils/webRateLimit.js`; tidak ada variabel lingkungan untuk mengubahnya.
 
 Hitungan memakai alamat IP yang tersambung langsung ke bot. Di belakang reverse proxy, semua pengunjung terhitung sebagai satu alamat.
+
+## Pemakaian sistem di halaman ringkasan
+
+Blok "02 / PEMAKAIAN SISTEM" pada halaman ringkasan dashboard menampilkan CPU, RAM, jaringan dan disk, dan memperbaruinya setiap 3 detik selama halaman itu terlihat. Hanya untuk owner bot (`OWNER_IDS`); login dengan token selalu bertindak sebagai owner.
+
+**Tidak perlu pengaturan apa pun.** Bot membaca angka kontainernya sendiri dari berkas yang disediakan kernel Linux (`/sys/fs/cgroup`, `/proc`), yaitu sumber yang sama yang dibaca panel hosting. Kunci API panel tidak diperlukan.
+
+| Angka | Asalnya | Cara menghitung |
+|---|---|---|
+| CPU | `cpu.stat` kontainer (`usage_usec`), selisih dua bacaan | **100% = satu inti penuh**, seperti di panel Pterodactyl. "DARI 100%" adalah jatah CPU kontainer (`cpu.max`); tanpa jatah tertulis jumlah inti mesin |
+| RAM | `memory.current` dikurangi `inactive_file` | Cache berkas yang bisa dilepas tidak dihitung, seperti di panel. Batasnya `SERVER_MEMORY` (diisi panel) bila ada dan tidak melebihi batas kontainer, kalau tidak batas kontainer (`memory.max`) |
+| Jaringan | `/proc/self/net/dev`, semua antarmuka kecuali `lo` | Kecepatan masuk / keluar = selisih dua bacaan; di bawahnya total sejak kontainer menyala |
+| Disk | Ukuran folder server (`/home/container` bila bot ada di dalamnya, kalau tidak folder bot) | Dihitung di latar belakang, paling sering **sekali per 5 menit**; berhenti pada 60.000 berkas dan menulis "LEBIH DARI INI" |
+
+Yang perlu diketahui:
+
+- **Kuota disk tidak bisa dibaca dari dalam kontainer.** Isi `DISK_LIMIT_MB` di `.env` (misalnya `5120` untuk 5 GB) agar tertulis "DARI 5 GB" dan batang terisi. Tanpa itu tertulis "KUOTA BELUM DIISI".
+- Bila ketiga nilai `HOSTING_PANEL_URL`, `HOSTING_SERVER_ID` dan `HOSTING_API_KEY` diisi, bot juga bertanya ke panel paling sering sekali per 15 detik, hanya untuk dua hal: status server (tertulis di samping "LIVE") dan angka disk (pengganti hitungan folder). CPU, RAM dan jaringan tetap bacaan bot sendiri, karena itulah yang bisa diperbarui tiap 3 detik tanpa membebani panel.
+- Angka pertama setelah halaman dibuka belum punya CPU dan kecepatan jaringan (perlu dua bacaan); keduanya terisi sekitar satu detik kemudian. Yang tidak diketahui ditulis "—", bukan 0.
+- Di luar kontainer (VPS tanpa Docker, komputer sendiri) CPU dan RAM adalah milik **proses bot**, dibanding seluruh mesin; catatan kaki blok itu menyebutkannya. Di Windows dan macOS jaringan tertulis "TIDAK TERBACA".
+- Angka bisa berbeda sedikit dari panel: panel dan bot membaca pada saat yang berbeda, dan angka disk bot bisa berumur sampai 5 menit.
+- Beban: satu permintaan kecil tiap 3 detik per tab yang terbuka dan terlihat; tab tersembunyi atau halaman lain tidak bertanya. Pemeriksaan keanggotaan Discord untuk permintaan ini dipakai ulang selama 1 menit (rute lain tetap memeriksa setiap kali), jadi membiarkan halaman terbuka tidak menghabiskan jatah permintaan bot ke Discord.
+
+Sumber: `src/services/systemUsage.js` (pembacaan), `src/dashboard/systemUsageApi.js` (`GET /dashboard/api/bot/system-usage`), `dashboard-preview/live.js` (tampilan).
 
 ## Bila login gagal
 
@@ -301,9 +411,14 @@ Contoh saat menyala (dari menjalankan bot di lingkungan uji dengan Discord tirua
 
 ## Yang belum diuji
 
+- Pemakaian sistem pada panel sungguhan. Pembacaan diuji dengan berkas kernel tiruan (cgroup v2, cgroup v1, tanpa cgroup) dan dijalankan di kontainer pengembangan (cgroup v2, batas RAM, tanpa jatah CPU). Bahwa angkanya sama dengan yang ditampilkan panel pemilik bot, dan bahwa `SERVER_MEMORY` terisi di panel itu, belum diperiksa. Sambungan ke API panel diuji dengan panel tiruan saja.
+- AI interaktif terhadap Discord dan provider sungguhan. Tesnya memakai pesan Discord tiruan dan provider tiruan: yang terbukti adalah kapan bot memutuskan menjawab, apa yang dikirim ke provider, dan apa yang ditulis ke channel. Belum pernah dicoba: seperti apa jawaban model sungguhan dengan prompt ini (gaya, panjang, apakah benar terasa seperti anggota), apakah model yang dipakai pemilik bot membaca gambar, apakah proxy media Discord menerima permintaan JPEG yang diperkecil seperti yang disusun bot, dan berapa kuota yang terpakai di channel yang ramai. Tampilan tab "AI interaktif" hanya diperiksa di jsdom, bukan di peramban.
+- Rantai tiga cadangan terhadap provider sungguhan. Tesnya memakai provider tiruan: yang terbukti adalah urutan percobaan, provider mana yang dilewati, dan kapan rantai berhenti. Bahwa Gemini, OpenRouter atau NVIDIA menerima permintaan bot ini belum pernah dicoba.
+- Penghapusan perintah global terhadap Discord sungguhan. Tesnya memakai klien REST tiruan. Bahwa `/ai` di aplikasi pemilik bot memang perintah global adalah kesimpulan dari kode (bot ini menimpa daftar perintah server setiap start dan tidak punya `/ai`), belum dilihat langsung.
 - Tidak ada yang dijalankan di sini pada panel sungguhan. Yang diketahui tentang panel hanyalah kiriman pemilik bot di awal dokumen ini; batas RAM, perilaku saat restart dan pemakaian memori belum diperiksa.
 - Login Discord sungguhan sampai masuk ke dashboard pada alamat `http://ip:port`, termasuk setelah perbaikan batas permintaan dan pesan login.
 - Sebab login pemilik bot gagal pada 13 November 2026: satu sebab ditemukan pada 14 November (halaman `/dashboard/` berputar tanpa henti, lihat di atas). Apakah ada sebab lain, misalnya client secret, tidak diketahui.
+- Kiriman pemilik bot pada 14 November 2026 (tangkapan layar, bukan pengujian di sini): dashboard terbuka di Brave pada panel setelah login, dan `/aichat` dijawab oleh provider sungguhan. Cara login yang dipakai (token, tautan atau Discord) tidak diketahui.
 - Login dengan token dan tautan login di panel sungguhan dan di peramban sungguhan, termasuk apa yang tersimpan di riwayat peramban setelah tautan dibuka. Di sini diuji dengan permintaan HTTP langsung ke bot yang berjalan dengan klien Discord tiruan.
 - Tampilan log di konsol panel: apakah warnanya tampil, dan baris-baris setelah login Discord sungguhan (pendaftaran slash command, rangkuman ONLINE, pemeriksaan saat menyala, node Lavalink). Di sini baris-baris itu hanya dihasilkan dengan Discord tiruan.
 - Dashboard di peramban sungguhan; tesnya memakai jsdom dan permintaan HTTP langsung. Jumlah panggilan data per halaman tidak diukur; angka 31 hanya menghitung berkas yang disebut `index.html`.

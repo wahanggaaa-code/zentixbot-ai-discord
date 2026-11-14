@@ -10,6 +10,7 @@
  *   files that are never cached, and every tab reads its data afterwards, so this one is wide.
  * - `general`: all other paths (/, /health, /ready); its numbers come from the bot configuration.
  */
+import { noticePage } from '../dashboard/loginPage.js';
 export const WEB_RATE_LIMITS = Object.freeze({
     login: Object.freeze({ windowMs: 15 * 60 * 1000, max: 30 }),
     dashboard: Object.freeze({ windowMs: 60 * 1000, max: 600 }),
@@ -71,7 +72,7 @@ const waitText = (seconds) => (seconds < 60 ? `${seconds} detik` : `${Math.ceil(
 /**
  * Express middleware applying the three budgets. A refused request gets status 429 with a
  * Retry-After header; under /dashboard the body says in Indonesian how long to wait, as JSON for
- * API paths (the pages show its `error` field) and as plain text otherwise.
+ * API paths (the pages show its `error` field) and otherwise as a page in the dashboard's look.
  */
 export function createWebRateLimit({ general, login, dashboard, now = Date.now } = {}) {
     const counters = {
@@ -89,6 +90,6 @@ export function createWebRateLimit({ general, login, dashboard, now = Date.now }
             ? `Terlalu banyak percobaan login dari alamat ini. Coba lagi dalam ${waitText(verdict.retryAfterSeconds)}.`
             : `Terlalu banyak permintaan ke dashboard dari alamat ini. Coba lagi dalam ${waitText(verdict.retryAfterSeconds)}.`;
         if (req.path.toLowerCase().startsWith('/dashboard/api/')) return res.status(429).json({ error: message });
-        return res.status(429).type('text/plain').send(message);
+        return res.status(429).set('Referrer-Policy', 'same-origin').send(noticePage(message, { title: bucket === 'login' ? 'Terlalu banyak percobaan' : 'Terlalu banyak permintaan', label: 'TUNGGU', href: null }));
     };
 }

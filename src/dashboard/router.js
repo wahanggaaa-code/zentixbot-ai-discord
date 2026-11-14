@@ -8,6 +8,7 @@ import { logger } from '../utils/logger.js';
 import { dashboardLoginStatus, notConfiguredMessage } from './origin.js';
 import { callbackProblem, loginProblemPage } from './loginProblem.js';
 import { linkToken, loginFormPage, tokenLoginStatus, tokenMatches, tokenOffMessage, TOKEN_SESSION_MS } from './tokenLogin.js';
+import { noticePage } from './loginPage.js';
 import { createBotApiRouter } from './botApi.js';
 import { createGoodbyeApi } from './goodbyeApi.js';
 import { createBirthdayApi } from './birthdayApi.js';
@@ -18,6 +19,7 @@ import { createJoinToCreateSettingsApi } from './joinToCreateSettingsApi.js';
 import { createModulesApi } from './modulesApi.js';
 import { createOperationsApi } from './operationsApi.js';
 import { createHostingApi } from './hostingApi.js';
+import { createSystemUsageApi } from './systemUsageApi.js';
 import { createAIApi } from './aiApi.js';
 import { createSettingsApi } from './settingsApi.js';
 import { createServerStatsApi } from './serverStatsApi.js';
@@ -46,7 +48,7 @@ export function mountDashboard(app, client, options) {
 }
 
 // Sessions are process-local: deployment with multiple workers needs a shared session store.
-export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, env = process.env } = {}) {
+export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, env = process.env, systemUsage } = {}) {
   const router = express.Router();
   const states = new Map(), sessions = new Map();
   // Login stays disabled until DASHBOARD_URL is usable; see origin.js for what counts as usable.
@@ -64,6 +66,27 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
     if (origin) return sent === origin;
     try { return Boolean(sent) && new URL(sent).host === req.get('host'); } catch { return false; }
   };
+  // The login form is posted by the browser itself, not by a script, and a browser does not always name the
+  // page a form came from: under a strict referrer policy, or with privacy settings, it sends "Origin: null".
+  // Refusing that locked the operator out of the form (14 November 2026). So for the login only:
+  // a named origin must be the dashboard's own; under "Origin: null" a cross-site request is refused where
+  // the browser says so (Sec-Fetch-Site, sent over https and on localhost), and the request must have been
+  // sent to the dashboard's address. Over plain http that leaves a form on another site able to submit a token.
+  // It gains nothing by it: it cannot read the answer, attempts are counted per address, and whoever knows
+  // the token can open the dashboard anyway.
+  const loginPostAllowed = (req) => {
+    const sent = req.get('origin');
+    if (!sent) return true; // not a browser (curl, a script): the token is the proof
+    if (sent !== 'null') return fromOwnPage(req);
+    const site = req.get('sec-fetch-site');
+    if (site && site !== 'same-origin' && site !== 'none') return false;
+    try { return !origin || new URL(origin).host === req.get('host'); } catch { return false; }
+  };
+  // Pages a person reads before the dashboard opens. "same-origin" instead of the "no-referrer" used
+  // everywhere else, so that the browser names this page as the origin when it posts the login form.
+  const page = (res, status, html) => res.status(status).set('Referrer-Policy', 'same-origin').send(html);
+  const notice = (res, status, message, more) => page(res, status, noticePage(message, more));
+  const loginForm = (res) => (status, error) => page(res, status, loginFormPage({ error, discord: configured }));
   const options = { httpOnly: true, secure: origin?.startsWith('https:') || false, sameSite: 'lax', path: '/dashboard' };
   const clear = (res, name) => res.clearCookie(name, options);
   const purge = () => { const now = Date.now(); for (const [k,v] of states) if (v < now) states.delete(k); for (const [k,v] of sessions) if (v.expires < now) sessions.delete(k); };
@@ -81,15 +104,15 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
   }
   router.use((req,res,next) => { res.set({'Cache-Control': NO_CACHE, 'X-Content-Type-Options':'nosniff', 'Referrer-Policy':'no-referrer', 'X-Frame-Options':'DENY'}); next(); });
   router.get('/login', (req,res) => {
-    if (tokenLogin.enabled && req.query.via !== 'discord') return res.send(loginFormPage({ discord: configured }));
-    if (!configured) return res.status(503).send(tokenLogin.reason === 'missing' || tokenLogin.enabled ? notConfiguredMessage(reason) : tokenOffMessage(tokenLogin.reason));
+    if (tokenLogin.enabled && req.query.via !== 'discord') return loginForm(res)(200, '');
+    if (!configured) return notice(res, 503, tokenLogin.reason === 'missing' || tokenLogin.enabled ? notConfiguredMessage(reason) : tokenOffMessage(tokenLogin.reason), tokenLogin.enabled ? undefined : { href: null });
     purge();
     // A browser that opens the login twice (second tab, reload, prefetch) keeps its pending state.
     // A fresh state each time would overwrite the cookie and make the login begun first fail.
     const pending = cookie(req, 'zx_state');
     const state = states.has(pending) ? pending : random();
     if (state !== pending) {
-      if (states.size >= 5000) return res.status(503).send('Terlalu banyak login yang menunggu.');
+      if (states.size >= 5000) return notice(res, 503, 'Terlalu banyak login yang menunggu.');
       states.set(state, Date.now() + 600000);
     }
     res.cookie('zx_state', state, { ...options, maxAge: Math.max(1000, states.get(state) - Date.now()) });
@@ -113,9 +136,9 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
     res.redirect(303, '/dashboard/');
   }
   router.post('/login', express.urlencoded({ extended: false, limit: '2kb' }), async (req,res) => {
-    const form = (status, error) => res.status(status).send(loginFormPage({ error, discord: configured }));
-    if (!tokenLogin.enabled) return res.status(503).send(tokenOffMessage(tokenLogin.reason));
-    if (req.get('origin') && !fromOwnPage(req)) return form(403, origin ? WRONG_ADDRESS : 'Permintaan tidak valid. Buka halaman login ini langsung dari alamat dashboard.');
+    const form = loginForm(res);
+    if (!tokenLogin.enabled) return notice(res, 503, tokenOffMessage(tokenLogin.reason), { href: null });
+    if (!loginPostAllowed(req)) return form(403, origin ? WRONG_ADDRESS : 'Permintaan tidak valid. Buka halaman login ini langsung dari alamat dashboard.');
     if (!tokenMatches(req.body?.token, env)) {
       logger.warn(`Dashboard: token login refused for ${req.ip} (wrong token)`);
       return form(401, 'Token salah.');
@@ -127,10 +150,10 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
   // answer never repeats it and the browser is sent on to /dashboard/ at once.
   router.use('/masuk', async (req, res, next) => {
     if (req.method !== 'GET') return next();
-    const form = (status, error) => res.status(status).send(loginFormPage({ error, discord: configured }));
+    const form = loginForm(res);
     const typed = linkToken(req.path);
     if (typed === null) return res.redirect('/dashboard/login');
-    if (!tokenLogin.enabled) return res.status(503).send(tokenOffMessage(tokenLogin.reason));
+    if (!tokenLogin.enabled) return notice(res, 503, tokenOffMessage(tokenLogin.reason), { href: null });
     if (origin && new URL(origin).host !== req.get('host')) return form(403, WRONG_ADDRESS);
     if (!tokenMatches(typed, env)) {
       logger.warn(`Dashboard: token login refused for ${req.ip} (wrong token in a login link)`);
@@ -139,7 +162,7 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
     await openTokenSession(req, res, form, ' by link');
   });
   router.get('/callback', async (req,res) => {
-    if (!configured) return res.status(503).send(notConfiguredMessage(reason));
+    if (!configured) return notice(res, 503, notConfiguredMessage(reason), tokenLogin.enabled ? undefined : { href: null });
     purge(); const state = req.query.state, sent = cookie(req, 'zx_state');
     const known = typeof state === 'string' && states.has(state);
     // Only the browser that began a login spends it, and does so whether or not it then succeeds.
@@ -149,7 +172,7 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
     if (problem) {
       // Reloading the callback after a finished login, or finishing it in a second tab.
       if (sessions.has(cookie(req, 'zx_session'))) return res.redirect('/dashboard/');
-      return res.status(400).send(loginProblemPage(problem, origin));
+      return page(res, 400, loginProblemPage(problem, origin));
     }
     try {
       const tokenResponse = await fetchImpl('https://discord.com/api/v10/oauth2/token', { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:new URLSearchParams({client_id:env.CLIENT_ID,client_secret:env.DISCORD_CLIENT_SECRET,grant_type:'authorization_code',code:req.query.code,redirect_uri:origin+'/dashboard/callback'}), signal:AbortSignal.timeout(10000) });
@@ -161,19 +184,30 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
       const user = await userResponse.json();
       if (!/^\d{17,20}$/.test(user.id || '')) throw new Error('invalid identity');
       const access = await authorize(user.id);
-      if (access.error) return res.status(access.status).send(access.error);
-      if (sessions.size >= 5000) return res.status(503).send('Terlalu banyak sesi aktif.');
+      if (access.error) return notice(res, access.status, access.error, { title: 'Login dashboard gagal', label: 'LOGIN GAGAL', action: 'Mulai login lagi' });
+      if (sessions.size >= 5000) return notice(res, 503, 'Terlalu banyak sesi aktif.');
       const id=random(); sessions.set(id,{ user: {id:user.id, username:user.global_name || user.username || 'Discord'}, csrf:random(), expires:Date.now()+Math.min(token.expires_in*1000,8*3600*1000) });
       res.cookie('zx_session', id, {...options, maxAge:Math.min(token.expires_in*1000,8*3600*1000)});
       res.redirect('/dashboard/');
-    } catch { res.status(502).send('Login Discord gagal. Coba lagi.'); }
+    } catch { notice(res, 502, 'Login Discord gagal. Coba lagi.', { title: 'Login dashboard gagal', label: 'LOGIN GAGAL', action: 'Mulai login lagi' }); }
   });
   async function auth(req,res,next) {
     purge(); const session = sessions.get(cookie(req,'zx_session'));
     if (!session) return res.status(401).json({error:'Silakan login.'});
     const access = await authorize(session.user.id, session.operator === true);
-    if (access.error) return res.status(access.status).json({error:access.error});
+    if (access.error) { delete session.verifiedAt; return res.status(access.status).json({error:access.error}); }
+    session.verifiedAt = Date.now();
     req.session = session; req.guild = access.guild; req.member = access.member; next();
+  }
+  // For a route the page asks every few seconds. `auth` asks Discord about the member on every request;
+  // doing that twenty times a minute per open tab would spend the bot's request budget on nothing.
+  // Here the answer of the last check is trusted for a minute. Only for routes that read and change nothing.
+  const POLL_TRUST_MS = 60 * 1000;
+  async function authPolled(req,res,next) {
+    purge(); const session = sessions.get(cookie(req,'zx_session'));
+    if (!session) return res.status(401).json({error:'Silakan login.'});
+    if (!(Date.now() - session.verifiedAt < POLL_TRUST_MS)) return auth(req,res,next);
+    req.session = session; next();
   }
   const csrf = (req,res,next) => {
     if (!fromOwnPage(req) || req.get('x-csrf-token') !== req.session.csrf) return res.status(403).json({error:'Permintaan tidak valid.'});
@@ -193,6 +227,7 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
   router.use('/api/bot', createModulesApi(client, {auth, csrf}));
   router.use('/api/bot', createOperationsApi(client, {auth, csrf}));
   router.use('/api/bot', createHostingApi({auth, env}));
+  router.use('/api/bot', createSystemUsageApi({auth: authPolled, env, ...(systemUsage ? {usage: systemUsage} : {})}));
   router.use('/api/bot', createSettingsApi(client, {auth, env}));
   router.use('/api/ai', createAIApi(client, {auth, csrf, env}));
   // botOwner lets AI Studio say up front that its routes will refuse this account (see `owner` in aiApi.js).
@@ -203,7 +238,7 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
     sessions.delete(cookie(req,'zx_session')); clear(res,'zx_session'); res.json({ok:true});
   });
   router.get(['/', '/index.html'], (req,res,next) => {
-    if (!configured && !tokenLogin.enabled) return res.status(503).send(tokenLogin.reason === 'missing' ? notConfiguredMessage(reason) : tokenOffMessage(tokenLogin.reason));
+    if (!configured && !tokenLogin.enabled) return notice(res, 503, tokenLogin.reason === 'missing' ? notConfiguredMessage(reason) : tokenOffMessage(tokenLogin.reason), { href: null });
     purge(); if (!sessions.has(cookie(req,'zx_session'))) return res.redirect('/dashboard/login');
     auth(req,res,() => res.sendFile(path.join(preview,'index.html')));
   });

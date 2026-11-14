@@ -33,7 +33,7 @@
    +`<div id="settingsDiscord" aria-live="polite">Memuat…</div></section>`
    +`<section class="f-panel" style="margin-top:18px"><div class="f-panel-head"><div><h2>Tempat mengatur</h2>`
    +`<p>Pengaturan tersimpan ada di halaman masing-masing fitur.</p></div><span>✳</span></div>`
-   +`<div class="f-table-wrap"><table class="f-table"><tbody>${SHORTCUTS.map(([go,title,desc])=>`<tr><td><b>${title}</b><br><small>${desc}</small></td>`
+   +`<div class="f-table-wrap"><table class="f-table f-table-fit"><tbody>${SHORTCUTS.map(([go,title,desc])=>`<tr><td><b>${title}</b><br><small>${desc}</small></td>`
     +`<td><button type="button" class="f-link" data-go="${go}">BUKA ↗</button></td></tr>`).join('')}</tbody></table></div></section>`
    +`</div><aside>`
    +`<section class="f-panel"><div class="f-panel-head"><div><h2>Penyimpanan</h2><p>Database yang dipakai bot.</p></div><span>✳</span></div>`
@@ -48,7 +48,7 @@
  }
 
  const line=(label,value)=>`<tr><td>${label}</td><td>${value}</td></tr>`;
- const table=rows=>`<div class="f-table-wrap"><table class="f-table" style="min-width:0"><tbody>${rows.join('')}</tbody></table></div>`;
+ const table=rows=>`<div class="f-table-wrap"><table class="f-table f-table-fit"><tbody>${rows.join('')}</tbody></table></div>`;
  const unknown='<i>tidak tersedia</i>';
  const number=value=>value===null||value===undefined?unknown:esc(new Intl.NumberFormat('id-ID').format(value));
  const time=value=>value===null||value===undefined?unknown:esc(new Date(value).toLocaleString('id-ID'));
@@ -80,7 +80,7 @@
     :missing.length?`${missing.length} izin belum dimiliki bot di tingkat server. Fitur yang memakainya bisa gagal.`
     :'Semua izin yang diperiksa dimiliki bot di tingkat server.';
    permissions=`<p id="settingsPermissionSummary" class="f-muted" role="status">${esc(summary)}</p>`
-    +`<div class="f-table-wrap"><table class="f-table"><thead><tr><th>IZIN BOT</th><th>CONTOH PEMAKAI</th><th>STATUS</th></tr></thead><tbody>`
+    +`<div class="f-table-wrap"><table class="f-table f-table-fit"><thead><tr><th>IZIN BOT</th><th>CONTOH PEMAKAI</th><th>STATUS</th></tr></thead><tbody>`
     +bot.permissions.items.map(item=>`<tr><td>${esc(item.label)}</td><td>${esc(item.usedBy)}</td>`
      +`<td data-permission="${esc(item.key)}">${item.granted?'ADA':'<b>TIDAK ADA</b>'}</td></tr>`).join('')
     +`</tbody></table></div><p class="f-muted">Ini izin tingkat server. Pengaturan per channel dan urutan peran dapat tetap menghalangi bot di tempat tertentu.</p>`;

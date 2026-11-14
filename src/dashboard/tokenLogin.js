@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { escapeHtml, pageShell } from './loginPage.js';
 
 /**
  * Login to the dashboard with one secret from the environment, DASHBOARD_TOKEN, instead of going
@@ -57,8 +58,6 @@ export function tokenOffMessage(reason) {
     return 'Login dengan token belum aktif: isi DASHBOARD_TOKEN dan OWNER_IDS.';
 }
 
-const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-
 /**
  * The login page: one field for the token.
  * @param {object} [options]
@@ -66,20 +65,19 @@ const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => `&#${c.char
  * @param {boolean} [options.discord]  whether the Discord login is configured as well
  */
 export function loginFormPage({ error = '', discord = false } = {}) {
-    return '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-        + '<meta name="referrer" content="no-referrer"><meta name="color-scheme" content="light dark"><title>Masuk dashboard</title>'
-        + '<style>body{font-family:system-ui,sans-serif;max-width:24rem;margin:3rem auto;padding:0 1rem;line-height:1.5}'
-        + 'h1{font-size:1.25rem}label{display:block;margin-bottom:.35rem}'
-        + 'input,button{font:inherit;width:100%;box-sizing:border-box;padding:.6rem .7rem;border-radius:.4rem}'
-        + 'input{border:1px solid #8888}button{margin-top:.8rem;border:0;background:#5865f2;color:#fff;cursor:pointer}'
-        + '.error{padding:.6rem .7rem;border-radius:.4rem;border:1px solid #d33;margin-bottom:1rem}small{opacity:.75}</style></head><body>'
-        + '<h1>Masuk dashboard</h1>'
-        + (error ? `<p class="error" role="alert">${escapeHtml(error)}</p>` : '')
-        + '<form method="post" action="/dashboard/login">'
-        + '<label for="token">Token dashboard</label>'
-        + '<input id="token" name="token" type="password" autocomplete="current-password" required autofocus>'
-        + '<button type="submit">Masuk</button></form>'
-        + '<p><small>Token adalah isi <code>DASHBOARD_TOKEN</code> pada berkas <code>.env</code> bot.</small></p>'
-        + (discord ? '<p><a href="/dashboard/login?via=discord">Masuk dengan akun Discord</a></p>' : '')
-        + '</body></html>';
+    return pageShell({
+        title: 'Masuk — Zentix',
+        label: 'MASUK',
+        heading: 'Masuk<br><em>dashboard</em><span>.</span>',
+        lead: 'Ketik token untuk membuka control room server kamu.',
+        body: (error ? `<p class="error" role="alert">${escapeHtml(error)}</p>` : '')
+            + '<section class="panel"><div class="panel-head"><div><h2>Token dashboard</h2>'
+            + `<p>Khusus operator bot. Sesi berlaku ${TOKEN_SESSION_MS / 3600000} jam.</p></div><span>◆</span></div>`
+            + '<form method="post" action="/dashboard/login">'
+            + '<label for="token">Token</label>'
+            + '<input id="token" name="token" type="password" autocomplete="current-password" required autofocus>'
+            + '<button class="primary" type="submit">Masuk</button></form>'
+            + '<p class="help">Token adalah isi <code>DASHBOARD_TOKEN</code> pada berkas <code>.env</code> bot.</p></section>'
+            + (discord ? '<p class="alt"><span>ATAU</span><a href="/dashboard/login?via=discord">Masuk dengan akun Discord</a></p>' : ''),
+    });
 }

@@ -62,13 +62,13 @@ test('real welcome payload uses stored embed, prevents unwanted mentions, and su
  const fallback=buildWelcomePayload({member,config:{...cfg,welcomePing:false},canEmbed:false});assert.match(fallback.content,/Welcome/);assert.deepEqual(fallback.allowedMentions.users,[]);
 });
 
-test('browser live overview hides sample hosting data and renders bot data',async()=>{
+test('browser live overview hides the sample usage figures and renders bot data',async()=>{
  const files=['session.js','live.js','features.js','ai-studio.js','app.js'].map(x=>fs.readFileSync('dashboard-preview/'+x,'utf8'));
  const html=fs.readFileSync('dashboard-preview/index.html','utf8').replace(/<script src=".*?"><\/script>/g,'');
- const dom=new JSDOM(html,{url:'http://localhost/dashboard/',runScripts:'outside-only'});const w=dom.window;w.scrollTo=()=>{};
- w.fetch=async url=>({ok:!String(url).endsWith('/hosting'),json:async()=>String(url).endsWith('/hosting')?{error:'Belum tersedia'}:String(url).endsWith('/me')?{user:{id:uid,username:'Test'},guild:{id,name:'Server'},csrf:'csrf'}: {guild:{memberCount:42},online:true,ping:35,uptime:120000,database:'connected'}});
+ const dom=new JSDOM(html,{url:'http://localhost/dashboard/',runScripts:'outside-only',pretendToBeVisual:true});const w=dom.window;w.scrollTo=()=>{};
+ w.fetch=async url=>({ok:!String(url).endsWith('/system-usage'),status:String(url).endsWith('/system-usage')?503:200,json:async()=>String(url).endsWith('/system-usage')?{error:'Belum tersedia'}:String(url).endsWith('/me')?{user:{id:uid,username:'Test'},guild:{id,name:'Server'},csrf:'csrf'}: {guild:{memberCount:42},online:true,ping:35,uptime:120000,database:'connected'}});
  for(const code of files)w.eval(code);await new Promise(r=>setTimeout(r,20));
- assert.match(w.document.querySelector('.metrics').textContent,/42/);assert.match(w.document.querySelector('.resource-section').textContent,/belum tersedia/i);assert.doesNotMatch(w.document.querySelector('.resource-section').textContent,/384|142|24%/);
+ assert.match(w.document.querySelector('.metrics').textContent,/42/);assert.match(w.document.querySelector('#systemUsage').textContent,/belum tersedia/i);assert.doesNotMatch(w.document.querySelector('#systemUsage').textContent,/384|142|24|CONTOH/);w.clearTimeout(w.ZentixUsageTimer);
  w.close();
 });
 
@@ -88,7 +88,7 @@ test('welcome UI loads stored values safely and submits real validated fields',a
 
 test('new endpoints retain Discord admin checks and CSRF',async t=>{
  const fx=fixture(), {get,write,req,session}=await setup(t,fx);
- for(const p of ['settings/verification','tickets','cases','music','leaderboard','hosting']) assert.equal((await req('/dashboard/api/bot/'+p)).status,401,p);
+ for(const p of ['settings/verification','tickets','cases','music','leaderboard','hosting','system-usage']) assert.equal((await req('/dashboard/api/bot/'+p)).status,401,p);
  assert.equal((await write('POST','music',{action:'pause',confirmed:true},{'x-csrf-token':'wrong'})).status,403);
  fx.member.permissions.has=()=>false;
  for(const p of ['welcome','settings/verification','tickets','cases','music','leaderboard','hosting']) assert.equal((await get(p)).status,403,p);

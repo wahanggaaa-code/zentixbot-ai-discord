@@ -1,3 +1,5 @@
+import { noticePage } from './loginPage.js';
+
 /**
  * Why a request to /dashboard/callback cannot finish a login, and what to show for it.
  *
@@ -27,13 +29,7 @@ const MESSAGES = {
     denied: () => 'Login dibatalkan di halaman Discord.',
 };
 
-const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-
-/** A small page that names the problem and links back to the login. */
+/** A page that names the problem and links back to the login. */
 export function loginProblemPage(problem, origin) {
-    const message = MESSAGES[problem](origin);
-    return '<!doctype html><html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-        + '<title>Login dashboard gagal</title></head><body style="font-family:system-ui,sans-serif;max-width:36rem;margin:2rem auto;padding:0 1rem;line-height:1.5">'
-        + `<h1 style="font-size:1.25rem">Login dashboard gagal</h1><p>${escapeHtml(message)}</p>`
-        + '<p><a href="/dashboard/login">Mulai login lagi</a></p></body></html>';
+    return noticePage(MESSAGES[problem](origin), { title: 'Login dashboard gagal', label: 'LOGIN GAGAL', action: 'Mulai login lagi' });
 }

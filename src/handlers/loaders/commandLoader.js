@@ -227,7 +227,46 @@ function prepareCommandsForRegistration(commands) {
     return truncated;
 }
 
-async function registerGuildCommands(client, clientId, guildId, commands, totalSubcommands) {
+// Discord's "primary entry point" command belongs to an app's Activity; Discord manages it.
+const ENTRY_POINT_COMMAND_TYPE = 4;
+
+/**
+ * Removes the application's global commands.
+ *
+ * This bot registers its commands for one server only, so it has no handler for a global command:
+ * a global command is what another program left behind while it ran with the same application, and
+ * Discord keeps offering it (answer: "that command does not exist"). KEEP_GLOBAL_COMMANDS=true
+ * leaves them alone. A failure here never stops the bot.
+ *
+ * @returns {Promise<string[]>} names of the commands removed
+ */
+export async function removeGlobalCommands(client, clientId, env = process.env) {
+    if (String(env.KEEP_GLOBAL_COMMANDS || '').trim().toLowerCase() === 'true') return [];
+    const rest = client?.rest;
+    if (typeof rest?.get !== 'function' || typeof rest?.delete !== 'function') return [];
+
+    const removed = [];
+    try {
+        const found = await rest.get(`/applications/${clientId}/commands`);
+        const leftovers = (Array.isArray(found) ? found : [])
+            .filter((command) => /^\d{17,20}$/.test(String(command?.id || '')) && command.type !== ENTRY_POINT_COMMAND_TYPE);
+
+        for (const command of leftovers) {
+            await rest.delete(`/applications/${clientId}/commands/${command.id}`);
+            removed.push(`/${command.name}`);
+        }
+    } catch (error) {
+        logger.warn(`Slash commands: global commands left by another program could not be removed (${error?.message || 'unknown error'}). They answer "that command does not exist".`);
+    }
+
+    if (removed.length > 0) {
+        const shown = removed.slice(0, 10).join(', ') + (removed.length > 10 ? `, and ${removed.length - 10} more` : '');
+        startupLog(`Slash commands: ${removed.length} global ${removed.length === 1 ? 'command' : 'commands'} left by another program removed (${shown})`);
+    }
+    return removed;
+}
+
+async function registerGuildCommands(client, clientId, guildId, commands, totalSubcommands, env) {
     if (!clientId) {
         throw new Error('CLIENT_ID is required for slash command registration');
     }
@@ -251,15 +290,15 @@ async function registerGuildCommands(client, clientId, guildId, commands, totalS
     logger.debug(`Registering ${commandsToRegister.length} commands for server ${guildId}...`);
     await client.rest.put(`/applications/${clientId}/guilds/${guildId}/commands`, { body: commandsToRegister });
     startupLog(`Slash commands: ${commandsToRegister.length} registered for server ${guildId}`);
-    logger.debug('Previously registered global commands are not deleted automatically.');
+    await removeGlobalCommands(client, clientId, env);
 }
 
 export async function registerCommands(client, options = {}) {
-    const { clientId = null, guildId = null } = options;
+    const { clientId = null, guildId = null, env = process.env } = options;
 
     try {
         const { commands, totalSubcommands } = collectCommandPayloads(client);
-        await registerGuildCommands(client, clientId, guildId, commands, totalSubcommands);
+        await registerGuildCommands(client, clientId, guildId, commands, totalSubcommands, env);
     } catch (error) {
         logger.error('Error registering commands:', error);
         throw error;

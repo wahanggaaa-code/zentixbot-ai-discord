@@ -5,6 +5,7 @@ import { createAIWelcomeStore, validateAIWelcome, generateWelcomeTemplate } from
 import { createActivityStore, validateActivity, startActivity } from '../services/ai/activities.js';
 import { sendDMPublicPanel } from '../services/ai/dmPanel.js';
 import { createChatStore, validateChatSettings } from '../services/ai/chat.js';
+import { createInteractive, validateInteractive } from '../services/ai/interactive.js';
 import { createKnowledgeStore, askKnowledge } from '../services/ai/knowledge.js';
 import { summarizeLink } from '../services/ai/linkSummary.js';
 import { research } from '../services/ai/research.js';
@@ -40,6 +41,10 @@ export function createAIApi(client,{auth,csrf,env=process.env,foundation=client.
  });
  router.get('/chat',auth,owner,async(req,res)=>{try{const settings=await chatStore.read(req.guild.id);const channels=[...req.guild.channels.cache.values()].filter(c=>c.type===ChannelType.GuildText).map(({id,name})=>({id,name}));res.json({settings,channels})}catch(e){fail(res,e)}});
  router.patch('/chat',auth,owner,csrf,async(req,res)=>{try{const settings=validateChatSettings(req.body,req.guild);await chatStore.save(req.guild.id,settings);res.json({ok:true,settings})}catch(e){fail(res,e)}});
+ // Interactive AI in channels. Saving goes through the running handler so it applies to the next message.
+ const interactive=client.aiInteractive||createInteractive({client,foundation});
+ router.get('/interactive',auth,owner,async(req,res)=>{try{const settings=await interactive.store.read(req.guild.id);const channels=[...req.guild.channels.cache.values()].filter(c=>c.type===ChannelType.GuildText).map(({id,name})=>({id,name}));res.json({settings,channels})}catch(e){fail(res,e)}});
+ router.patch('/interactive',auth,owner,csrf,async(req,res)=>{try{const settings=await interactive.saveSettings(validateInteractive(req.body,req.guild));res.json({ok:true,settings})}catch(e){fail(res,e)}});
  router.post('/chat/panel',auth,owner,csrf,async(req,res)=>{try{if(!req.body||Object.keys(req.body).length!==1||req.body.confirmed!==true)throw Object.assign(Error('Konfirmasi diperlukan.'),{status:400});const settings=await chatStore.read(req.guild.id);res.json({ok:true,...await sendDMPublicPanel({client,guild:req.guild,settings,confirmed:true})})}catch(e){fail(res,e)}});
  router.get('/knowledge',auth,owner,async(req,res)=>{try{const docs=await knowledgeStore.read(req.guild.id);res.json({documents:docs.map(({id,name,createdAt,content})=>({id,name,createdAt,characters:content.length}))})}catch(e){fail(res,e)}});
  router.post('/knowledge',auth,owner,csrf,async(req,res)=>{try{const b=req.body;if(!b||Object.keys(b).sort().join(',')!=='confirmed,content,name'||b.confirmed!==true)throw Object.assign(Error('Konfirmasi diperlukan.'),{status:400});const doc=await knowledgeStore.add(req.guild.id,b.name,b.content);res.json({ok:true,document:doc})}catch(e){fail(res,e)}});
