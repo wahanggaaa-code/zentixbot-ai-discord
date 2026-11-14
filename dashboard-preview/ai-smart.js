@@ -1,5 +1,5 @@
-/* "Fitur pintar" room of AI Studio: FAQ and reply cache, message menu, morning digest, greeting extras,
-   automatic translation and the usage report. Owner only. Every feature has its own switch and its own
+/* "Fitur pintar" room of AI Studio: FAQ and reply cache, message menu, morning digest,
+   automatic translation and the usage report. (The greeting extras are edited in the Welcome & goodbye room.) Owner only. Every feature has its own switch and its own
    save button; features that work in channels let the owner tick several channels. */
 (() => {
  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -28,7 +28,6 @@
   faq: { title: 'FAQ & cache jawaban', sub: 'Menjawab tanpa permintaan AI · khusus owner bot.', aside: ['Hemat kuota', 'Dua cara menjawab tanpa AI.', 'FAQ dicocokkan di mesin bot sendiri: tidak ada yang dikirim ke provider dan tidak ada kuota yang terpakai. Saat bot dipanggil (AI interaktif aktif), FAQ diperiksa lebih dulu. Dengan "Jawab otomatis", bot juga menjawab pertanyaan yang cocok di channel pilihan tanpa dipanggil; di sana kecocokan harus lebih ketat dan entri yang sama tidak diulang dalam 2 menit. Cache hanya berlaku untuk balasan AI interaktif pada pertanyaan yang sama persis (minimal 3 kata, tanpa gambar, bukan balasan lanjutan) dan hilang saat bot restart. Pertanyaan tentang diri penanya ("aku", "saya", "namaku") atau tentang obrolan sebelumnya ("tadi", "barusan"), dan jawaban yang menyebut nama penanya, tidak di-cache.'] },
   menu: { title: 'Menu pesan', sub: 'Tekan-tahan pesan → Apps · khusus owner bot.', aside: ['Cara kerja', 'Baca sebelum mengaktifkan.', 'Anggota menekan-tahan sebuah pesan (di komputer: klik kanan) lalu memilih Apps. Jawaban hanya terlihat oleh anggota itu dan memakai kuota hariannya. Teks pesan yang dipilih, yang bisa saja ditulis anggota lain, dikirim ke provider AI. Entri yang dimatikan tidak didaftarkan ke Discord. Discord mengizinkan 5 menu pesan per server, terpisah dari 100 slash command. Menu baru bisa perlu beberapa saat atau memuat ulang Discord sampai terlihat.'] },
   digest: { title: 'Koran pagi', sub: 'Berita dan fakta harian · khusus owner bot.', aside: ['Kuota & sumber', 'Baca sebelum mengaktifkan.', 'Satu edisi per hari: satu pencarian web dan satu permintaan AI, memakai kuota harian bot. Berita memerlukan kunci pencarian web (Brave atau Tavily); tanpa kunci hanya fakta yang dikirim. Berita ditulis dari cuplikan hasil pencarian, bukan dari artikel lengkap, dan fakta ditulis AI: keduanya bisa keliru. Bila bot sedang mati pada jam kirim, edisi tetap dikirim sampai 60 menit setelahnya. Isi yang panjang memerlukan batas output AI minimal 512 token (Provider & fallback).'] },
-  greeting: { title: 'Sapaan multibahasa', sub: 'Tambahan untuk AI Welcome dan AI Goodbye · khusus owner bot.', aside: ['Dari mana katanya', 'Tidak dibuat oleh AI.', 'Kata sapaan, cara bacanya dan artinya diambil dari daftar di dalam bot (46 sapaan selamat datang, 25 kata perpisahan), dipilih acak, lalu ditaruh di atas pesan. Tidak ada permintaan AI tambahan. Berlaku hanya bila AI Welcome atau AI Goodbye aktif di ruang Welcome & goodbye; gaya bicaranya tetap diatur di sana.'] },
   translate: { title: 'Terjemahan otomatis', sub: 'Per channel · khusus owner bot.', aside: ['Privasi & kuota', 'Baca sebelum mengaktifkan.', 'Pesan anggota di channel yang dipilih dikirim ke provider AI tanpa persetujuan per pesan; beri tahu anggota. Pesan yang terlihat sudah dalam bahasa tujuan, pesan pendek, link, emoji dan perintah bot dilewati tanpa permintaan AI. Teks yang sama tidak diterjemahkan dua kali dalam 24 jam. Setiap permintaan AI memakai kuota harian anggota yang menulis pesan, juga bila AI menilai pesannya tidak perlu diterjemahkan; batas per jam menghitung permintaan itu. Bot memerlukan izin melihat channel dan mengirim pesan.'] },
   usage: { title: 'Laporan pemakaian AI', sub: 'Per hari, per jenis, per anggota · khusus owner bot.', aside: ['Yang dicatat', 'Hanya angka.', 'Saat aktif, bot mencatat jumlah permintaan AI yang dijawab provider: per hari (UTC, sama dengan reset kuota), per jenis fitur dan per anggota (ID). Isi pesan tidak dicatat. Catatan disimpan 45 hari. Pencarian web dan permintaan yang gagal tidak dihitung, jadi angkanya bisa sedikit di bawah kuota yang terpakai. Token hanya terisi bila provider melaporkannya.'] },
  };
@@ -122,12 +121,6 @@
     catch (err) { notify(err.message); }
     finally { test.disabled = false; }
    });
-  },
-
-  greeting(slot, data, notify) {
-   const s = data.settings.greeting;
-   slot.innerHTML = `<form id="aiGreetingForm" class="f-form">${toggle('multilingual', 'Sapaan dari berbagai bahasa', 'Satu kata sapaan acak di atas pesan AI Welcome dan AI Goodbye, lengkap dengan cara baca dan artinya. Contoh: Yōkoso! (ようこそ · bahasa Jepang, artinya “selamat datang”).', s.multilingual)}${toggle('tenure', 'Lama bergabung pada pesan perpisahan', 'Menambahkan satu baris pada AI Goodbye, misalnya "Bersama kami selama 3 bulan." Dilewati bila Discord tidak memberi tanggal bergabung.', s.tenure)}${actions('BERLAKU PADA ANGGOTA BERIKUTNYA')}</form>`;
-   wire(slot.querySelector('form'), 'greeting', (x) => ({ multilingual: x.multilingual.checked, tenure: x.tenure.checked }), notify, () => notify('Pengaturan sapaan disimpan.'));
   },
 
   translate(slot, data, notify) {

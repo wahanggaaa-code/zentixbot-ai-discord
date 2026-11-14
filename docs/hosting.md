@@ -178,9 +178,10 @@ Sejak 14 November 2026 ada ruang kesembilan di dashboard: **AI Studio → Fitur 
 | FAQ & cache | Tambah entri (pertanyaan + jawaban), nyalakan "Aktifkan FAQ". Untuk jawaban tanpa dipanggil: "Jawab otomatis tanpa dipanggil" dan centang channelnya. "Aktifkan cache jawaban" punya formulir sendiri di bawahnya | FAQ saat dipanggil dan cache memerlukan AI interaktif menyala |
 | Menu pesan | Centang entri yang diinginkan, pilih bahasa terjemahan, simpan | AI aktif; "Cek fakta" lebih berguna dengan kunci pencarian |
 | Koran pagi | Centang satu atau beberapa channel, isi jam dan zona, simpan; **Kirim tes** untuk melihat hasilnya sekarang | AI aktif; berita perlu kunci pencarian |
-| Sapaan multibahasa | Dua saklar | AI Welcome / AI Goodbye menyala di ruang **Welcome & Goodbye** |
 | Terjemahan otomatis | Centang satu atau beberapa channel, pilih bahasa tujuan dan batas permintaan AI per jam | AI aktif |
 | Laporan pemakaian | "Catat pemakaian AI" | PostgreSQL (atau SQLite) tersedia |
+
+Sapaan multibahasa (dua saklar) tidak lagi di ruang ini: tempatnya **AI Studio → Welcome & goodbye**, tab ketiga. Berlaku bila AI Welcome atau AI Goodbye menyala.
 
 Yang perlu diketahui sebelum menyalakannya:
 

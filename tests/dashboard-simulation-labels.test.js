@@ -37,14 +37,14 @@ const FEATURE_TABS = {
     community: ['applications'],
 };
 const AI_TABS = {
-    greeting: ['welcome', 'goodbye'],
+    greeting: ['welcome', 'goodbye', 'multilingual'],
     activities: ['settings', 'preview'],
     agent: ['channel', 'interactive'],
     knowledge: ['library', 'test'],
     tools: ['summary', 'search'],
     image: ['create', 'edit'],
     builder: ['design', 'history', 'manual'],
-    smart: ['faq', 'menu', 'digest', 'greeting', 'translate', 'usage'],
+    smart: ['faq', 'menu', 'digest', 'translate', 'usage'],
 };
 
 /**

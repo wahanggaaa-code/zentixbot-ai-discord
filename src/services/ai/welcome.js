@@ -40,7 +40,7 @@ export async function generateWelcomeTemplate({foundation,guildId,actorId,cfg,ki
 }
 // The returned text is rendered locally, after generation, without passing Discord names to AI.
 export function renderAIWelcome(template,member){return formatWelcomeMessage(template,{member,user:member.user,guild:member.guild}).slice(0,1900);}
-// Greeting word in another language and time spent in the server: added by the bot, switched on in AI Studio → Fitur pintar.
+// Greeting word in another language and time spent in the server: added by the bot, switched on in AI Studio → Welcome & goodbye → Sapaan multibahasa.
 async function withExtras(content,member,kind){try{return (await member.client.aiSmart?.decorateGreeting?.(content,member,kind))??content}catch{return content}}
 export async function deliverJoinWelcome(member,legacyConfig,{store,foundation}={}){
  const guild=member.guild, client=member.client;

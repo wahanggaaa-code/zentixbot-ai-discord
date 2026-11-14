@@ -1003,9 +1003,9 @@ test('dashboard API: the usage report names the members, and "Kirim tes" needs a
 });
 
 /** The dashboard page in jsdom, with the AI Studio scripts and a server stand-in that records what is sent. */
-async function page(t, tab, { settings = defaultSmart(), search = { configured: false }, usage, patchAnswer } = {}) {
+async function page(t, tab, { settings = defaultSmart(), search = { configured: false }, usage, patchAnswer, room = 'smart', smartAnswer } = {}) {
     const html = fs.readFileSync('dashboard-preview/index.html', 'utf8').replace(/<script src=".*?"><\/script>/g, '');
-    const dom = new JSDOM(html, { url: 'http://localhost/dashboard/#ai/smart', runScripts: 'outside-only' });
+    const dom = new JSDOM(html, { url: `http://localhost/dashboard/#ai/${room}`, runScripts: 'outside-only' });
     const w = dom.window;
     t.after(() => w.close());
     w.scrollTo = () => {};
@@ -1025,10 +1025,12 @@ async function page(t, tab, { settings = defaultSmart(), search = { configured: 
             return { ok: true, json: async () => ({ ok: true, settings: current, menuSync: path === 'smart/menu' ? true : null }) };
         }
         if (path.startsWith('smart/usage')) return { ok: true, json: async () => usage ?? { enabled: false, limits: { perUserDaily: 20, guildDaily: 200 }, days: [{ day: '2026-11-14', calls: 0, tokens: 0, cacheHits: 0, faqHits: 0 }], total: { calls: 0, tokens: 0, cacheHits: 0, faqHits: 0 }, kinds: [], members: [] } };
+        if (path === 'smart' && smartAnswer) return smartAnswer();
+        if (path === 'welcome' || path === 'goodbye') return { ok: true, json: async () => ({ settings: { enabled: false, toChannel: true, toDm: false, channelId: null, tone: 'warm', language: 'id', fallback: 'Halo {user}' }, channels: [{ id: C1, name: 'umum' }] }) };
         if (path === 'smart') return { ok: true, json: async () => ({ settings: current, channels: [{ id: C1, name: 'umum' }, { id: C2, name: 'bantuan <b>' }, { id: C3, name: 'global' }], languages: { ...LANGUAGES }, menus: MESSAGE_MENUS, search, limits: { channels: 10, faqEntries: 25 } }) };
         return { ok: true, json: async () => ({}) };
     };
-    for (const file of ['session.js', 'live.js', 'modules-live.js', 'operations-live.js', 'features.js', 'ai-smart.js', 'ai-studio.js', 'app.js']) w.eval(fs.readFileSync(`dashboard-preview/${file}`, 'utf8'));
+    for (const file of ['session.js', 'live.js', 'modules-live.js', 'operations-live.js', 'features.js', 'ai-welcome.js', 'ai-smart.js', 'ai-studio.js', 'app.js']) w.eval(fs.readFileSync(`dashboard-preview/${file}`, 'utf8'));
     const wait = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms));
     await wait();
     seen.wait = wait;
@@ -1041,10 +1043,10 @@ async function page(t, tab, { settings = defaultSmart(), search = { configured: 
 
 test('dashboard page: "Fitur pintar" is a room of AI Studio with one tab per feature, each with a switch', async (t) => {
     const p = await page(t, 'faq');
-    assert.deepEqual([...p.doc.querySelectorAll('.f-tabs [data-ai-tab]')].map((b) => [b.dataset.aiTab, b.textContent.trim()]), [['faq', 'FAQ & cache'], ['menu', 'Menu pesan'], ['digest', 'Koran pagi'], ['greeting', 'Sapaan multibahasa'], ['translate', 'Terjemahan otomatis'], ['usage', 'Laporan pemakaian']]);
+    assert.deepEqual([...p.doc.querySelectorAll('.f-tabs [data-ai-tab]')].map((b) => [b.dataset.aiTab, b.textContent.trim()]), [['faq', 'FAQ & cache'], ['menu', 'Menu pesan'], ['digest', 'Koran pagi'], ['translate', 'Terjemahan otomatis'], ['usage', 'Laporan pemakaian']]);
     assert.match(p.doc.querySelector('.f-demo-warning').textContent, /FITUR PINTAR TERHUBUNG · SETIAP FITUR MATI SAMPAI DIAKTIFKAN/);
     const switches = {};
-    for (const tab of ['faq', 'menu', 'digest', 'greeting', 'translate', 'usage']) {
+    for (const tab of ['faq', 'menu', 'digest', 'translate', 'usage']) {
         await p.open(tab);
         switches[tab] = [...p.doc.querySelectorAll('.f-content form input[type=checkbox]:not([value])')].concat([...p.doc.querySelectorAll('.f-content form .f-check input')]).filter((x, i, all) => all.indexOf(x) === i).map((x) => [x.name, x.checked]);
         assert.doesNotMatch(p.doc.querySelector('.f-content').textContent, /Memuat…|undefined|NaN/, tab);
@@ -1053,10 +1055,66 @@ test('dashboard page: "Fitur pintar" is a room of AI Studio with one tab per fea
         faq: [['enabled', false], ['autoAnswer', false], ['enabled', false]],
         menu: [['translate', false], ['explain', false], ['factCheck', false], ['recap', false]],
         digest: [['enabled', false], ['news', true], ['fact', true]],
-        greeting: [['multilingual', false], ['tenure', false]],
         translate: [['enabled', false]],
         usage: [['enabled', false]],
     });
+});
+
+test('dashboard page: "Sapaan multibahasa" is a tab of the Welcome & goodbye room and no longer of "Fitur pintar"', async (t) => {
+    const stored = { ...defaultSmart(), greeting: { multilingual: false, tenure: true } };
+    const p = await page(t, 'multilingual', { room: 'greeting', settings: stored });
+    assert.deepEqual([...p.doc.querySelectorAll('.f-tabs [data-ai-tab]')].map((b) => [b.dataset.aiTab, b.textContent.trim()]), [['welcome', 'AI Welcome'], ['goodbye', 'AI Goodbye'], ['multilingual', 'Sapaan multibahasa']]);
+    assert.match(p.doc.querySelector('.f-demo-warning').textContent, /AI WELCOME & GOODBYE TERHUBUNG/);
+    assert.doesNotMatch(p.doc.querySelector('.f-content').textContent, /Memuat…|undefined|NaN|SIMULASI|DRAFT/);
+    assert.equal(p.doc.querySelector('.f-content [data-ai-form]'), null, 'the live tab is not the mock form');
+
+    // The form shows what is stored, and the two switches are the only controls.
+    let form = p.doc.querySelector('#aiGreetingForm');
+    assert.deepEqual([...form.querySelectorAll('input, select, textarea')].map((x) => [x.name, x.type, x.checked]), [['multilingual', 'checkbox', false], ['tenure', 'checkbox', true]]);
+    assert.match(form.textContent, /Sapaan dari berbagai bahasa.*Lama bergabung pada pesan perpisahan/s);
+
+    // Saving goes to the same place as before the move: the greeting section of the smart settings.
+    form.elements.multilingual.checked = true;
+    await p.submit(form);
+    assert.deepEqual(p.writes, [{ method: 'PATCH', path: 'smart/greeting', body: { multilingual: true, tenure: true }, csrf: 'token-1' }]);
+    assert.match(p.toast(), /Pengaturan sapaan disimpan\./);
+    assert.equal(form.querySelector('button').disabled, false);
+
+    // Leaving the tab and coming back reads the saved values again.
+    await p.open('welcome');
+    assert.ok(p.doc.querySelector('#aiWelcomeForm'), 'AI Welcome still opens its own form');
+    assert.equal(p.doc.querySelector('#aiGreetingForm'), null);
+    await p.open('goodbye');
+    assert.ok(p.doc.querySelector('#aiWelcomeForm'), 'AI Goodbye still opens its own form');
+    await p.open('multilingual');
+    form = p.doc.querySelector('#aiGreetingForm');
+    assert.deepEqual([form.elements.multilingual.checked, form.elements.tenure.checked], [true, true]);
+
+    // "Fitur pintar" no longer offers it.
+    p.w.location.hash = '#ai/smart';
+    await p.wait();
+    assert.equal(p.doc.querySelector('.f-tabs [data-ai-tab="greeting"]'), null);
+    assert.equal(p.doc.querySelector('.f-tabs [data-ai-tab="multilingual"]'), null);
+    for (const tab of ['faq', 'menu', 'digest', 'translate', 'usage']) {
+        await p.open(tab);
+        assert.equal(p.doc.querySelector('#aiGreetingForm'), null, tab);
+        assert.doesNotMatch(p.doc.querySelector('.f-content').textContent, /Sapaan dari berbagai bahasa/, tab);
+    }
+});
+
+test('dashboard page: "Sapaan multibahasa" reports a refused save and a failed load instead of looking saved', async (t) => {
+    const refused = await page(t, 'multilingual', { room: 'greeting', patchAnswer: async () => ({ ok: false, json: async () => ({ error: 'Hanya owner bot.' }) }) });
+    const form = refused.doc.querySelector('#aiGreetingForm');
+    form.elements.tenure.checked = true;
+    await refused.submit(form);
+    assert.equal(refused.writes.length, 1);
+    assert.match(refused.toast(), /Hanya owner bot\./);
+    assert.doesNotMatch(refused.toast(), /disimpan/);
+    assert.equal(form.querySelector('button').disabled, false, 'the button can be used again');
+
+    const down = await page(t, 'multilingual', { room: 'greeting', smartAnswer: async () => ({ ok: false, json: async () => ({ error: 'Database tidak tersedia.' }) }) });
+    assert.equal(down.doc.querySelector('#aiGreetingForm'), null, 'no form with made-up values');
+    assert.match(down.doc.querySelector('#aiGreetingExtras').textContent, /Database tidak tersedia\./);
 });
 
 test('dashboard page: several channels can be ticked for FAQ auto-answer, koran pagi and auto-translate, and all of them are sent', async (t) => {
@@ -1126,7 +1184,7 @@ test('dashboard page: FAQ entries are added and removed one by one, shown as tex
     assert.deepEqual(p.writes.at(-1), { method: 'PATCH', path: 'smart/cache', body: { enabled: true, minutes: 30 }, csrf: 'token-1' });
 });
 
-test('dashboard page: menu, greeting and usage send their switches; the report shows numbers, names and labels', async (t) => {
+test('dashboard page: menu and usage send their switches; the report shows numbers, names and labels', async (t) => {
     const usage = {
         enabled: true, limits: { perUserDaily: 20, guildDaily: 200 },
         days: [{ day: '2026-11-13', calls: 4, tokens: 900, cacheHits: 1, faqHits: 2 }, { day: '2026-11-14', calls: 12, tokens: 2100, cacheHits: 0, faqHits: 3 }],
@@ -1142,12 +1200,6 @@ test('dashboard page: menu, greeting and usage send their switches; the report s
     form.elements.language.value = 'ja';
     await p.submit(form);
     assert.deepEqual(p.writes.at(-1).body, { translate: true, explain: false, factCheck: false, recap: true, language: 'ja' });
-
-    await p.open('greeting');
-    form = p.doc.querySelector('#aiGreetingForm');
-    form.elements.multilingual.checked = true;
-    await p.submit(form);
-    assert.deepEqual(p.writes.at(-1), { method: 'PATCH', path: 'smart/greeting', body: { multilingual: true, tenure: false }, csrf: 'token-1' });
 
     await p.open('usage');
     const report = p.doc.querySelector('#aiUsageReport');

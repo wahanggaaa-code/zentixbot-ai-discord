@@ -109,14 +109,14 @@ Delapan pengaturan baru di tab yang sama, semuanya mati sampai dinyalakan. Penga
 
 ## Fitur pintar (14 November 2026)
 
-Ruang kesembilan AI Studio: **AI Studio → Fitur pintar**, khusus owner bot, hanya untuk server `GUILD_ID`. Enam tab, tujuh bagian yang disimpan terpisah; menyimpan satu bagian tidak mengubah yang lain. **Semuanya mati sampai dinyalakan**, dan semuanya memerlukan AI yang aktif di **Provider & fallback**, kecuali FAQ dan sapaan multibahasa yang tidak memanggil AI. Fitur yang bekerja di channel menerima beberapa channel sekaligus, paling banyak 10, dan hanya channel teks server itu.
+Ruang kesembilan AI Studio: **AI Studio → Fitur pintar**, khusus owner bot, hanya untuk server `GUILD_ID`. Lima tab, enam bagian yang disimpan terpisah (bagian ketujuh, sapaan multibahasa, diatur di ruang **Welcome & goodbye**, tab ketiga); menyimpan satu bagian tidak mengubah yang lain. **Semuanya mati sampai dinyalakan**, dan semuanya memerlukan AI yang aktif di **Provider & fallback**, kecuali FAQ dan sapaan multibahasa yang tidak memanggil AI. Fitur yang bekerja di channel menerima beberapa channel sekaligus, paling banyak 10, dan hanya channel teks server itu.
 
 | Tab | Yang dilakukan | Memanggil AI |
 |---|---|---|
 | FAQ & cache | Jawaban tetap dari owner, dan ingatan atas jawaban AI untuk pertanyaan yang sama | Tidak |
 | Menu pesan | Klik kanan pesan → Apps → Terjemahkan, Jelaskan pesan ini, Cek fakta, Rangkum dari pesan ini | Ya, kuota anggota yang mengklik |
 | Koran pagi | Satu kiriman harian berisi berita dan fakta ke channel yang dipilih | Ya, kuota atas nama bot |
-| Sapaan multibahasa | Kata sapaan dalam bahasa lain dan lama keanggotaan pada AI Welcome / Goodbye | Tidak |
+| Sapaan multibahasa (tab di ruang Welcome & goodbye) | Kata sapaan dalam bahasa lain dan lama keanggotaan pada AI Welcome / Goodbye | Tidak |
 | Terjemahan otomatis | Pesan berbahasa lain di channel yang dipilih dibalas dengan terjemahannya | Ya, kuota anggota yang menulis |
 | Laporan pemakaian | Jumlah permintaan AI per hari, per fitur dan per anggota | Tidak |
 
@@ -154,7 +154,7 @@ Setiap menit bot memeriksa apakah jam kirim (HH:MM, WIB/WITA/WIT) sudah lewat. E
 
 ### Sapaan multibahasa
 
-Menambah isi pesan AI Welcome dan AI Goodbye yang sudah ada; fitur itu sendiri tetap diatur di ruang **Welcome & Goodbye** dan harus menyala.
+Menambah isi pesan AI Welcome dan AI Goodbye yang sudah ada; fitur itu sendiri tetap diatur di ruang **Welcome & Goodbye** dan harus menyala. Kedua saklar di bawah ini ada di tab **Sapaan multibahasa** di ruang yang sama (sebelumnya di Fitur pintar).
 
 - **Sapaan bahasa lain:** satu baris di atas pesan, dipilih acak dari daftar tetap di kode (46 sapaan selamat datang, 25 sapaan perpisahan), dengan nama bahasa, arti, dan cara baca untuk aksara non-Latin. Contoh: `**Yōkoso!** (ようこそ · bahasa Jepang, artinya "selamat datang")`. Daftar ini ditulis tangan dan belum diperiksa penutur asli.
 - **Lama keanggotaan:** pada perpisahan, satu baris kecil "Bersama kami selama 3 bulan." dari tanggal bergabung yang dicatat Discord. Bila Discord tidak memberi tanggal itu (anggota tidak ada di cache), baris ini tidak ditulis.
