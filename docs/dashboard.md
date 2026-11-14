@@ -193,6 +193,12 @@ Halaman `#settings` pada `/dashboard/` membaca `GET /dashboard/api/bot/control-c
 
 Halaman ini **tidak menyimpan dan tidak mengubah apa pun**. Setiap pengaturan tetap diubah di halaman fiturnya; halaman ini menyediakan pintasan ke sana.
 
+### Tampilan di layar HP (diperbaiki 14 November 2026)
+
+Di HP seluruh halaman ini terpotong di sisi kanan dan bisa digeser ke samping. Sebabnya dua hal di `dashboard-preview/features.css`: tabel izin bot memakai lebar minimum 530px, dan kolom tunggal `.f-layout` pada layar sempit ditulis `1fr`, yang berarti "paling sedikit selebar isi terlebar". Kolom itu ikut melebar menjadi 530px lebih, lalu semua panel di dalamnya.
+
+Perbaikan: kolom itu sekarang `minmax(0,1fr)` (berlaku untuk semua halaman fitur yang memakai `.f-layout` dan `.music-layout`), dan tabel di halaman pengaturan memakai kelas `f-table-fit` (tanpa lebar minimum, teks panjang dipatahkan). Tabel lebar di halaman lain tetap digeser di dalam kotaknya sendiri, bukan menggeser halaman.
+
 ### Yang ditampilkan dan asalnya
 
 | Panel | Isi | Asal |
