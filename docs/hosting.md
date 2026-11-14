@@ -130,13 +130,13 @@ Sejak 14 November 2026 ada ruang kesembilan di dashboard: **AI Studio → Fitur 
 | Menu pesan | Centang entri yang diinginkan, pilih bahasa terjemahan, simpan | AI aktif; "Cek fakta" lebih berguna dengan kunci pencarian |
 | Koran pagi | Centang satu atau beberapa channel, isi jam dan zona, simpan; **Kirim tes** untuk melihat hasilnya sekarang | AI aktif; berita perlu kunci pencarian |
 | Sapaan multibahasa | Dua saklar | AI Welcome / AI Goodbye menyala di ruang **Welcome & Goodbye** |
-| Terjemahan otomatis | Centang satu atau beberapa channel, pilih bahasa tujuan dan batas per jam | AI aktif |
+| Terjemahan otomatis | Centang satu atau beberapa channel, pilih bahasa tujuan dan batas permintaan AI per jam | AI aktif |
 | Laporan pemakaian | "Catat pemakaian AI" | PostgreSQL (atau SQLite) tersedia |
 
 Yang perlu diketahui sebelum menyalakannya:
 
 - **Menu pesan memerlukan scope `applications.commands`**, yang sudah dipakai untuk perintah slash. Menu muncul di klik kanan pesan → **Apps**. Setelah menyimpan, Discord kadang perlu beberapa menit atau aplikasi perlu dibuka ulang. Bila halaman menulis "menu belum bisa didaftarkan ke Discord", restart bot: perintah didaftarkan ulang saat start, dan baris `Slash commands: 100 registered for server … (+2 message menu)` menyebut jumlahnya.
-- **Terjemahan otomatis mengirim pesan anggota ke provider AI** tanpa persetujuan per pesan dan memakai kuota harian anggota yang menulis. Di channel yang ramai kuota anggota (bawaan 20 per hari) cepat habis. Pilih channel yang memang dipakai lintas bahasa, bukan channel umum.
+- **Terjemahan otomatis mengirim pesan anggota ke provider AI** tanpa persetujuan per pesan dan memakai kuota harian anggota yang menulis. Di channel yang ramai kuota anggota (bawaan 20 per hari) cepat habis; batas per jam per channel menghitung setiap permintaan AI, juga yang tidak menghasilkan terjemahan. Pilih channel yang memang dipakai lintas bahasa, bukan channel umum.
 - **Koran pagi** dikirim atas nama bot dan memakai satu permintaan AI dan satu pencarian per hari. Bila provider gagal pada menit itu, edisi hari itu tidak diulang.
 - **Laporan pemakaian** mencatat ID anggota dan jumlah permintaan per hari selama 45 hari, tanpa isi pesan. Hari berganti pukul 07.00 WIB (UTC).
 - FAQ dicocokkan berdasarkan kata, bukan makna. Coba dahulu dengan memanggil bot sebelum menyalakan "Jawab otomatis".

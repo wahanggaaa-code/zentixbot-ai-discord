@@ -1718,6 +1718,47 @@ test('reply cache: the same question is served from memory; follow-ups, replies 
     assert.equal(memory.has('ini gambar apa ya?'), false);
 });
 
+test('reply cache: a question about the member who asks, or about what was just said, is neither kept nor served; nor is an answer that names the asker', async () => {
+    const memory = new Map(), saved = [];
+    const smart = {
+        faqFor: async () => null,
+        cachedReply: async (text) => memory.get(text.toLowerCase()) ?? null,
+        rememberReply: async (text, answer) => { memory.set(text.toLowerCase(), answer); return true; },
+        usage: { saved: (entry) => saved.push(entry) },
+    };
+    const w = world(on(), { answers: ['Kamu Ana.', 'Kamu Budi.', 'Level kamu 7.', 'Tadi bahas turnamen.', 'Kamu Budi.', 'Halo Ana, ini komunitas game.', 'Ini komunitas game.'] });
+    w.client.aiSmart = smart;
+
+    assert.equal(await w.say('siapa nama aku ya?', { to: 'bot' }), 'reply');
+    w.clock.t += 5000;
+    assert.equal(await w.say('siapa nama aku ya?', { to: 'bot', by: BUDI, name: 'Budi' }), 'reply');
+    assert.equal(w.calls.length, 2, 'Budi is not told that he is Ana');
+    assert.equal(w.channels.chat.sent.at(-1).content, 'Kamu Budi.');
+    for (const [question, by, name] of [['berapa levelku sekarang?', ANA, 'Ana'], ['jelasin yang tadi dong', BUDI, 'Budi']]) {
+        w.clock.t += 5000;
+        await w.say(question, { to: 'bot', by, name });
+    }
+    assert.equal(w.calls.length, 4);
+    assert.equal(memory.size, 0, 'none of these was kept');
+    // Even an answer left in the cache by an older version is not served for such a question.
+    memory.set('siapa nama aku ya?', 'Kamu Ana.');
+    w.clock.t += 5000;
+    await w.say('siapa nama aku ya?', { to: 'bot', by: BUDI, name: 'Budi' });
+    assert.equal(w.calls.length, 5);
+    memory.clear();
+
+    // An ordinary question whose answer greets the asker by name is answered, but not kept for the next member.
+    w.clock.t += 5000;
+    await w.say('apa itu server ini?', { to: 'bot' });
+    assert.equal(w.channels.chat.sent.at(-1).content, 'Halo Ana, ini komunitas game.');
+    assert.equal(memory.size, 0);
+    w.clock.t += 5000;
+    await w.say('apa itu server ini?', { to: 'bot', by: BUDI, name: 'Budi' });
+    assert.equal(w.channels.chat.sent.at(-1).content, 'Ini komunitas game.');
+    assert.deepEqual([...memory], [['apa itu server ini?', 'Ini komunitas game.']], 'the answer without a name is the one that is kept');
+    assert.deepEqual(saved, []);
+});
+
 test('every chat request is labelled for the usage report', async () => {
     const w = world(on({ joinEnabled: true, joinChance: 100, idleEnabled: true, idleMinutes: 10 }));
     await w.say('halo', { to: 'bot' });

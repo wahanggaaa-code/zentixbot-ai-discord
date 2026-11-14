@@ -620,6 +620,17 @@ test('translate: a cheap guess skips what is already in the target language, sla
     assert.equal(guess('id', 'I am going to eat first, see you later'), false);
     assert.equal(guess('id', 'こんにちは、元気ですか'), false);
     assert.equal(guess('id', 'gg wp bro'), true, 'game talk is left alone');
+    // Chat Indonesian is slang, short forms and laughter: none of it may cost a member an AI request.
+    for (const line of ['wkwkwk anjir ngakak parah sumpah', 'mabar yuk guys nanti malem gas', 'ngantuk berat tapi pengen push rank', 'kocak bener dah si budi', 'selamat ulang tahun semoga panjang umur', 'eh udh pada makan blm', 'gajadi ikut soalnya ada acara keluarga']) {
+        assert.equal(guess('id', line), true, line);
+        assert.equal(guess('en', line), false, `${line} (is not English)`);
+    }
+    assert.equal(guess('id', 'kuota internetku tinggal dikit'), true);
+    for (const line of ['anyone up for ranked tonight', 'my internet is so bad right now', 'member list looks different today', 'lol that clip was insane hahaha']) {
+        assert.equal(guess('id', line), false, line);
+        assert.equal(guess('en', line), true, `${line} (is English)`);
+    }
+    assert.equal(guess('id', 'wkwkwk hahaha xixixi'), true, 'laughter is in no language');
     assert.equal(guess('en', 'what are you doing right now'), true);
     assert.equal(guess('en', 'lagi ngapain kamu sekarang'), false);
     assert.equal(guess('ja', 'こんにちは、元気ですか'), true);
@@ -653,10 +664,11 @@ test('translate: no AI request for target-language text, short text, commands, b
     }
     assert.equal(w.calls.length, 0);
 
-    assert.equal(await w.say('Mabar yuk guys nanti malem gas'), null, 'the AI says it needs no translation');
+    // A line the word lists cannot place (Sundanese here) goes to the AI, which may answer that it needs no translation.
+    assert.equal(await w.say('Kumaha damang sadayana wargi sareng baraya'), null, 'the AI says it needs no translation');
     assert.equal(w.calls.length, 1);
     w.clock.t += 5000;
-    assert.equal(await w.say('mabar yuk guys nanti malem gas!!', { by: BUDI }), null);
+    assert.equal(await w.say('kumaha damang sadayana wargi sareng baraya!!', { by: BUDI }), null);
     assert.equal(w.calls.length, 1, 'the "SAMA" answer is remembered too');
 
     w.clock.t += 5000;
@@ -693,6 +705,32 @@ test('translate: the hourly limit per channel holds, a used-up quota is silent, 
     assert.equal(await limited.say(english[2]), null);
     assert.deepEqual(limited.warnings, ['AI auto-translate: skipped (Semua provider gagal atau timeout.)']);
     assert.deepEqual(limited.channels.one.sent, []);
+});
+
+test('translate: the hourly limit counts AI requests, also those that end without a translation', async () => {
+    const w = world({ answers: ['SAMA', 'SAMA', 'Halo semuanya.'] });
+    await w.smart.saveSection('translate', section('translate', { enabled: true, channelIds: [C1, C2], target: 'id', hourlyLimit: 2 }));
+    const unplaced = ['kumaha damang sadayana wargi sareng baraya', 'piye kabare cah sehat kabeh ora', 'aya naon ieu rame pisan euy'];
+    assert.equal(await w.say(unplaced[0]), null);
+    w.clock.t += 4000;
+    assert.equal(await w.say(unplaced[1], { by: BUDI }), null);
+    assert.equal(w.calls.length, 2, 'two requests, both answered "SAMA"');
+    w.clock.t += 4000;
+    assert.equal(await w.say(unplaced[2], { by: CITRA }), null);
+    assert.equal(await w.say('Hello to all of you my friends', { by: CITRA }), null);
+    assert.equal(w.calls.length, 2, 'the channel has used its two requests of this hour: no third one, so no more quota is spent unseen');
+    assert.equal(await w.say('Hello to all of you my friends', { in: w.channels.two, by: CITRA }), 'translate', 'the limit is per channel');
+    assert.deepEqual(w.channels.one.sent, []);
+
+    // A member in a hurry: one request per three seconds, whether or not the last one produced a translation.
+    const quick = world({ answers: ['SAMA', 'Halo semuanya.'] });
+    await quick.smart.saveSection('translate', section('translate', { enabled: true, channelIds: [C1], target: 'id' }));
+    await quick.say(unplaced[0]);
+    quick.clock.t += 1000;
+    assert.equal(await quick.say('Hello to all of you my friends'), null);
+    assert.equal(quick.calls.length, 1);
+    quick.clock.t += 2500;
+    assert.equal(await quick.say('Hello to all of you my friends'), 'translate');
 });
 
 test('the FAQ answers before the translator, and one message gets one answer', async () => {

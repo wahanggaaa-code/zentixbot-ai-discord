@@ -68,6 +68,8 @@ const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 const RANGES = { joinChance: [1, 100], joinCooldownSeconds: [10, 3600], idleMinutes: [10, 720], idleDailyMax: [1, 24], hourlyLimit: [1, 200], followUpSeconds: [30, 300] };
 const BOOLEANS = ['enabled', 'replyEnabled', 'replyAnywhere', 'joinEnabled', 'idleEnabled', 'imagesEnabled', 'useNames', 'etiquetteEnabled', 'nicknameEnabled', 'followUpEnabled', 'linkSummaryEnabled', 'newsSearchEnabled', 'recapEnabled'];
 const NICKNAME = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,22}[\p{L}\p{N}]$/u;
+/** Words that tie a question to the member who asks it, or to what was said just before: never served from the reply cache. */
+const NOT_REUSABLE = /(^|[^\p{L}])(aku|saya|gue|gua|gw|ane|aing|abdi|ku|i|me|my|mine|im|tadi|barusan|tersebut|sebelumnya|gitu|begitu|gini|begini|diatas|di atas)(?=$|[^\p{L}])|\p{L}{3,}ku(?=$|[^\p{L}])/iu;
 /** Two members writing within this time are having a conversation. */
 const CONVERSATION_MS = 90 * 1000;
 
@@ -492,10 +494,14 @@ export function createInteractive({
         return true;
     }
 
-    /** An answer may be reused for the same question only when it did not depend on an image or on what was said before. */
+    /**
+     * An answer may be reused for the same question only when it did not depend on an image, on what was said
+     * before, or on who asked: "siapa nama aku?" and "maksudnya yang tadi apa?" have no answer for somebody else.
+     */
     function cacheable(message, text) {
         if (message.mentions?.repliedUser?.id === client.user.id || followUps.get(message.channel.id)?.pending === message.id) return false;
         if ([...(message.attachments?.values?.() ?? [])].length > 0) return false;
+        if (NOT_REUSABLE.test(String(text))) return false;
         return String(text).trim().split(/\s+/).length >= 3;
     }
 
@@ -624,7 +630,9 @@ export function createInteractive({
 
         const content = cleanReply(result.text, client.user.username);
         if (!content) return false;
-        const reusable = kind === 'reply' && !wantsImage && cacheable(message, own.text);
+        // An answer that names the member who asked is not kept for the next one.
+        const namesAsker = String(who ?? '').trim().length >= 3 && content.toLowerCase().includes(String(who).trim().toLowerCase());
+        const reusable = kind === 'reply' && !wantsImage && !namesAsker && cacheable(message, own.text);
         await deliver(message, cfg, kind, content);
         if (reusable) await Promise.resolve(getSmart()?.rememberReply?.(own.text, content)).catch(() => {});
         return true;
