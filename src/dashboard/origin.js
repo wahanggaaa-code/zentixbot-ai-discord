@@ -47,5 +47,5 @@ export function notConfiguredMessage(reason) {
     if (reason === 'malformed') {
         return 'Login belum dikonfigurasi: DASHBOARD_URL harus berupa alamat saja, misalnya https://bot.example.com atau http://203.0.113.5:16954, tanpa path, tanda tanya atau nama pengguna.';
     }
-    return 'Login belum dikonfigurasi. Atur CLIENT_ID, DISCORD_CLIENT_SECRET, DASHBOARD_URL dan GUILD_ID.';
+    return 'Login belum dikonfigurasi. Cara termudah: isi DASHBOARD_TOKEN (minimal 12 karakter) dan OWNER_IDS, lalu restart bot. Login lewat Discord juga bisa. Atur CLIENT_ID, DISCORD_CLIENT_SECRET, DASHBOARD_URL dan GUILD_ID.';
 }

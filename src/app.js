@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { Client, Collection, GatewayIntentBits } from 'discord.js';
 import { REST } from '@discordjs/rest';
 import express from 'express';
-import { createDashboardRouter } from './dashboard/router.js';
+import { mountDashboard } from './dashboard/router.js';
 import { createAIFoundation } from './services/ai/foundation.js';
 import { createAudioService } from './services/ai/audio.js';
 import { createImageService } from './services/ai/images.js';
@@ -22,6 +22,7 @@ import { maintainCounters } from './services/serverStats/manage.js';
 import { logger, startupLog, shutdownLog } from './utils/logger.js';
 import { describeDashboard, onlineSummary } from './utils/startupReport.js';
 import { dashboardLoginStatus } from './dashboard/origin.js';
+import { tokenLoginStatus } from './dashboard/tokenLogin.js';
 import { checkBirthdays } from './services/birthdayService.js';
 import { checkGiveaways } from './services/giveawayService.js';
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/loaders/commandLoader.js';
@@ -109,7 +110,7 @@ class ZentixBot extends Client {
         registered,
         database: `${DATABASE_NAMES[dbStatus.connectionType] ?? dbStatus.connectionType}, persistent`,
         port: this.webServer?.address()?.port ?? null,
-        dashboard: describeDashboard(dashboardLoginStatus(process.env, this.homeGuildId)),
+        dashboard: describeDashboard(dashboardLoginStatus(process.env, this.homeGuildId), tokenLoginStatus(process.env)),
         memoryBytes: process.memoryUsage().rss,
       })) startupLog(line);
       
@@ -149,8 +150,7 @@ class ZentixBot extends Client {
     // Dashboard pages and login have their own budgets; the configured numbers apply to the rest.
     app.use(createWebRateLimit({ general: this.config.api?.rateLimit }));
 
-    app.get('/dashboard', (req, res) => res.redirect('/dashboard/'));
-    app.use('/dashboard', createDashboardRouter(this));
+    mountDashboard(app, this);
 
     app.get('/health', (req, res) => {
       const dbStatus = this.db?.getStatus?.() || { isDegraded: 'unknown' };

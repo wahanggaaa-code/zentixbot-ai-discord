@@ -77,10 +77,21 @@ const DASHBOARD_OFF = {
     http_not_allowed: 'DASHBOARD_URL uses http:// and DASHBOARD_ALLOW_HTTP is not true',
 };
 
-/** @param {{ origin: string | null, insecure: boolean, reason: string | null, configured: boolean }} status */
-export function describeDashboard({ origin, insecure, reason, configured }) {
-    if (configured) return `${origin}/dashboard/${insecure ? ' (plain HTTP)' : ''}`;
-    return `login off: ${DASHBOARD_OFF[reason] ?? 'CLIENT_ID, DISCORD_CLIENT_SECRET or GUILD_ID is missing'}`;
+const TOKEN_OFF = {
+    too_short: 'DASHBOARD_TOKEN is shorter than 12 characters',
+    no_owner: 'DASHBOARD_TOKEN needs a Discord user ID in OWNER_IDS',
+};
+
+/**
+ * @param {{ origin: string | null, insecure: boolean, reason: string | null, configured: boolean }} status  the Discord login
+ * @param {{ enabled: boolean, reason: string | null }} [token]  the login with DASHBOARD_TOKEN
+ */
+export function describeDashboard({ origin, insecure, reason, configured }, token = { enabled: false, reason: 'missing' }) {
+    const address = origin ? `${origin}/dashboard/${insecure ? ' (plain HTTP)' : ''}` : null;
+    if (token.enabled) return `${address ?? '/dashboard/ on the web port'}, login with DASHBOARD_TOKEN${configured ? ' or Discord' : ''}`;
+    const tokenProblem = TOKEN_OFF[token.reason];
+    if (configured) return address + (tokenProblem ? `; token login off: ${tokenProblem}` : '');
+    return `login off: ${tokenProblem ?? DASHBOARD_OFF[reason] ?? 'CLIENT_ID, DISCORD_CLIENT_SECRET or GUILD_ID is missing'}`;
 }
 
 const RULE = '─'.repeat(60);
