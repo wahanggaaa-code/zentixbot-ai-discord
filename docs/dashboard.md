@@ -222,6 +222,30 @@ Nilai yang tidak dapat dibaca dikembalikan sebagai `null` dan ditampilkan sebaga
 - Prefix perintah tidak ditampilkan dan tidak dapat diubah dari halaman ini.
 - Diuji dengan Discord tiruan dan jsdom saja, belum pada server Discord atau browser nyata.
 
+## AI Studio — Server Builder
+
+Aturan builder, batas rancangan, dan arti Bongkar dijelaskan di [`docs/tahap-8.md`](tahap-8.md#server-builder). Bagian ini hanya tentang halamannya. Semua khusus owner bot.
+
+Halaman mempunyai tiga tab (sebelum 14 November 2026: satu tab dengan dua formulir bertumpuk):
+
+| Tab | Isi | Yang berubah di Discord |
+|---|---|---|
+| **Rancang** | Pilihan 15 tema siap pakai, kotak deskripsi untuk AI, rancangan untuk ditinjau (susunan kategori → channel dengan tipenya, role dengan warnanya), penyunting JSON yang terlipat, tombol Terapkan dan Batalkan | Hanya "Terapkan ke server", setelah konfirmasi browser |
+| **Riwayat & bongkar** | Bangunan yang tercatat, tinjauan bongkar per objek, kotak kalimat konfirmasi, "Lepas dari riwayat" | "Bongkar sekarang" menghapus objek bangunan terakhir; "Lepas dari riwayat" tidak menghapus apa pun |
+| **Ubah objek** | Alat lama: ganti nama, hapus, atau atur izin dasar satu objek yang sudah ada | Sesuai tindakan, setelah tinjauan dan ID diketik |
+
+Rancangan yang masih menunggu ditampilkan lagi setelah halaman dimuat ulang atau tab diganti (selama 5 menit masa berlakunya). Nama dari AI ditampilkan sebagai teks biasa, tidak pernah sebagai HTML.
+
+Alamat API (di bawah `/dashboard/api/ai/builder`, semuanya khusus owner; POST memerlukan token CSRF dan isi dengan kunci yang persis): GET `themes`, `pending`, `history`; POST `theme`, `draft`, `edit`, `apply`, `cancel`, `undo/prepare`, `undo/apply`, `undo/forget`, serta `manual/…` yang lama.
+
+### Tampilan di layar HP (diperbaiki 14 November 2026)
+
+Yang dilaporkan: tombol di halaman ini tidak rapi di HP. Sebabnya, tiap tombol dan keterangannya ditaruh di wadah yang berbeda-beda (baris formulir, paragraf, langsung di panel), sehingga lebar, jarak dan perataannya tidak sama: ada tombol selebar teksnya di kiri, ada yang menempel ke tombol berikutnya tanpa jarak, dan sepuluh kotak centang izin tersusun satu baris panjang.
+
+Sekarang setiap kelompok tombol berada di satu baris `.b-actions` (jarak 10px; pada layar ≤ 650px setiap tombol selebar panel dan bertumpuk), kotak centang izin tersusun dua kolom (satu kolom pada ≤ 360px), JSON berada di dalam bagian terlipat, dan keterangan status berada di bawah tombolnya. Aturan baru hanya berlaku untuk kelas `b-*` dan formulir `.b-form` di halaman ini; halaman lain tidak berubah.
+
+Diukur dengan Chromium 153 headless pada lima keadaan halaman (rancangan kosong, rancangan tampil, sudah diterapkan, riwayat dengan tinjauan bongkar, ubah objek): halaman tidak lebih lebar dari layar (0px) pada 280, 320, 360, 412 dan 1280px. Pada 320px ke atas ketiga tab muat tanpa digeser; pada 280px baris tab digeser di dalam kotaknya sendiri seperti di halaman lain. Mesin uji tidak mempunyai huruf emoji dan bukan Brave di Android; tampilan di HP sungguhan belum dilihat.
+
 ## Audit simulasi — halaman fitur dan AI Studio
 
 Pertanyaan audit: di dashboard yang sudah login (`/dashboard/`), opsi mana yang masih simulasi, dan opsi mana yang terhubung tetapi diberi label simulasi.
@@ -252,7 +276,7 @@ Dua kontrol hanya berlaku pada pilihan lain di formulir yang sama, dan halaman s
 |---|---|
 | Semua tab fitur yang terhubung berlabel "PENGATURAN INI TERHUBUNG KE BOT · BAGIAN LAIN MUNGKIN MASIH SIMULASI"; Giveaway "… BAGIAN LAIN BELUM TERHUBUNG" | Label per tab yang menyebut apa yang dilakukan tab itu: hanya baca, tersimpan, atau langsung berlaku di Discord |
 | Ticket: tab **Kotak masuk** dan **Transcript** membuka daftar tiket yang sama. Music: tab **Player** dan **Pengaturan** membuka halaman yang sama | Satu tab per tampilan: "Tiket & transcript", "Player & pengaturan" |
-| AI Studio: **Agent channel / Chat DM / Persona & memori** membuka satu formulir; **Rangkuman / Bahasa & fakta** satu formulir; **Rancang / Preview struktur** satu formulir | "Channel, DM & persona"; "Tools teks" dan "Pencarian web"; "Rancang & terapkan". Activities: "Preview ronde" menjadi "Status ronde" |
+| AI Studio: **Agent channel / Chat DM / Persona & memori** membuka satu formulir; **Rangkuman / Bahasa & fakta** satu formulir; **Rancang / Preview struktur** satu formulir | "Channel, DM & persona"; "Tools teks" dan "Pencarian web"; "Rancang & terapkan" (sejak 14 November 2026 tiga tab: "Rancang", "Riwayat & bongkar", "Ubah objek"). Activities: "Preview ronde" menjadi "Status ronde" |
 | Indeks AI Studio: tujuh kartu "LIHAT PREVIEW", "BEBERAPA FITUR AI MASIH SIMULASI", dan catatan "beberapa opsi masih simulasi" | "BUKA FITUR" untuk ruang yang modulnya termuat, "FITUR AI TERHUBUNG · KHUSUS OWNER BOT", dan catatan yang menjelaskan arti kedua label |
 | Indeks fitur: "TERHUBUNG SEBAGIAN"; tujuh kategori tanpa halaman ditampilkan dengan panah seperti tautan dan disebut "rencana" | "10 FITUR TERHUBUNG KE BOT"; kategori tanpa halaman berlabel "BELUM ADA HALAMAN", tanpa panah, dengan keterangan bahwa perintahnya tersedia di Discord |
 | Admin yang bukan owner bot melihat formulir AI lengkap; penolakan baru muncul setelah menekan simpan | Setiap halaman AI Studio berlabel "KHUSUS OWNER BOT · AKUN INI BUKAN OWNER BOT · SIMPAN DAN UJI DITOLAK". `/dashboard/api/me` kini menyertakan `botOwner` |

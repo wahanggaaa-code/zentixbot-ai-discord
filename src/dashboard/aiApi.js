@@ -11,7 +11,8 @@ import { summarizeLink } from '../services/ai/linkSummary.js';
 import { research } from '../services/ai/research.js';
 import { runTextTool } from '../services/ai/tools.js';
 import { createImageService } from '../services/ai/images.js';
-import { createBuilder } from '../services/ai/builder.js';
+import { createBuilder, PLAN_LIMITS, CHANNEL_TYPES } from '../services/ai/builder.js';
+import { listThemes } from '../services/ai/builderThemes.js';
 import { createManualBuilder, MANUAL_ROLE_PERMISSIONS } from '../services/ai/builderManual.js';
 import { extractImageText, extractPdfPageText } from '../services/ai/ocr.js';
 import { extractDocument } from '../services/ai/documentExtract.js';
@@ -20,7 +21,7 @@ import { createSearchService } from '../services/ai/search.js';
 export function createAIApi(client,{auth,csrf,env=process.env,foundation=client.aiFoundation||createAIFoundation({client,env}),welcomeStore=createAIWelcomeStore(client),goodbyeStore=createAIWelcomeStore(client,'goodbye'),activityStore=createActivityStore(client),chatStore=createChatStore(client),knowledgeStore=createKnowledgeStore(client),imageService=client.aiImageService||createImageService({client,foundation,env}),builder=createBuilder({client,foundation}),manualBuilder=createManualBuilder({client}),searchService=client.aiSearchService||createSearchService({client,foundation,env})}) {
  const router=express.Router();const json=express.json({limit:'24kb'});router.use((req,res,next)=>['/image','/knowledge/upload','/knowledge/ocr','/knowledge/ocr-pdf'].includes(req.path)?next():json(req,res,next));
  const owner=(req,res,next)=>{const ids=String(env.OWNER_IDS||'').split(',').map(x=>x.trim()).filter(x=>/^\d{17,20}$/.test(x));if(!ids.includes(req.session.user.id))return res.status(403).json({error:'Pengaturan dan uji AI hanya untuk owner bot.'});next()};
- const fail=(res,e)=>res.status(e.status||503).json({error:e.status?e.message:'Layanan AI atau database tidak tersedia.',code:e.code||'UNAVAILABLE',...(e.created?{created:e.created}:{})});
+ const fail=(res,e)=>res.status(e.status||503).json({error:e.status?e.message:'Layanan AI atau database tidak tersedia.',code:e.code||'UNAVAILABLE',...(e.created?{created:e.created,buildId:e.buildId??null,recorded:e.recorded===true}:{})});
  router.get('/settings',auth,owner,async(req,res)=>{try{res.json({settings:await foundation.store.read(req.guild.id),credentials:foundation.credentials()})}catch(e){fail(res,e)}});
  router.patch('/settings',auth,owner,csrf,async(req,res)=>{try{const settings=validateSettings(req.body);await foundation.store.save(req.guild.id,settings);res.json({ok:true,settings})}catch(e){fail(res,e)}});
  router.get('/welcome',auth,owner,async(req,res)=>{try{const settings=await welcomeStore.read(req.guild.id);const channels=[...req.guild.channels.cache.values()].filter(c=>c.type===ChannelType.GuildText).map(({id,name})=>({id,name}));res.json({settings,channels})}catch(e){fail(res,e)}});
@@ -64,6 +65,17 @@ export function createAIApi(client,{auth,csrf,env=process.env,foundation=client.
  router.post('/builder/draft',auth,owner,csrf,async(req,res)=>{try{const b=req.body;if(!b||Object.keys(b).sort().join(',')!=='confirmed,description'||b.confirmed!==true)throw Object.assign(Error('Konfirmasi diperlukan.'),{status:400});res.json({ok:true,...await builder.draft({guildId:req.guild.id,userId:req.session.user.id,description:b.description,consent:true})})}catch(e){fail(res,e)}});
  router.post('/builder/edit',auth,owner,csrf,async(req,res)=>{try{const b=req.body;if(!b||Object.keys(b).sort().join(',')!=='id,plan')throw Object.assign(Error('Rancangan tidak valid.'),{status:400});res.json({ok:true,...await builder.edit({guildId:req.guild.id,userId:req.session.user.id,id:b.id,plan:b.plan})})}catch(e){fail(res,e)}});
  router.post('/builder/apply',auth,owner,csrf,async(req,res)=>{try{const b=req.body;if(!b||Object.keys(b).sort().join(',')!=='confirmed,id'||b.confirmed!==true)throw Object.assign(Error('Konfirmasi diperlukan.'),{status:400});res.json({ok:true,...await builder.apply({guild:req.guild,userId:req.session.user.id,id:b.id,confirmed:true})})}catch(e){fail(res,e)}});
+ // Themes cost no AI request; the same review, edit and confirmation steps follow.
+ router.get('/builder/themes',auth,owner,(req,res)=>res.json({themes:listThemes(),limits:PLAN_LIMITS,channelTypes:CHANNEL_TYPES}));
+ router.post('/builder/theme',auth,owner,csrf,async(req,res)=>{try{const b=req.body;if(!b||Object.keys(b).join(',')!=='themeId'||typeof b.themeId!=='string')throw Object.assign(Error('Tema tidak valid.'),{status:400});res.json({ok:true,...await builder.draftFromTheme({guildId:req.guild.id,userId:req.session.user.id,themeId:b.themeId})})}catch(e){fail(res,e)}});
+ // The plan this account still has waiting, so the page can show it again after a reload or a tab change.
+ router.get('/builder/pending',auth,owner,(req,res)=>{try{res.json({pending:builder.pending({guildId:req.guild.id,userId:req.session.user.id})})}catch(e){fail(res,e)}});
+ router.post('/builder/cancel',auth,owner,csrf,async(req,res)=>{try{const b=req.body;if(!b||Object.keys(b).join(',')!=='id')throw Object.assign(Error('Rancangan tidak valid.'),{status:400});res.json({ok:true,...await builder.cancel({guildId:req.guild.id,userId:req.session.user.id,id:b.id})})}catch(e){fail(res,e)}});
+ // What the builder created, and taking the newest build down again. Deleting needs a review first and the typed sentence it returns.
+ router.get('/builder/history',auth,owner,async(req,res)=>{try{res.json(await builder.history({guildId:req.guild.id}))}catch(e){fail(res,e)}});
+ router.post('/builder/undo/prepare',auth,owner,csrf,async(req,res)=>{try{const b=req.body;if(!b||Object.keys(b).join(',')!=='confirmed'||b.confirmed!==true)throw Object.assign(Error('Konfirmasi diperlukan.'),{status:400});res.json({ok:true,...await builder.prepareUndo({guild:req.guild,userId:req.session.user.id})})}catch(e){fail(res,e)}});
+ router.post('/builder/undo/apply',auth,owner,csrf,async(req,res)=>{try{const b=req.body;if(!b||Object.keys(b).sort().join(',')!=='confirmation,id')throw Object.assign(Error('Konfirmasi diperlukan.'),{status:400});res.json({ok:true,...await builder.undo({guild:req.guild,userId:req.session.user.id,id:b.id,confirmation:b.confirmation})})}catch(e){fail(res,e)}});
+ router.post('/builder/undo/forget',auth,owner,csrf,async(req,res)=>{try{const b=req.body;if(!b||Object.keys(b).sort().join(',')!=='buildId,confirmed'||b.confirmed!==true)throw Object.assign(Error('Konfirmasi diperlukan.'),{status:400});res.json({ok:true,...await builder.forget({guild:req.guild,userId:req.session.user.id,buildId:b.buildId,confirmed:true})})}catch(e){fail(res,e)}});
  router.post('/search',auth,owner,csrf,async(req,res)=>{try{const b=req.body;if(!b||Object.keys(b).sort().join(',')!=='confirmed,query'||b.confirmed!==true)throw Object.assign(Error('Konfirmasi diperlukan.'),{status:400});res.json({ok:true,...await searchService.search({guildId:req.guild.id,userId:req.session.user.id,query:b.query,consent:true})})}catch(e){fail(res,e)}});
  router.post('/test',auth,owner,csrf,async(req,res)=>{
   if(!req.body||Object.keys(req.body).length!==1||req.body.confirmed!==true)return res.status(400).json({error:'Konfirmasi biaya dan pengiriman ke provider diperlukan.'});

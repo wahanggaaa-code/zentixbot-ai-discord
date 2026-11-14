@@ -107,6 +107,21 @@ Bila bot diam, lihat log. Contoh baris:
 
 Tidak ada baris sama sekali berarti bot memang memutuskan diam: fitur mati, channel tidak dicentang, batas per jam tercapai, kuota anggota habis, atau bot tidak punya izin menulis. Rinciannya ada di [tahap-8.md](tahap-8.md).
 
+## Server Builder: tema siap pakai, riwayat dan bongkar
+
+Membuat kategori, channel dan role dari tema atau deskripsi, lewat dashboard: **AI Studio → Server Builder**. Khusus akun di `OWNER_IDS`; anggota lain, termasuk admin, ditolak. Rinciannya ada di [tahap-8.md](tahap-8.md#server-builder).
+
+Yang perlu disiapkan:
+
+1. **Restart bot** setelah pembaruan, lalu muat ulang halaman dashboard.
+2. Bot memerlukan izin **Kelola Channel** dan **Kelola Role**. Untuk membongkar role, role bot harus berada di atas role yang dibuat.
+3. Tema langsung bisa dipakai tanpa AI. Untuk "Rancang dengan AI", AI harus aktif di **Provider & fallback**. Dengan **batas output** bawaan (256 token) AI hanya diminta rancangan kecil (6 channel); naikkan ke 1024 atau lebih untuk rancangan yang lebih besar. Bila AI gagal, dipakai tema terdekat dan alasannya ditampilkan.
+4. Riwayat memerlukan database. Bila database tidak tersedia, penerapan ditolak, karena hasilnya tidak akan bisa dibongkar.
+
+**Bongkar bersifat permanen**: channel dihapus beserta pesannya. Belum pernah dijalankan pada Discord nyata: coba dulu satu tema lalu bongkar di server uji atau saat server sepi.
+
+Tidak ada perintah slash untuk builder. Bot ini sudah mendaftarkan tepat 100 perintah slash, batas Discord per server; perintah ke-101 tidak ditambahkan Discord, dan pemuat perintah bot memotong daftar pada 100 sehingga perintah yang dimuat paling akhir (`/welcome`) yang hilang. Menambah perintah baru berarti lebih dulu menggabungkan atau melepas satu perintah lama.
+
 ## Perintah `/…` yang menjawab "that command does not exist"
 
 Bot ini mendaftarkan perintahnya hanya untuk server di `GUILD_ID`. Bila aplikasi Discord yang sama pernah dipakai program bot lain, perintah **global** program itu tetap tersimpan di Discord dan tetap ditawarkan saat mengetik `/`, tetapi bot ini tidak mengenalnya. Contoh nyata (14 November 2026): `/ai chat`, `/ai config` dan `/ai status` muncul di samping `/aichat` milik bot ini.
@@ -412,6 +427,7 @@ Contoh saat menyala (dari menjalankan bot di lingkungan uji dengan Discord tirua
 ## Yang belum diuji
 
 - Pemakaian sistem pada panel sungguhan. Pembacaan diuji dengan berkas kernel tiruan (cgroup v2, cgroup v1, tanpa cgroup) dan dijalankan di kontainer pengembangan (cgroup v2, batas RAM, tanpa jatah CPU). Bahwa angkanya sama dengan yang ditampilkan panel pemilik bot, dan bahwa `SERVER_MEMORY` terisi di panel itu, belum diperiksa. Sambungan ke API panel diuji dengan panel tiruan saja.
+- Server Builder terhadap Discord sungguhan. Tesnya memakai server Discord tiruan: yang terbukti adalah apa yang diminta untuk dibuat, apa yang dicatat, dan bahwa bongkar hanya menghapus ID yang tercatat. Belum pernah dicoba: pembuatan channel forum/pengumuman/panggung, warna role, batas laju Discord saat membuat atau menghapus puluhan objek, dan rancangan dari model AI sungguhan.
 - AI interaktif terhadap Discord dan provider sungguhan. Tesnya memakai pesan Discord tiruan dan provider tiruan: yang terbukti adalah kapan bot memutuskan menjawab, apa yang dikirim ke provider, dan apa yang ditulis ke channel. Belum pernah dicoba: seperti apa jawaban model sungguhan dengan prompt ini (gaya, panjang, apakah benar terasa seperti anggota), apakah model yang dipakai pemilik bot membaca gambar, apakah proxy media Discord menerima permintaan JPEG yang diperkecil seperti yang disusun bot, dan berapa kuota yang terpakai di channel yang ramai. Tampilan tab "AI interaktif" hanya diperiksa di jsdom, bukan di peramban.
 - Rantai tiga cadangan terhadap provider sungguhan. Tesnya memakai provider tiruan: yang terbukti adalah urutan percobaan, provider mana yang dilewati, dan kapan rantai berhenti. Bahwa Gemini, OpenRouter atau NVIDIA menerima permintaan bot ini belum pernah dicoba.
 - Penghapusan perintah global terhadap Discord sungguhan. Tesnya memakai klien REST tiruan. Bahwa `/ai` di aplikasi pemilik bot memang perintah global adalah kesimpulan dari kode (bot ini menimpa daftar perintah server setiap start dan tidak punya `/ai`), belum dilihat langsung.
