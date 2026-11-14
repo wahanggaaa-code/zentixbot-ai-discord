@@ -34,7 +34,10 @@ export default {
 
       // Interactive AI (mention, reply, joining in, image comments). Not awaited: writing an answer takes
       // seconds and must not hold up commands or XP. It never throws.
-      client.aiInteractive?.handleMessage(message);
+      // What it leaves alone may still be a question the FAQ answers, or a message to translate.
+      Promise.resolve(client.aiInteractive?.handleMessage(message))
+        .then((answered) => (answered ? null : client.aiSmart?.handleMessage(message)))
+        .catch(() => {});
 
       await handlePrefixCommand(message, client);
 

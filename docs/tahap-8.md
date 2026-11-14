@@ -69,17 +69,121 @@ Tools owner menyediakan ringkasan, terjemahan Indonesia/Inggris dan tinjauan kla
 Penyedia gambar dipilih dengan `AI_IMAGE_PROVIDER`: `openai` (bawaan), `cloudflare` atau `pollinations`; rincian dan batas dua alternatif itu ada di [`docs/hosting.md`](hosting.md). Cloudflare dan Pollinations hanya membuat gambar dan mengembalikan JPEG; Cloudflare tidak meneruskan pilihan ukuran dan Pollinations memperkecilnya ke batas 768 × 768; keterangan di bawah ini berlaku untuk OpenAI. Buat dan edit melalui OpenAI Images API jika owner mengisi `AI_IMAGE_API_KEY` dan `AI_IMAGE_MODEL` di environment server dan mengaktifkan fondasi AI. Model harus mendukung endpoint terkait; konfirmasi model dan akses pada dokumentasi OpenAI sebelum uji langsung: https://developers.openai.com/api/reference/resources/images/ . Satu gambar PNG per permintaan dengan pilihan 1024×1024, 1536×1024 atau 1024×1536 sesuai dukungan model; gaya dipilih sebagai instruksi prompt, bukan jaminan hasil; edit menerima input PNG maksimum 1,5 MB dan dimensi maksimum 2048. Prompt dan input dikirim ke OpenAI setelah konfirmasi; hasil PNG dikembalikan ke browser tanpa disimpan bot. Batas ukuran dan header bukan validasi keamanan PNG menyeluruh. Tidak ada fallback gambar, penyimpanan hasil oleh bot atau dukungan file input lain. Kuota AI bersama dihitung sebelum panggilan; biaya dapat berbeda dari teks. Timeout 120 detik, satu permintaan gambar per proses; ini bukan batas biaya.
 
 ## Server Builder
-Owner membuat rencana dari deskripsi, dapat menyunting JSON rancangan lalu memvalidasinya ulang sebelum penerapan. Pengeditan rancangan tidak mengubah objek Discord dan tidak memperpanjang masa berlakunya. Pembuatan otomatis maksimal 5 kategori, 15 channel teks/suara dan 5 role baru; AI tidak mengedit atau menghapus objek yang ada. Tidak ada izin khusus untuk role yang dibuat; channel mewarisi izin bawaan kategori/server dan mungkin terlihat oleh semua anggota. Penerapan memerlukan konfirmasi tersendiri, izin bot dan rencana yang masih berlaku, satu kali, maksimal 5 menit. Tidak ada rollback otomatis. Bila terjadi error/timeout, sebagian objek mungkin telah dibuat bahkan jika respons Discord tidak tiba; periksa daftar hasil dan server sebelum tindakan berikut. Cache Discord mungkin tidak lengkap dan proses paralel berbeda tidak terkoordinasi. Rancangan hanya di memori dan hilang setelah restart. Jangan gunakan pada server produksi sebelum diuji langsung.
+Tersedia di dashboard: **AI Studio → Server Builder**, khusus owner bot (`OWNER_IDS`) dan hanya untuk server utama. Tidak ada perintah slash untuk builder: bot sudah memakai seluruh 100 perintah slash yang diterima Discord per server, sehingga perintah baru akan menggeser perintah lama (keputusan pemilik bot, 14 November 2026).
+
+**Membuat rancangan.** Ada dua cara, dan tidak satu pun membuat sesuatu di Discord sebelum ditinjau dan dikonfirmasi:
+
+- **Tema siap pakai** ("Pakai tema"): 15 tema berbahasa Indonesia (gaming, komunitas, aesthetic, belajar, musik, seni, teknologi, crypto, anime, roleplay, bisnis, coding, kesehatan, keluarga, startup). Tidak memakai AI, tidak memakai kuota, dan hanya berisi channel teks dan suara sehingga berjalan di server tanpa fitur Komunitas.
+- **Deskripsi untuk AI** ("Rancang dengan AI"): deskripsi dikirim ke provider AI. Bila AI mati, kuota habis, provider gagal, atau jawabannya bukan rancangan yang sah, builder memakai tema yang paling dekat dengan kata-kata di deskripsi (bila tidak ada yang cocok: tema komunitas) dan mengatakan alasannya. Server, anggota atau persetujuan yang salah tetap ditolak, tidak diganti tema.
+
+Besar rancangan AI mengikuti **batas output** di *Provider & fallback*, karena jawaban yang terpotong tidak bisa dipakai: pada 256 token (bawaan) AI diminta paling banyak 6 channel dalam 2 kategori dan 2 role; pada 512 token 14 channel, 4 kategori, 4 role; pada 1024 token 31 channel, 8 kategori, 10 role. Mulai 1200 token AI juga diminta menulis topik tiap channel, yang memakan tempat: 18 channel pada 1200 token, 32 channel, 8 kategori dan 10 role pada 2048 token. Naikkan batas output bila ingin rancangan AI yang lebih besar; tema tidak terpengaruh.
+
+**Isi rancangan.** Paling banyak 8 kategori, 15 channel per kategori, 40 channel seluruhnya dan 12 role; nama paling panjang 50 karakter, topik 200. Nama boleh memakai emoji. Tipe channel: `text`, `voice`, serta `forum`, `news` dan `stage` yang hanya diterima bila server mempunyai fitur Komunitas Discord. Role boleh diberi warna (`#RRGGBB`) dan selalu dibuat tanpa izin khusus, tidak dapat di-mention dan tidak ditampilkan terpisah. Kunci lain, misalnya izin, ditolak. Channel mewarisi izin kategori/server dan mungkin terlihat oleh semua anggota.
+
+**Meninjau dan menerapkan.** Dashboard menampilkan rancangan sebagai susunan yang bisa dibaca (kategori, channel dengan tipenya, role dengan warnanya); JSON-nya dapat disunting dan divalidasi ulang. Rancangan terikat pada pembuatnya, berlaku 5 menit, sekali pakai, dan satu orang hanya mempunyai satu rancangan yang menunggu; rancangan yang masih menunggu ditampilkan lagi setelah halaman dimuat ulang. Penyuntingan tidak memperpanjang masa berlaku. Penerapan ditolak bila ada nama yang sudah dipakai di server, bila batas channel/role Discord akan terlampaui, atau bila bot tidak mempunyai izin Kelola Channel/Kelola Role.
+
+**Riwayat dan bongkar.** Setiap penerapan dicatat di database beserta ID Discord setiap objek yang benar-benar dibuat, juga bila penerapan berhenti di tengah jalan; 20 bangunan terakhir disimpan per server. Bila riwayat tidak dapat dibaca, penerapan ditolak. **Bongkar** (tab "Riwayat & bongkar") menghapus objek bangunan **terakhir** berdasarkan ID itu saja, bukan berdasarkan nama: objek yang sudah diganti namanya tetap terhapus, objek lain yang bernama sama tidak disentuh. Urutannya channel, lalu kategori, lalu role. Sebelum menghapus, builder menampilkan setiap objek dan keadaannya (akan dihapus, sudah tidak ada, dilewati) dan meminta kalimat `BONGKAR <jumlah>` diketik; bila keadaan server berubah setelah tinjauan, permintaan ditolak dan harus ditinjau ulang. Yang dilewati: channel sistem server, kategori yang masih berisi channel yang bukan bagian bangunan itu, dan role yang berada di atas role bot atau dikelola integrasi. Objek yang dilewati atau gagal dihapus tetap tercatat supaya bisa dicoba lagi. "Lepas dari riwayat" hanya membuang catatan bangunan terakhir tanpa menghapus apa pun.
+
+**Bongkar bersifat permanen:** channel dihapus beserta seluruh pesannya dan role dilepas dari semua anggota; bot tidak dapat memulihkannya. Tinjauan memberi tanda bila channel sudah berisi pesan, ruang suara sedang dipakai, atau izin role sudah diubah, tetapi tidak menghitung pesan atau anggota.
+
+Batas yang perlu diketahui: Discord tidak menyediakan transaksi, jadi bila terjadi error/timeout sebagian objek mungkin sudah dibuat atau dihapus; periksa daftar hasil dan server sebelum tindakan berikut. Objek yang dibuat Discord tetapi jawabannya tidak pernah tiba tidak tercatat dan tidak ikut dibongkar. Rancangan dan tinjauan hanya di memori dan hilang saat restart (riwayat tidak). Kunci per server hanya berlaku dalam satu proses bot. Bangunan yang dibuat sebelum pembaruan ini tidak mempunyai catatan. Seluruh alur ini diuji dengan Discord tiruan; pembuatan dan penghapusan belum pernah dijalankan pada Discord nyata. Coba dulu dengan satu tema di server uji.
 
 Operasi manual terpisah memungkinkan owner meninjau lalu mengganti nama atau menghapus satu channel teks/suara/kategori atau role, dan mengatur izin dasar role dari daftar aman terbatas. Ini tidak mengubah permission overwrite channel; izin efektif bisa berbeda. Role `@everyone`, role managed, role yang tidak dapat dikelola bot, atau role dengan izin di luar daftar aman ditolak; channel sistem dan kategori yang masih berisi channel juga ditolak. Pilih target dengan ID, tinjau keadaan saat itu, lalu ketik ID untuk perubahan atau `HAPUS <ID>` untuk penghapusan dan konfirmasi lagi. **Hapus bersifat permanen:** pesan, pengaturan dan penetapan role bisa hilang; bot tidak bisa memulihkannya. Jangan gunakan penghapusan jika data masih diperlukan.
 
-Rollback manual satu kali hanya tersedia selama lima menit untuk rename dan perubahan izin dasar role yang sukses, jika field yang diperiksa belum berubah; tidak ada rollback penghapusan atau pembuatan otomatis. Tinjauan dan rollback hilang saat restart, dan perbedaan lain (seperti pesan baru, anggota role, overwrite channel, atau perubahan tepat setelah pemeriksaan) tidak seluruhnya terdeteksi. Discord tidak menyediakan transaksi atomik untuk rangkaian ini; jika timeout, hasil tidak pasti dan pemilik harus memeriksa Discord. Mutex hanya per proses dan terpisah dari proses bot lain. Tindakan manual tidak memakai AI dan tidak berjalan sampai owner mengonfirmasi. Belum diuji pada Discord nyata.
+Rollback manual satu kali hanya tersedia selama lima menit untuk rename dan perubahan izin dasar role yang sukses, jika field yang diperiksa belum berubah; penghapusan manual tidak dapat dibatalkan, dan ini terpisah dari Bongkar di atas. Tinjauan dan rollback hilang saat restart, dan perbedaan lain (seperti pesan baru, anggota role, overwrite channel, atau perubahan tepat setelah pemeriksaan) tidak seluruhnya terdeteksi. Discord tidak menyediakan transaksi atomik untuk rangkaian ini; jika timeout, hasil tidak pasti dan pemilik harus memeriksa Discord. Mutex hanya per proses dan terpisah dari proses bot lain. Tindakan manual tidak memakai AI dan tidak berjalan sampai owner mengonfirmasi. Belum diuji pada Discord nyata.
+
+### Tambahan: sopan santun, nama bot, tindak lanjut dan alat
+
+Delapan pengaturan baru di tab yang sama, semuanya mati sampai dinyalakan. Pengaturan yang disimpan sebelumnya tetap terbaca; kunci baru dianggap mati.
+
+| Saklar | Yang berubah |
+|---|---|
+| Etika anti-nimbrung | "Ikut nimbrung" tidak menyela bila anggota lain menulis di channel itu dalam 90 detik terakhir, dan melewati pesan yang tampak seperti perintah bot lain (`!play`, `.help`), pesan yang hanya berisi tautan, dan pesan tanpa kata (emoji, stiker, angka). Tidak berpengaruh saat bot dipanggil. |
+| Jawab saat namanya disebut | Menyebut nama bot sebagai kata utuh dihitung sebagai memanggil, tanpa @mention. Yang dikenali: sampai 5 nama panggilan (2–24 karakter) yang diisi di dashboard; bila daftar itu kosong, username bot dan nama tampilannya di server. "Zen" tidak cocok dengan "zenith". Pesan yang me-reply atau me-mention orang lain tidak dihitung. |
+| Obrolan lanjutan | Setelah bot menjawab seorang anggota, 2 pesan berikutnya dari anggota itu di channel yang sama dalam 30–300 detik (bawaan 90) dijawab tanpa mention. Berakhir begitu anggota lain menulis, waktunya habis, atau pesan itu ditujukan kepada orang lain. |
+| Rangkum link saat dipanggil | "@bot rangkum https://…" mengambil halaman itu dan menulis 3–5 butir. "@bot rangkum ini" sebagai reply ke pesan orang lain memakai tautan pertama di pesan itu. Hanya `https`, alamat publik, halaman teks; halaman panjang dipotong dan diberi catatan. |
+| Cari berita saat dipanggil | "@bot cari berita gempa hari ini" (juga "carikan…", "search…", "berita…") mencari di web dan menjawab dari 3 cuplikan teratas, dengan nomor sumber dan tautannya. Memerlukan kunci pencarian (`AI_BRAVE_SEARCH_KEY` atau Tavily). Bot tidak membaca artikel lengkapnya. |
+| Rangkum obrolan yang tertinggal | "@bot rangkum obrolan tadi", "@bot aku ketinggalan apa?" merangkum 50 pesan terakhir channel itu; "rangkum 120 pesan" memilih jumlahnya, antara 25 dan 150. Lihat "Rangkuman obrolan" di bawah. |
+
+"Panggil" di tabel ini berarti @mention, reply ke pesan bot, nama bot (bila saklarnya menyala) atau pesan tindak lanjut. Setiap alat memakai satu permintaan AI dari kuota anggota yang meminta. Bila alat gagal karena sebab yang bisa dijelaskan (halaman tidak bisa dibuka, pencarian tanpa hasil, obrolan terlalu sedikit), bot membalas dengan alasannya; kuota habis ditangani seperti jawaban biasa.
+
+## Fitur pintar (14 November 2026)
+
+Ruang kesembilan AI Studio: **AI Studio → Fitur pintar**, khusus owner bot, hanya untuk server `GUILD_ID`. Enam tab, tujuh bagian yang disimpan terpisah; menyimpan satu bagian tidak mengubah yang lain. **Semuanya mati sampai dinyalakan**, dan semuanya memerlukan AI yang aktif di **Provider & fallback**, kecuali FAQ dan sapaan multibahasa yang tidak memanggil AI. Fitur yang bekerja di channel menerima beberapa channel sekaligus, paling banyak 10, dan hanya channel teks server itu.
+
+| Tab | Yang dilakukan | Memanggil AI |
+|---|---|---|
+| FAQ & cache | Jawaban tetap dari owner, dan ingatan atas jawaban AI untuk pertanyaan yang sama | Tidak |
+| Menu pesan | Klik kanan pesan → Apps → Terjemahkan, Jelaskan pesan ini, Cek fakta, Rangkum dari pesan ini | Ya, kuota anggota yang mengklik |
+| Koran pagi | Satu kiriman harian berisi berita dan fakta ke channel yang dipilih | Ya, kuota atas nama bot |
+| Sapaan multibahasa | Kata sapaan dalam bahasa lain dan lama keanggotaan pada AI Welcome / Goodbye | Tidak |
+| Terjemahan otomatis | Pesan berbahasa lain di channel yang dipilih dibalas dengan terjemahannya | Ya, kuota anggota yang menulis |
+| Laporan pemakaian | Jumlah permintaan AI per hari, per fitur dan per anggota | Tidak |
+
+### FAQ dan cache jawaban
+
+- **FAQ.** Sampai 25 entri; pertanyaan 3–150 karakter, jawaban sampai 800. Bila anggota memanggil bot (AI interaktif) dengan pertanyaan yang cocok, bot menulis jawaban itu apa adanya: tidak ada permintaan AI dan kuota tidak berkurang.
+- **Pencocokan** memakai kata penting, bukan AI: huruf besar, tanda baca, kata pengisi ("gimana", "sih", "dong") dan akhiran `-nya`/`-kah`/`-lah` diabaikan. Minimal dua kata penting harus sama, dan minimal 60 % kata penting entri harus ada di pesan. Ini bukan pencarian makna: "cara verifikasi" tidak cocok dengan entri "cara dapat role member". Tulis pertanyaan dengan kata yang dipakai anggota, dan buat dua entri bila ada dua cara bertanya.
+- **Jawab otomatis** (saklar terpisah, dengan daftar channel): di channel yang dicentang, pertanyaan yang cocok dijawab tanpa bot dipanggil. Syaratnya lebih ketat: pesan harus tampak seperti pertanyaan (tanda tanya atau kata tanya) dan minimal 80 % kata penting entri harus ada. Entri yang sama tidak diulang di channel yang sama dalam 2 menit. Pesan yang me-reply atau me-mention orang lain dilewati.
+- Jawaban FAQ tidak dapat me-mention siapa pun, juga bila teksnya memuat `@everyone`.
+- **Cache jawaban.** Jawaban AI untuk pesan teks yang memanggil bot diingat 1–120 menit (bawaan 15). Pertanyaan yang sama (setelah huruf besar dan tanda baca disamakan) dari siapa pun di server mendapat jawaban yang sama tanpa permintaan AI. Hanya di memori proses, paling banyak 300 jawaban, hilang saat restart. Pesan dengan lampiran, pesan kurang dari tiga kata, reply ke pesan bot dan pesan tindak lanjut tidak di-cache. Begitu pula pertanyaan tentang diri penanya atau tentang obrolan sebelumnya (mengandung "aku", "saya", "gue", "namaku", "my", "tadi", "barusan", "begitu" dan sejenisnya), dan jawaban yang menyebut nama penanya: tanpa itu "siapa nama aku?" dari anggota kedua akan dijawab dengan nama anggota pertama. Saringan ini berbasis daftar kata, bukan makna. Akibatnya: jawaban tidak mengikuti konteks obrolan yang berubah dalam menit-menit itu; matikan bila itu mengganggu.
+
+### Menu pesan
+
+Empat perintah menu pesan (klik kanan atau tekan lama sebuah pesan → **Apps**). Setiap entri punya saklar sendiri; hanya yang menyala yang didaftarkan ke Discord. Ini bukan perintah slash dan tidak mengurangi batas 100 perintah slash; Discord memberi batas terpisah, 5 perintah menu pesan per server.
+
+- Jawabannya hanya terlihat oleh anggota yang mengklik (ephemeral) dan memakai kuota harian anggota itu.
+- **Terjemahkan** menerjemahkan ke bahasa yang dipilih di dashboard (Indonesia, Inggris, Jepang, Korea, Mandarin, Arab).
+- **Cek fakta** membandingkan pesan dengan 3 cuplikan pencarian web dan menyebut sumbernya. Tanpa kunci pencarian, jawaban diberi catatan "Tanpa pencarian web: ini tinjauan AI, bukan verifikasi." Dengan pencarian pun yang dibaca hanya cuplikan, bukan artikel lengkap.
+- **Rangkum dari pesan ini** merangkum sampai 150 pesan yang ditulis setelah pesan yang diklik.
+- Menyimpan perubahan saklar mendaftarkan ulang perintah ke Discord saat itu juga. Bila pendaftaran gagal, pengaturan tetap tersimpan dan halaman meminta bot di-restart. Discord dapat memerlukan beberapa menit, atau aplikasi Discord perlu dibuka ulang, sebelum menu berubah.
+- Siapa pun yang dapat melihat pesan dapat memakai menu itu. Membatasinya per role atau channel dilakukan di **Server Settings → Integrations** Discord, bukan di dashboard ini.
+
+### Rangkuman obrolan
+
+Dipakai oleh "Rangkum obrolan yang tertinggal" (AI interaktif) dan "Rangkum dari pesan ini" (menu). Bot membaca 25–150 pesan terakhir lewat API Discord (memerlukan **Read Message History**), membuang pesan bot dan pesan tanpa teks, memotong tiap pesan pada 220 karakter, dan mengirim paling banyak sekitar 3.200 karakter transkrip, yang terbaru didahulukan. Pada channel yang ramai, 150 pesan panjang tidak muat semua: bagian yang lebih lama terbuang tanpa pemberitahuan. Hasil diingat 30 menit per channel dan jumlah pesan; permintaan kedua dalam waktu itu tidak memakai kuota dan diberi catatan umurnya. Kurang dari 5 pesan anggota: bot menjawab "Belum cukup obrolan untuk dirangkum."
+
+### Koran pagi
+
+Setiap menit bot memeriksa apakah jam kirim (HH:MM, WIB/WITA/WIT) sudah lewat. Edisi dikirim sekali per hari, teks yang sama ke setiap channel yang dicentang. Bila bot mati pada jam itu, edisi tetap dikirim asalkan bot hidup lagi dalam 60 menit; lebih dari itu, edisi hari itu hilang.
+
+- **Berita** berasal dari satu pencarian web (topik dari dashboard, atau berita Indonesia umum) dan dirangkum dari 4 cuplikan teratas, dengan tautan sumber. Memerlukan kunci pencarian. Tanpa kunci: bila "fakta" menyala, hanya fakta yang dikirim; bila hanya "berita" yang menyala, tidak ada yang dikirim dan log memuat satu baris `AI digest: skipped (…)`.
+- **Fakta hari ini** ditulis model tanpa sumber dan dapat keliru.
+- Penanda "sudah dikirim" ditulis ke database sebelum AI dipanggil, sehingga restart tidak mengirim dua kali dan kegagalan tidak memakai kuota berulang-ulang. Akibatnya: bila provider gagal atau bot tidak bisa menulis pada menit itu, edisi hari itu hilang dan tidak dicoba lagi; log memuat satu baris `AI digest: skipped (…)`. Channel yang menolak dilewati, channel lain tetap menerima.
+- **Kirim tes** mengirim edisi sekarang ke channel yang tersimpan, memakai satu permintaan AI, dan tidak menghabiskan edisi terjadwal hari itu.
+
+### Sapaan multibahasa
+
+Menambah isi pesan AI Welcome dan AI Goodbye yang sudah ada; fitur itu sendiri tetap diatur di ruang **Welcome & Goodbye** dan harus menyala.
+
+- **Sapaan bahasa lain:** satu baris di atas pesan, dipilih acak dari daftar tetap di kode (46 sapaan selamat datang, 25 sapaan perpisahan), dengan nama bahasa, arti, dan cara baca untuk aksara non-Latin. Contoh: `**Yōkoso!** (ようこそ · bahasa Jepang, artinya "selamat datang")`. Daftar ini ditulis tangan dan belum diperiksa penutur asli.
+- **Lama keanggotaan:** pada perpisahan, satu baris kecil "Bersama kami selama 3 bulan." dari tanggal bergabung yang dicatat Discord. Bila Discord tidak memberi tanggal itu (anggota tidak ada di cache), baris ini tidak ditulis.
+
+### Terjemahan otomatis
+
+Di channel yang dicentang, pesan yang tampaknya bukan dalam bahasa tujuan dibalas dengan `🌐` dan terjemahannya.
+
+- **Setiap pesan yang lolos saringan dikirim ke provider AI, tanpa persetujuan per pesan.** Beri tahu anggota channel itu.
+- Saringan sebelum AI, tanpa biaya: pesan bot, perintah, pesan dengan kurang dari 8 huruf, tautan dan emoji saja, dan pesan yang menurut tebakan kasar sudah berbahasa tujuan. Tebakan itu berdasarkan aksara, daftar kata sehari-hari (termasuk singkatan dan bahasa gaul seperti "yg", "udh", "anjir", "mabar"), bentuk kata Indonesia ("ngakak", "kucingnya") dan tawa ("wkwk", "haha") yang diabaikan; ia salah pada kalimat campuran dan bahasa yang berkerabat (Melayu dianggap Indonesia). Bahasa daerah (Sunda, Jawa) tidak dikenali sebagai Indonesia dan diteruskan ke AI. Bila model menilai pesan sudah berbahasa tujuan, tidak ada balasan, tetapi satu permintaan AI sudah terpakai.
+- Rem: 1–120 permintaan AI per channel per jam (bawaan 30), satu anggota paling cepat setiap 3 detik, teks dipotong pada 1.000 karakter. Yang dihitung adalah setiap permintaan yang dijawab provider, juga yang berakhir tanpa balasan, serta terjemahan yang diambil dari ingatan; dengan begitu kuota anggota tidak terkuras diam-diam di channel yang ramai. Teks yang sama diingat 24 jam di memori.
+- Memakai kuota harian anggota yang menulis pesan. Bila kuotanya habis, pesan anggota itu tidak diterjemahkan dan tidak ada pemberitahuan.
+- FAQ jawab otomatis didahulukan: satu pesan mendapat paling banyak satu balasan. Pesan yang sudah dijawab AI interaktif tidak diterjemahkan.
+
+### Laporan pemakaian
+
+Bila menyala, setiap permintaan AI yang dijawab provider dicatat: tanggal, fitur pemanggil, ID anggota, dan jumlah token bila provider melaporkannya. Isi pesan tidak dicatat. Jawaban dari FAQ dan cache dihitung terpisah sebagai "dijawab tanpa AI".
+
+- Disimpan per hari di database selama 45 hari; laporan menampilkan 7, 14 atau 30 hari terakhir, dengan lima anggota paling aktif. Hari dihitung dalam UTC: satu "hari" di laporan berganti pukul 07.00 WIB.
+- Permintaan yang gagal di semua provider tidak dicatat, walaupun kuota hariannya terpakai. Angka laporan karena itu bisa lebih kecil daripada kuota yang terpakai.
+- Pembuatan gambar, speech-to-text dan pencarian web tidak lewat lapisan chat dan tidak masuk laporan.
+- Jumlah token adalah angka provider; provider yang tidak melaporkannya dihitung 0. Laporan tidak menghitung biaya.
+- Tidak ada pencatatan selama saklarnya mati, dan mematikannya tidak menghapus catatan yang ada.
 
 ## Masih terbatas
 Integrasi inti tersedia dengan batasan di atas, bukan semua opsi desain awal: poin Activities bukan wallet ekonomi; proaktif hanya satu icebreaker harian dan sapaan saat channel sepi; AI interaktif tidak membaca video dan tidak mengingat percakapan setelah restart; memori hanya sementara per channel/DM; multimodal gambar/audio/file dibatasi sesuai penjelasan di atas; OCR PDF scan hanya satu halaman per permintaan dan perlu peninjauan; beberapa tab preview tetap simulasi. Provider vision, Discord, deployment dan resource Wispbyte belum diuji. Activities telah diuji konkurensi terbatas pada PostgreSQL lokal, tetapi keseluruhan fitur Tahap 8 belum diuji end-to-end pada PostgreSQL dan Discord nyata. Jangan menganggap fitur parsial sebagai implementasi semua opsi UI awal. Uji langsung ditunda ke Tahap 9. Zod telah dimigrasikan dari v3 ke v4 untuk GHSA-mrhx-c7xc-m3w5 dan skema record diperbarui. `npm audit --omit=dev` melaporkan 0 advisory pada saat pengujian; data advisory bisa berubah. Pengujian kompatibilitas hanya mencakup contoh skema guild, ekonomi, dan input command; perilaku error dan default optional Zod v4 dapat berbeda, jadi verifikasi seluruh jalur pada Tahap 9 sebelum produksi.
 
 ## Pengujian
-`node --test tests/tahap5.test.js tests/tahap6*.test.js tests/tahap7.test.js tests/tahap8*.test.js tests/ai-interactive.test.js`. Pengujian terpisah per fitur terutama memakai mock Discord, provider, PostgreSQL dan DOM jsdom; tes Activities tambahan memakai PostgreSQL lokal dan koneksi paralel. Belum diuji end-to-end dengan provider/model nyata, Discord, proxy atau browser nyata, dan tes konkurensi itu tidak mencakup semua fitur. Uji langsung ditunda sampai Tahap 9 sesuai arahan; bukan audit keamanan atau jaminan kesiapan produksi.
+`node --test tests/tahap5.test.js tests/tahap6*.test.js tests/tahap7.test.js tests/tahap8*.test.js tests/ai-interactive.test.js tests/ai-smart.test.js tests/ai-builder-*.test.js`. Pengujian terpisah per fitur terutama memakai mock Discord, provider, PostgreSQL dan DOM jsdom; tes Activities tambahan memakai PostgreSQL lokal dan koneksi paralel. Belum diuji end-to-end dengan provider/model nyata, Discord, proxy atau browser nyata, dan tes konkurensi itu tidak mencakup semua fitur. Uji langsung ditunda sampai Tahap 9 sesuai arahan; bukan audit keamanan atau jaminan kesiapan produksi.
 
 
 ## Inventaris status Tahap 8 untuk pekerjaan lanjutan
@@ -92,7 +196,8 @@ Integrasi inti tersedia dengan batasan di atas, bukan semua opsi desain awal: po
 | Pengetahuan | Dokumen, ekstraksi, uji cuplikan, OCR terbatas | Bukan pencarian semantik; OCR scan satu halaman, bukan sandbox OS. |
 | Tools | Ringkasan, terjemahan, tinjauan klaim, pencarian dan rangkuman URL | Tinjauan bukan fact-check; YouTube memakai transkrip yang ditempel. |
 | Gambar | Buat/edit terbatas melalui provider | Belum diuji provider nyata; perlu model, key, kuota dan biaya. |
-| Server Builder | Pembuatan terbatas dan beberapa operasi manual | Tidak ada rollback otomatis; undo terbatas; uji Discord nyata sebelum produksi. |
+| Server Builder | Tema siap pakai, rancangan AI dengan tema cadangan, riwayat dan bongkar, beberapa operasi manual; hanya dari dashboard | Bongkar hanya untuk bangunan terakhir dan permanen; tidak ada transaksi; belum pernah dijalankan pada Discord nyata. |
+| Fitur pintar | FAQ dan cache, menu pesan, koran pagi, sapaan multibahasa, terjemahan otomatis, laporan pemakaian; sopan santun, nama bot, tindak lanjut dan tiga alat pada AI interaktif | Belum pernah dijalankan pada Discord atau provider nyata; pencocokan FAQ dan tebakan bahasa berbasis kata, bukan makna; menu pesan belum pernah didaftarkan ke Discord nyata. |
 | Provider/fallback | Fondasi dan konfigurasi terhubung | Periksa status tiap fitur; label koneksi dashboard bukan bukti provider sehat. |
 
 Pengujian tahap 8 tambahan `tests/tahap8-activities-postgres.test.js` memakai PostgreSQL disposable lokal hanya jika `ZENTIX_TEST_PG_SOCKET=/tmp/zentix-local-pg` ditetapkan. Tanpa flag, tes tersebut dilewati. Tes ini tidak menguji wallet ekonomi atau API Discord/provider.

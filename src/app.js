@@ -10,6 +10,7 @@ import { createSearchService } from './services/ai/search.js';
 import { describeExtraProviders } from './services/ai/extraProviders.js';
 import { runProactiveAgent } from './services/ai/chat.js';
 import { createInteractive } from './services/ai/interactive.js';
+import { createSmart } from './services/ai/smart.js';
 import { getCommandPrefix } from './config/bot.js';
 import { runScheduledActivity } from './services/ai/activities.js';
 import { requireHomeGuildId, isHomeGuild } from './utils/singleGuild.js';
@@ -65,6 +66,11 @@ class ZentixBot extends Client {
         try { return (await getGuildConfig(this, message.guild.id))?.prefix || getCommandPrefix(); } catch { return getCommandPrefix(); }
       },
     });
+    // FAQ, reply cache, usage report, message menu, morning digest, greeting extras, auto-translate.
+    this.aiSmart = createSmart({ client: this });
+    this.aiUsage = this.aiSmart.usage;
+    // Message-menu commands registered next to the slash commands: only the ones switched on.
+    this.messageMenus = () => this.aiSmart.menus.payloads();
     this.aiImageService = createImageService({client:this});
     this.aiAudioService = createAudioService({client:this});
     this.aiSearchService = createSearchService({client:this});
@@ -231,6 +237,7 @@ class ZentixBot extends Client {
     cron.schedule('* * * * *', runSafeTask('ai_activity', () => runScheduledActivity(this)));
     cron.schedule('* * * * *', runSafeTask('ai_proactive', () => runProactiveAgent(this)));
     cron.schedule('* * * * *', runSafeTask('ai_interactive_idle', () => this.aiInteractive.runIdle()));
+    cron.schedule('* * * * *', runSafeTask('ai_digest', () => this.aiSmart.digest.run()));
     cron.schedule('*/15 * * * *', runSafeTask('counter_update', () => this.updateAllCounters()));
   }
 

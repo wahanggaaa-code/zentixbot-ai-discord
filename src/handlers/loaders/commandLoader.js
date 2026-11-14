@@ -266,6 +266,20 @@ export async function removeGlobalCommands(client, clientId, env = process.env) 
     return removed;
 }
 
+const MAX_MESSAGE_MENUS = 5;
+
+/** The message-menu commands to register, if the bot offers any. A failure to read them registers none. */
+async function messageMenuPayloads(client) {
+    if (typeof client.messageMenus !== 'function') return [];
+    try {
+        const menus = await client.messageMenus();
+        return Array.isArray(menus) ? menus.slice(0, MAX_MESSAGE_MENUS) : [];
+    } catch (error) {
+        logger.warn(`Message menu: settings could not be read, none registered (${error.message})`);
+        return [];
+    }
+}
+
 async function registerGuildCommands(client, clientId, guildId, commands, totalSubcommands, env) {
     if (!clientId) {
         throw new Error('CLIENT_ID is required for slash command registration');
@@ -287,9 +301,12 @@ async function registerGuildCommands(client, clientId, guildId, commands, totalS
         await client.rest.put(`/applications/${clientId}/guilds/${guildId}/commands`, { body: [] });
     }
 
+    // Message-menu entries (AI Studio → Fitur pintar) travel in the same request. Discord counts them apart
+    // from the slash commands: at most five per server.
+    const menus = await messageMenuPayloads(client);
     logger.debug(`Registering ${commandsToRegister.length} commands for server ${guildId}...`);
-    await client.rest.put(`/applications/${clientId}/guilds/${guildId}/commands`, { body: commandsToRegister });
-    startupLog(`Slash commands: ${commandsToRegister.length} registered for server ${guildId}`);
+    await client.rest.put(`/applications/${clientId}/guilds/${guildId}/commands`, { body: [...commandsToRegister, ...menus] });
+    startupLog(`Slash commands: ${commandsToRegister.length} registered for server ${guildId}${menus.length ? ` (+${menus.length} message menu)` : ''}`);
     await removeGlobalCommands(client, clientId, env);
 }
 

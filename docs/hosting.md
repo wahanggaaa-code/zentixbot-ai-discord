@@ -107,6 +107,66 @@ Bila bot diam, lihat log. Contoh baris:
 
 Tidak ada baris sama sekali berarti bot memang memutuskan diam: fitur mati, channel tidak dicentang, batas per jam tercapai, kuota anggota habis, atau bot tidak punya izin menulis. Rinciannya ada di [tahap-8.md](tahap-8.md).
 
+### Tambahan AI interaktif (14 November 2026)
+
+Di tab yang sama ada delapan pengaturan baru, semuanya mati sampai dicentang dan disimpan:
+
+| Yang diinginkan | Saklar |
+|---|---|
+| Bot tidak menyela obrolan orang lain dan tidak menanggapi perintah bot lain | "Etika anti-nimbrung" |
+| Bot menjawab bila namanya disebut, tanpa @mention | "Jawab saat namanya disebut"; isi "Nama panggilan" (dipisah koma, paling banyak 5) bila ingin nama lain |
+| Tidak perlu me-mention lagi untuk pertanyaan lanjutan | "Obrolan lanjutan", dengan lamanya (30–300 detik) |
+| "@bot rangkum https://…" | "Rangkum link saat dipanggil" |
+| "@bot cari berita …" | "Cari berita saat dipanggil"; perlu `AI_BRAVE_SEARCH_KEY` atau Tavily (lihat "Suara, pencarian web dan gambar") |
+| "@bot rangkum obrolan tadi" | "Rangkum obrolan yang tertinggal"; bot perlu izin **Read Message History** |
+
+## Fitur pintar: FAQ, menu pesan, koran pagi, terjemahan, laporan
+
+Sejak 14 November 2026 ada ruang kesembilan di dashboard: **AI Studio → Fitur pintar**. Khusus akun di `OWNER_IDS`. Setiap fitur punya saklar sendiri dan mati sampai dinyalakan; setiap tab disimpan sendiri dan berlaku tanpa restart (paling lambat 15 detik kemudian). Tidak ada variabel `.env` baru.
+
+| Tab | Menyalakannya | Syarat |
+|---|---|---|
+| FAQ & cache | Tambah entri (pertanyaan + jawaban), nyalakan "Aktifkan FAQ". Untuk jawaban tanpa dipanggil: "Jawab otomatis tanpa dipanggil" dan centang channelnya. "Aktifkan cache jawaban" punya formulir sendiri di bawahnya | FAQ saat dipanggil dan cache memerlukan AI interaktif menyala |
+| Menu pesan | Centang entri yang diinginkan, pilih bahasa terjemahan, simpan | AI aktif; "Cek fakta" lebih berguna dengan kunci pencarian |
+| Koran pagi | Centang satu atau beberapa channel, isi jam dan zona, simpan; **Kirim tes** untuk melihat hasilnya sekarang | AI aktif; berita perlu kunci pencarian |
+| Sapaan multibahasa | Dua saklar | AI Welcome / AI Goodbye menyala di ruang **Welcome & Goodbye** |
+| Terjemahan otomatis | Centang satu atau beberapa channel, pilih bahasa tujuan dan batas permintaan AI per jam | AI aktif |
+| Laporan pemakaian | "Catat pemakaian AI" | PostgreSQL (atau SQLite) tersedia |
+
+Yang perlu diketahui sebelum menyalakannya:
+
+- **Menu pesan memerlukan scope `applications.commands`**, yang sudah dipakai untuk perintah slash. Menu muncul di klik kanan pesan → **Apps**. Setelah menyimpan, Discord kadang perlu beberapa menit atau aplikasi perlu dibuka ulang. Bila halaman menulis "menu belum bisa didaftarkan ke Discord", restart bot: perintah didaftarkan ulang saat start, dan baris `Slash commands: 100 registered for server … (+2 message menu)` menyebut jumlahnya.
+- **Terjemahan otomatis mengirim pesan anggota ke provider AI** tanpa persetujuan per pesan dan memakai kuota harian anggota yang menulis. Di channel yang ramai kuota anggota (bawaan 20 per hari) cepat habis; batas per jam per channel menghitung setiap permintaan AI, juga yang tidak menghasilkan terjemahan. Pilih channel yang memang dipakai lintas bahasa, bukan channel umum.
+- **Koran pagi** dikirim atas nama bot dan memakai satu permintaan AI dan satu pencarian per hari. Bila provider gagal pada menit itu, edisi hari itu tidak diulang.
+- **Laporan pemakaian** mencatat ID anggota dan jumlah permintaan per hari selama 45 hari, tanpa isi pesan. Hari berganti pukul 07.00 WIB (UTC).
+- FAQ dicocokkan berdasarkan kata, bukan makna. Coba dahulu dengan memanggil bot sebelum menyalakan "Jawab otomatis".
+- Izin bot di channel yang dipilih: **View Channel**, **Send Messages**, dan **Read Message History** untuk rangkuman.
+
+Baris log fitur ini, tanpa isi pesan (koran pagi: satu baris per edisi yang gagal; terjemahan: paling sering sekali per 10 menit):
+
+```text
+07:00:02  WARN   AI digest: skipped (Koran pagi tidak dapat dibuat: Kunci Brave Search belum dikonfigurasi.)
+12:00:03  WARN   AI auto-translate: skipped (Semua provider gagal atau timeout.)
+12:00:03  WARN   Message menu: settings could not be read, none registered (…)
+```
+
+Rinciannya, termasuk batas tiap fitur, ada di [tahap-8.md](tahap-8.md#fitur-pintar-14-november-2026).
+
+## Server Builder: tema siap pakai, riwayat dan bongkar
+
+Membuat kategori, channel dan role dari tema atau deskripsi, lewat dashboard: **AI Studio → Server Builder**. Khusus akun di `OWNER_IDS`; anggota lain, termasuk admin, ditolak. Rinciannya ada di [tahap-8.md](tahap-8.md#server-builder).
+
+Yang perlu disiapkan:
+
+1. **Restart bot** setelah pembaruan, lalu muat ulang halaman dashboard.
+2. Bot memerlukan izin **Kelola Channel** dan **Kelola Role**. Untuk membongkar role, role bot harus berada di atas role yang dibuat.
+3. Tema langsung bisa dipakai tanpa AI. Untuk "Rancang dengan AI", AI harus aktif di **Provider & fallback**. Dengan **batas output** bawaan (256 token) AI hanya diminta rancangan kecil (6 channel); naikkan ke 1024 atau lebih untuk rancangan yang lebih besar. Bila AI gagal, dipakai tema terdekat dan alasannya ditampilkan.
+4. Riwayat memerlukan database. Bila database tidak tersedia, penerapan ditolak, karena hasilnya tidak akan bisa dibongkar.
+
+**Bongkar bersifat permanen**: channel dihapus beserta pesannya. Belum pernah dijalankan pada Discord nyata: coba dulu satu tema lalu bongkar di server uji atau saat server sepi.
+
+Tidak ada perintah slash untuk builder. Bot ini sudah mendaftarkan tepat 100 perintah slash, batas Discord per server; perintah ke-101 tidak ditambahkan Discord, dan pemuat perintah bot memotong daftar pada 100 sehingga perintah yang dimuat paling akhir (`/welcome`) yang hilang. Menambah perintah baru berarti lebih dulu menggabungkan atau melepas satu perintah lama.
+
 ## Perintah `/…` yang menjawab "that command does not exist"
 
 Bot ini mendaftarkan perintahnya hanya untuk server di `GUILD_ID`. Bila aplikasi Discord yang sama pernah dipakai program bot lain, perintah **global** program itu tetap tersimpan di Discord dan tetap ditawarkan saat mengetik `/`, tetapi bot ini tidak mengenalnya. Contoh nyata (14 November 2026): `/ai chat`, `/ai config` dan `/ai status` muncul di samping `/aichat` milik bot ini.
@@ -412,6 +472,7 @@ Contoh saat menyala (dari menjalankan bot di lingkungan uji dengan Discord tirua
 ## Yang belum diuji
 
 - Pemakaian sistem pada panel sungguhan. Pembacaan diuji dengan berkas kernel tiruan (cgroup v2, cgroup v1, tanpa cgroup) dan dijalankan di kontainer pengembangan (cgroup v2, batas RAM, tanpa jatah CPU). Bahwa angkanya sama dengan yang ditampilkan panel pemilik bot, dan bahwa `SERVER_MEMORY` terisi di panel itu, belum diperiksa. Sambungan ke API panel diuji dengan panel tiruan saja.
+- Server Builder terhadap Discord sungguhan. Tesnya memakai server Discord tiruan: yang terbukti adalah apa yang diminta untuk dibuat, apa yang dicatat, dan bahwa bongkar hanya menghapus ID yang tercatat. Belum pernah dicoba: pembuatan channel forum/pengumuman/panggung, warna role, batas laju Discord saat membuat atau menghapus puluhan objek, dan rancangan dari model AI sungguhan.
 - AI interaktif terhadap Discord dan provider sungguhan. Tesnya memakai pesan Discord tiruan dan provider tiruan: yang terbukti adalah kapan bot memutuskan menjawab, apa yang dikirim ke provider, dan apa yang ditulis ke channel. Belum pernah dicoba: seperti apa jawaban model sungguhan dengan prompt ini (gaya, panjang, apakah benar terasa seperti anggota), apakah model yang dipakai pemilik bot membaca gambar, apakah proxy media Discord menerima permintaan JPEG yang diperkecil seperti yang disusun bot, dan berapa kuota yang terpakai di channel yang ramai. Tampilan tab "AI interaktif" hanya diperiksa di jsdom, bukan di peramban.
 - Rantai tiga cadangan terhadap provider sungguhan. Tesnya memakai provider tiruan: yang terbukti adalah urutan percobaan, provider mana yang dilewati, dan kapan rantai berhenti. Bahwa Gemini, OpenRouter atau NVIDIA menerima permintaan bot ini belum pernah dicoba.
 - Penghapusan perintah global terhadap Discord sungguhan. Tesnya memakai klien REST tiruan. Bahwa `/ai` di aplikasi pemilik bot memang perintah global adalah kesimpulan dari kode (bot ini menimpa daftar perintah server setiap start dan tidak punya `/ai`), belum dilihat langsung.

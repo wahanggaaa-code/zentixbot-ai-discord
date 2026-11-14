@@ -43,7 +43,8 @@ const AI_TABS = {
     knowledge: ['library', 'test'],
     tools: ['summary', 'search'],
     image: ['create', 'edit'],
-    builder: ['design'],
+    builder: ['design', 'history', 'manual'],
+    smart: ['faq', 'menu', 'digest', 'greeting', 'translate', 'usage'],
 };
 
 /**
@@ -108,7 +109,7 @@ test('dashboard: no tab renders a mock form or calls itself a simulation', async
     await tick(30);
     const seen = await walk(page);
 
-    assert.equal(seen.length, 21 + 13 + 1, 'feature tabs + AI tabs + providers');
+    assert.equal(seen.length, 21 + 21 + 1, 'feature tabs + AI tabs + providers');
     for (const entry of seen) {
         assert.equal(entry.mock, 0, `${entry.where} renders a mock control`);
         assert.doesNotMatch(entry.banner, SIMULATION, `${entry.where} is labelled as simulation: ${entry.banner}`);
@@ -196,9 +197,9 @@ test('dashboard: index pages', async (t) => {
 
     await page.go('#ai');
     const ai = [...page.main.querySelectorAll('.f-index-bottom span:first-child')].map((el) => el.textContent);
-    assert.deepEqual(ai, [...Array(7).fill('BUKA FITUR'), 'PENGATURAN OWNER']);
+    assert.deepEqual(ai, [...Array(7).fill('BUKA FITUR'), 'PENGATURAN OWNER', 'BUKA FITUR'], 'the ninth room, "Fitur pintar", comes after the provider settings');
     assert.match(page.main.querySelector('.ai-intro-foot').textContent, /FITUR AI TERHUBUNG · KHUSUS OWNER BOT/);
-    assert.match(page.main.querySelector('.f-index-bar').textContent, /8 RUANG TERHUBUNG KE BOT/);
+    assert.match(page.main.querySelector('.f-index-bar').textContent, /9 RUANG TERHUBUNG KE BOT/);
     assert.doesNotMatch(page.main.textContent, /masih simulasi/i);
 });
 
@@ -209,9 +210,9 @@ test('dashboard: a room whose script did not load is shown as a preview, not as 
     await page.go('#ai');
     const cards = [...page.main.querySelectorAll('.f-index-card')].map((card) => [card.getAttribute('href'), card.querySelector('.f-index-bottom span').textContent]);
     assert.deepEqual(cards.find(([href]) => href === '#ai/agent'), ['#ai/agent', 'LIHAT PREVIEW']);
-    assert.equal(cards.filter(([, label]) => label === 'BUKA FITUR').length, 6);
+    assert.equal(cards.filter(([, label]) => label === 'BUKA FITUR').length, 7);
     assert.match(page.main.querySelector('.ai-intro-foot').textContent, /SEBAGIAN RUANG AI TIDAK TERMUAT/);
-    assert.match(page.main.querySelector('.f-index-bar').textContent, /7 RUANG TERHUBUNG KE BOT/);
+    assert.match(page.main.querySelector('.f-index-bar').textContent, /8 RUANG TERHUBUNG KE BOT/);
 
     await page.go('#ai/agent');
     assert.match(page.banner(), /SIMULASI/);
@@ -226,7 +227,7 @@ test('dashboard: an account that is not a bot owner is told so on every AI page'
     await page.go('#ai');
     assert.match(page.main.querySelector('.ai-intro-foot').textContent, NOT_OWNER);
     const seen = await walk(page, { features: false });
-    assert.equal(seen.length, 14);
+    assert.equal(seen.length, 22);
     for (const entry of seen) assert.match(entry.banner, NOT_OWNER, `${entry.where}: ${entry.banner}`);
 
     // Feature pages are open to every administrator and say nothing about bot ownership.
@@ -271,7 +272,7 @@ test('static preview: every page is labelled as a simulation and nothing is requ
     assert.deepEqual([...page.main.querySelectorAll('.f-index-bottom span:first-child')].map((el) => el.textContent), Array(14).fill('LIHAT PREVIEW'));
     await page.go('#ai');
     assert.match(page.main.querySelector('.ai-intro-foot').textContent, /UI SIMULASI · TIDAK TERHUBUNG/);
-    assert.deepEqual([...page.main.querySelectorAll('.f-index-bottom span:first-child')].map((el) => el.textContent), Array(8).fill('LIHAT PREVIEW'));
+    assert.deepEqual([...page.main.querySelectorAll('.f-index-bottom span:first-child')].map((el) => el.textContent), Array(9).fill('LIHAT PREVIEW'));
     assert.match(page.main.querySelector('.f-callout').textContent, /semua formulir AI adalah simulasi/);
 
     const seen = await walk(page);
