@@ -35,7 +35,8 @@ Disarankan:
 
 | Variabel | Isi |
 | --- | --- |
-| `OWNER_IDS` | ID Discord pemilik bot. Halaman AI dan statistik hosting di dashboard hanya untuk ID ini |
+| `OWNER_IDS` | ID Discord pemilik bot. Halaman AI dan statistik hosting di dashboard hanya untuk ID ini; login dashboard dengan token bertindak atas nama ID pertama |
+| `DASHBOARD_TOKEN` | Rahasia minimal 12 karakter untuk login dashboard. Lihat "Login dashboard dengan token" |
 | `NODE_OPTIONS` | `--max-old-space-size=384` pada container 512 MB. Saran panduan referensi; diisi di panel, bukan di berkas `.env`. Pemakaian memori bot ini belum pernah diukur |
 | `AI_GROQ_API_KEY`, `AI_GEMINI_API_KEY`, `AI_OPENROUTER_API_KEY`, `AI_NVIDIA_API_KEY` | Minimal satu bila fitur AI dipakai |
 
@@ -107,9 +108,39 @@ Bot memakai nilai pertama yang sah dari `WEB_PORT`, `PORT`, `SERVER_PORT`, dalam
 - Log startup menyebut dari mana port diambil, misalnya `Web port 16954 taken from SERVER_PORT`.
 - `.env.example` berisi `PORT=3000`. Bila berkas itu disalin apa adanya, `PORT` menang atas `SERVER_PORT`. Hapus baris `PORT` atau isi dengan port dari panel.
 
+## Login dashboard dengan token (cara termudah)
+
+Cara ini mengikuti proyek referensi: satu rahasia di `.env`, diketik di halaman login. Tidak perlu Discord Developer Portal, client secret, atau alamat redirect.
+
+1. Isi `DASHBOARD_TOKEN` dengan rahasia buatan sendiri, minimal 12 karakter. Makin panjang dan acak makin baik.
+2. Isi `OWNER_IDS` dengan ID akun Discord kamu (Pengaturan Discord → Lanjutan → Mode Pengembang, lalu "Salin ID Pengguna" pada profil). Akun itu harus anggota server yang dilayani bot.
+3. Mulai ulang bot, buka `http://IP:PORT/dashboard/`, ketik token, tekan Masuk.
+
+Yang perlu diketahui:
+
+- **Siapa pun yang tahu token dapat memakai dashboard**, termasuk fitur moderasi. Jangan kirim token lewat chat atau screenshot. Untuk menggantinya, ubah `DASHBOARD_TOKEN` lalu mulai ulang bot; semua sesi ikut berakhir.
+- Dashboard bertindak atas nama akun pertama di `OWNER_IDS`: nama itu yang tercatat sebagai moderator, pembuat giveaway, dan sebagainya. Akun itu tidak harus Administrator server, tetapi harus masih menjadi anggota; begitu keluar dari server, sesi ditolak.
+- Sesi berlaku 12 jam dan hilang saat bot dimulai ulang.
+- Percobaan login dibatasi 30 kali per 15 menit per alamat IP (lihat "Batas permintaan").
+- Lewat `http://`, token dan sesi berjalan tanpa enkripsi; bot menulis peringatan di log saat startup. Risikonya sama seperti pada bagian berikut, ditambah bahwa yang dapat terbaca adalah tokennya sendiri, bukan hanya sesi 12 jam.
+- `DASHBOARD_URL` tidak wajib untuk cara ini. Bila diisi, login dan perubahan hanya diterima dari alamat itu, jadi isinya harus sama dengan alamat yang kamu buka.
+- Bila dashboard dibuka lewat alamat `https://`, isi `DASHBOARD_URL` dengan alamat itu: cookie sesi lalu hanya dikirim lewat HTTPS, dan catatan "Tanpa enkripsi" di halaman Pengaturan tidak muncul.
+- Login lewat Discord tetap ada. Bila keduanya dikonfigurasi, halaman login menampilkan tautan "Masuk dengan akun Discord".
+
+Bila halaman login menolak:
+
+| Pesan | Sebab |
+| --- | --- |
+| "Token salah." | Yang diketik tidak sama dengan `DASHBOARD_TOKEN`. Periksa juga apakah bot sudah dimulai ulang setelah `.env` diubah. |
+| "Login dengan token belum aktif: DASHBOARD_TOKEN harus minimal 12 karakter." | Token terlalu pendek. |
+| "Login dengan token belum aktif: isi OWNER_IDS …" | `OWNER_IDS` kosong atau bukan ID Discord (17 sampai 20 angka). |
+| "Akun di OWNER_IDS (…) bukan anggota server yang dikonfigurasi …" | ID di `OWNER_IDS` bukan anggota server pada `GUILD_ID`. |
+| "Login hanya diterima dari …" | Dashboard dibuka lewat alamat yang berbeda dari `DASHBOARD_URL`. |
+| "Bot belum siap memverifikasi server." | Bot belum tersambung ke Discord; tunggu sampai log menulis ONLINE. |
+
 ## Dashboard lewat HTTP
 
-Bawaan: login dashboard hanya aktif pada alamat `https://` (atau `http://localhost` saat pengembangan). Dengan `DASHBOARD_URL=http://ip:port` saja, halaman login menjawab 503 dan menjelaskan sebabnya.
+Bagian ini tentang login lewat Discord. Bawaan: login itu hanya aktif pada alamat `https://` (atau `http://localhost` saat pengembangan). Dengan `DASHBOARD_URL=http://ip:port` saja, halaman login menjawab 503 dan menjelaskan sebabnya.
 
 Untuk panel yang hanya memberi alamat `http://ip:port`:
 
@@ -124,7 +155,7 @@ Langkah 3 terlihat bekerja pada kiriman pemilik bot tanggal 13 November 2026: se
 
 Yang tetap berlaku pada mode ini:
 
-- Login tetap lewat Discord; tidak ada kata sandi bersama.
+- Login lewat Discord tidak memakai kata sandi bersama. (Login dengan token pada bagian sebelumnya memakainya.)
 - Hanya owner server dan pemegang izin Administrator yang dapat masuk, dan izin itu diperiksa ulang ke Discord pada setiap permintaan.
 - Sesi paling lama 8 jam dan hilang saat bot dimulai ulang.
 - Login yang sedang menunggu juga hilang saat bot dimulai ulang, dan berlaku paling lama 10 menit.
@@ -136,6 +167,14 @@ Yang ditambahkan agar mode ini tidak aktif tanpa disadari:
 - Halaman Pengaturan menampilkan catatan "Tanpa enkripsi" pada bagian akses.
 
 Saran pemakaian: buka dashboard dari jaringan yang dipercaya, tekan KELUAR setelah selesai, dan pindah ke alamat `https://` bila hosting menyediakannya. Setelah pindah, kosongkan `DASHBOARD_ALLOW_HTTP`.
+
+## Halaman dashboard yang berputar tanpa henti (diperbaiki 14 November 2026)
+
+Sejak dashboard pertama kali ditambahkan (commit `3d3e924`), server web mengalihkan `/dashboard/` ke `/dashboard/` itu sendiri. Akibatnya halaman dashboard tidak pernah dapat dibuka lewat bot yang berjalan: setelah login berhasil, peramban berputar sampai menyerah, dan dengan pembatas permintaan yang lama putaran itu menghabiskan jatah 100 permintaan sehingga muncul `{"error":"Too many requests"}`.
+
+Kesalahan ini lolos karena semua tes memasang dashboard langsung, tanpa baris pengalih milik `src/app.js`. Sekarang pemasangannya satu fungsi (`mountDashboard` di `src/dashboard/router.js`) yang dipakai `src/app.js` dan tes, dan hanya `/dashboard` tanpa garis miring yang dialihkan.
+
+Yang terbukti di sini: dengan kode lama, `GET /dashboard/` menjawab 302 ke `/dashboard/`; dengan kode baru, halaman terbuka setelah login (bot dijalankan dengan klien Discord tiruan). Bahwa inilah satu-satunya sebab kegagalan di panel pemilik bot belum terbukti.
 
 ## Batas permintaan
 
@@ -247,7 +286,8 @@ Contoh saat menyala (dari menjalankan bot di lingkungan uji dengan Discord tirua
 
 - Tidak ada yang dijalankan di sini pada panel sungguhan. Yang diketahui tentang panel hanyalah kiriman pemilik bot di awal dokumen ini; batas RAM, perilaku saat restart dan pemakaian memori belum diperiksa.
 - Login Discord sungguhan sampai masuk ke dashboard pada alamat `http://ip:port`, termasuk setelah perbaikan batas permintaan dan pesan login.
-- Sebab login pemilik bot gagal pada 13 November 2026 tidak diketahui; pesan lama tidak membedakan sebabnya.
+- Sebab login pemilik bot gagal pada 13 November 2026: satu sebab ditemukan pada 14 November (halaman `/dashboard/` berputar tanpa henti, lihat di atas). Apakah ada sebab lain, misalnya client secret, tidak diketahui.
+- Login dengan token di panel sungguhan dan di peramban sungguhan. Di sini diuji dengan permintaan HTTP langsung ke bot yang berjalan dengan klien Discord tiruan.
 - Tampilan log di konsol panel: apakah warnanya tampil, dan baris-baris setelah login Discord sungguhan (pendaftaran slash command, rangkuman ONLINE, pemeriksaan saat menyala, node Lavalink). Di sini baris-baris itu hanya dihasilkan dengan Discord tiruan.
 - Dashboard di peramban sungguhan; tesnya memakai jsdom dan permintaan HTTP langsung. Jumlah panggilan data per halaman tidak diukur; angka 31 hanya menghitung berkas yang disebut `index.html`.
 - Groq (transkripsi), Tavily, Cloudflare Workers AI dan Pollinations yang sesungguhnya. Tesnya memakai penyedia tiruan: yang terbukti adalah permintaan yang disusun bot dan cara bot membaca jawaban, bukan bahwa layanan itu menerimanya. Bentuk permintaan diambil dari dokumentasi tiap layanan.

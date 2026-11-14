@@ -10,7 +10,7 @@ Perintah slash dikelompokkan per kategori di `src/commands/`:
 
 AI · Birthday · Community · Core · Economy · Fun · Giveaway · Join to Create · Leveling · Logging · Moderation · Music · Reaction Roles · Search · Server Stats · Ticket · Tools · Utility · Verification · Welcome
 
-Dashboard web dibuka di `/dashboard/` dan memakai login Discord. Halaman mana yang sudah terhubung ke bot tercantum di [`docs/dashboard.md`](docs/dashboard.md).
+Dashboard web dibuka di `/dashboard/`. Login termudah memakai `DASHBOARD_TOKEN` dan `OWNER_IDS` (lihat [`docs/hosting.md`](docs/hosting.md)); login lewat Discord juga tersedia. Halaman mana yang sudah terhubung ke bot tercantum di [`docs/dashboard.md`](docs/dashboard.md).
 
 ## Kebutuhan
 

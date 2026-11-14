@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import express from 'express';
 import { PermissionFlagsBits } from 'discord.js';
-import { createDashboardRouter } from '../src/dashboard/router.js';
+import { mountDashboard } from '../src/dashboard/router.js';
 import { callbackProblem, loginProblemPage } from '../src/dashboard/loginProblem.js';
 import { createFixedWindowCounter, createWebRateLimit, webRateLimitBucket, WEB_RATE_LIMITS } from '../src/utils/webRateLimit.js';
 
@@ -29,7 +29,7 @@ async function site(t, { limits = {}, env = {} } = {}) {
     const fetchImpl = async (url) => ({ ok: true, json: async () => (String(url).endsWith('/token') ? { access_token: 'mock', expires_in: 3600 } : { id: userId, username: 'tester' }) });
     const app = express();
     app.use(createWebRateLimit({ ...limits, now: () => clock.now }));
-    app.use('/dashboard', createDashboardRouter(client, { fetchImpl, env: { CLIENT_ID: '456789012345678901', DISCORD_CLIENT_SECRET: 'secret', DASHBOARD_URL: ORIGIN, DASHBOARD_ALLOW_HTTP: 'true', ...env } }));
+    mountDashboard(app, client, { fetchImpl, env: { CLIENT_ID: '456789012345678901', DISCORD_CLIENT_SECRET: 'secret', DASHBOARD_URL: ORIGIN, DASHBOARD_ALLOW_HTTP: 'true', ...env } });
     app.get('/health', (req, res) => res.json({ status: 'healthy' }));
     const server = app.listen(0, '127.0.0.1');
     await new Promise((resolve) => server.once('listening', resolve));
@@ -230,7 +230,7 @@ test('the web server applies the limits before the dashboard and the bot routes'
     const source = readFileSync(new URL('../src/app.js', import.meta.url), 'utf8');
     const limit = source.indexOf('app.use(createWebRateLimit({ general: this.config.api?.rateLimit }));');
     assert.ok(limit > 0, 'createWebRateLimit is installed with the configured general limit');
-    for (const route of ["app.use('/dashboard', createDashboardRouter(this));", "app.get('/health'", "app.get('/ready'", "app.get('/', "]) {
+    for (const route of ['mountDashboard(app, this);', "app.get('/health'", "app.get('/ready'", "app.get('/', "]) {
         assert.ok(source.indexOf(route) > limit, `${route} comes after the limit`);
     }
     assert.equal(source.includes('requestCounts'), false, 'the old single limiter is gone');

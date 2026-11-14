@@ -137,8 +137,10 @@ export function createSettingsApi(client, { auth, env = process.env }) {
         try {
             origin = new URL(env.DASHBOARD_URL).origin;
         } catch { /* reported as not available */ }
-        // True when the dashboard is reached over plain HTTP on a public address.
-        const insecureHttp = resolveDashboardOrigin(env).insecure;
+        // True when the dashboard is reached over plain HTTP on a public address. With a token login
+        // DASHBOARD_URL may be unset; then the request itself tells.
+        const address = resolveDashboardOrigin(env);
+        const insecureHttp = address.insecure || (!address.origin && !req.secure && !['localhost', '127.0.0.1'].includes(req.hostname));
 
         res.json({
             readAt: Date.now(),

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import express from 'express';
 import { JSDOM } from 'jsdom';
 import { PermissionFlagsBits } from 'discord.js';
@@ -145,6 +146,26 @@ test('the control center says when the dashboard is served over plain HTTP on a 
     assert.equal(await read({ DASHBOARD_URL: address }), false);
     assert.equal(await read({ DASHBOARD_URL: 'http://localhost:9999', DASHBOARD_ALLOW_HTTP: 'true' }), false);
     assert.equal(await read({ DASHBOARD_URL: 'https://dash.example.com', DASHBOARD_ALLOW_HTTP: 'true' }), false);
+});
+
+test('without DASHBOARD_URL (token login) the request itself tells whether the dashboard is on plain HTTP', async (t) => {
+    // The address the browser used arrives in the Host header; fetch cannot set it, node:http can.
+    const read = async (env, host) => {
+        const { baseUrl } = await serve(t, createFixture(), { env });
+        const body = await new Promise((resolve, reject) => {
+            http.get(`${baseUrl}/test/control-center`, { headers: { 'x-auth': 'yes', host } }, (res) => {
+                let text = ''; res.on('data', (chunk) => { text += chunk; }); res.on('end', () => resolve(text));
+            }).on('error', reject);
+        });
+        return JSON.parse(body).dashboard;
+    };
+    assert.deepEqual(await read({}, '203.0.113.5:11991'), { origin: null, sessionStore: 'process', insecureHttp: true });
+    assert.equal((await read({}, 'bot.example.com')).insecureHttp, true);
+    assert.equal((await read({}, 'localhost:3000')).insecureHttp, false);
+    assert.equal((await read({}, '127.0.0.1:3000')).insecureHttp, false);
+    // An unusable DASHBOARD_URL counts as none; a usable one decides by itself.
+    assert.equal((await read({ DASHBOARD_URL: 'http://203.0.113.5:11991' }, '203.0.113.5:11991')).insecureHttp, true);
+    assert.equal((await read({ DASHBOARD_URL: 'https://dash.example.com' }, '203.0.113.5:11991')).insecureHttp, false);
 });
 
 test('an Administrator bot is reported as holding every checked permission', async (t) => {
