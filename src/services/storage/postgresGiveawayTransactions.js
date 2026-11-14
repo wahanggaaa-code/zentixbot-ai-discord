@@ -1,5 +1,6 @@
 import {createHash,randomInt,randomUUID} from 'node:crypto';
 import {pgConfig} from '../../config/database/postgres.js';
+import {sqliteFor} from './sqliteRows.js';
 
 // Participating writes serialize on a giveaway row. Old bot versions and SQL
 // outside this protocol can still overwrite these writes; stop old instances.
@@ -8,7 +9,46 @@ const tokenPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9
 const plain=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const fail=(code,message)=>Object.assign(new Error(message),{code});
 const revision=row=>createHash('sha256').update(`${row.id}:`+row.serialized).digest('hex');
-export const isPostgresGiveawayBackend=client=>client?.db?.getStatus?.()?.connectionType==='postgresql';
+// True for every database that runs this claim/acknowledge protocol: PostgreSQL, and SQLite
+// opened by the bot at startup. The name is older than the SQLite support.
+export const isPostgresGiveawayBackend=client=>['postgresql','sqlite'].includes(client?.db?.getStatus?.()?.connectionType);
+
+// ---- SQLite ---------------------------------------------------------------------------------
+// The giveaways of a guild are one row: an object from message id to giveaway. A SQLite
+// transaction is synchronous and exclusive, which is what the row lock gives on PostgreSQL.
+// All giveaways of a guild together must fit one stored value (2 MB).
+const sqliteKey=guildId=>`guild:${guildId}:giveaways`;
+function sqliteStore(client,guildId,messageId){
+ const sqlite=sqliteFor(client,()=>fail('GIVEAWAY_UNAVAILABLE','Giveaway storage unavailable'));
+ if(sqlite&&(!id(guildId)||!id(messageId)||!id(client?.homeGuildId)||client.homeGuildId!==guildId))throw fail('GIVEAWAY_SCOPE','Invalid giveaway scope');
+ return sqlite;
+}
+function sqliteMap(tx,guildId){
+ const key=sqliteKey(guildId);if(tx.hasRawAIKey(key))throw fail('GIVEAWAY_LEGACY','Legacy giveaway data requires review');
+ const stored=tx.botGetRaw(key);if(!stored)return {};
+ if(stored.expiresAt!==null||stored.value===null||typeof stored.value!=='object'||(Object.hasOwn(stored.value,'ok')&&Object.hasOwn(stored.value,'value')))throw fail('GIVEAWAY_LEGACY','Legacy giveaway data requires review');
+ const map={};for(const entry of Array.isArray(stored.value)?stored.value:Object.values(stored.value)){if(!plain(entry)||!id(entry.messageId)||Object.hasOwn(map,entry.messageId))throw fail('GIVEAWAY_INVALID','Giveaway data requires review');map[entry.messageId]=entry;}
+ return map;
+}
+const sqliteRow=(messageId,stored)=>{const serialized=JSON.stringify(stored),fits=Buffer.byteLength(serialized)<=262144;return {id:messageId,message_id:messageId,data:fits?structuredClone(stored):null,serialized:fits?serialized:null,ends_ms:Number.isSafeInteger(stored?.endsAt)?String(stored.endsAt):null,ends_exact:Number.isSafeInteger(stored?.endsAt)};};
+function sqliteTransaction(sqlite,guildId,messageId,fn){
+ return sqlite.transaction(tx=>{
+  const map=sqliteMap(tx,guildId);if(!Object.hasOwn(map,messageId))throw fail('GIVEAWAY_MISSING','Giveaway does not exist');
+  const stored=map[messageId],row=sqliteRow(messageId,stored),data=validRecord(row,guildId,messageId);
+  const {patch,value,remove,unset}=fn(data,Date.now(),row);
+  if(remove)delete map[messageId];
+  else if(unset){const next={...stored};delete next[unset];map[messageId]=next;}
+  else if(patch)map[messageId]={...stored,...patch};
+  if(remove||unset||patch)tx.botSet(sqliteKey(guildId),map);
+  return value;
+ });
+}
+/** Stored giveaways of the guild in message id order, as rows shaped like the PostgreSQL ones. For listings. */
+export function listSQLiteGiveawayRows(client,guildId){
+ const sqlite=sqliteStore(client,guildId,'10000000000000000');if(!sqlite)return null;
+ const map=sqlite.transaction(tx=>sqliteMap(tx,guildId));
+ return Object.keys(map).sort((a,b)=>a<b?-1:a>b?1:0).map(messageId=>sqliteRow(messageId,map[messageId]));
+}
 function store(client,guildId,messageId){
  if(!id(guildId)||!id(messageId)||!id(client?.homeGuildId)||client.homeGuildId!==guildId)throw fail('GIVEAWAY_SCOPE','Invalid giveaway scope');
  const db=client?.db,status=db?.getStatus?.();
@@ -34,9 +74,11 @@ async function assertNoLegacy(conn,guildId){
  if(result.rows.length)throw fail('GIVEAWAY_LEGACY','Legacy giveaway data requires review');
 }
 export async function assertPostgresGiveawayReady(client,guildId){
+ const sqlite=sqliteStore(client,guildId,'10000000000000000');if(sqlite){sqlite.transaction(tx=>sqliteMap(tx,guildId));return;}
  const conn=await store(client,guildId,'10000000000000000').connect();try{await assertNoLegacy(conn,guildId)}finally{conn.release()}
 }
 async function transaction(client,guildId,messageId,fn){
+ const sqlite=sqliteStore(client,guildId,messageId);if(sqlite)return sqliteTransaction(sqlite,guildId,messageId,fn);
  const conn=await store(client,guildId,messageId).connect();let begun=false;
  try{
   await conn.query('BEGIN');begun=true;await conn.query("SET LOCAL lock_timeout = '5s'");await conn.query("SET LOCAL statement_timeout = '10s'");
@@ -107,9 +149,10 @@ export async function completePostgresGiveawayDelivery(client,guildId,messageId,
 export async function createPostgresGiveaway(client,guildId,input){
  if(!plain(input))throw fail('GIVEAWAY_INVALID','Invalid giveaway');
  const serialized=JSON.stringify(input);if(!serialized||Buffer.byteLength(serialized)>262144)throw fail('GIVEAWAY_INVALID','Invalid giveaway');
- const data=JSON.parse(serialized),messageId=data.messageId,pool=store(client,guildId,messageId);
+ const data=JSON.parse(serialized),messageId=data.messageId,sqlite=sqliteStore(client,guildId,messageId),pool=sqlite?null:store(client,guildId,messageId);
  validRecord({data,ends_ms:String(data.endsAt),ends_exact:true},guildId,messageId);
  if(data.ended||data.deliveryStatus!=null||data.participants.length||data.winnerIds!==undefined)throw fail('GIVEAWAY_INVALID','New giveaway data invalid');
+ if(sqlite)return sqlite.transaction(tx=>{const map=sqliteMap(tx,guildId);if(Object.hasOwn(map,messageId))throw fail('GIVEAWAY_EXISTS','Giveaway already exists');map[messageId]=data;tx.botSet(sqliteKey(guildId),map);return true;});
  const conn=await pool.connect();let begun=false;try{
   await conn.query('BEGIN');begun=true;await conn.query("SET LOCAL lock_timeout = '5s'");await conn.query("SET LOCAL statement_timeout = '10s'");
   await assertNoLegacy(conn,guildId);
@@ -124,6 +167,8 @@ export async function inspectPostgresGiveaway(client,guildId,messageId){
  return transaction(client,guildId,messageId,(d,now,row)=>({value:{channelId:d.channelId,deliveryStatus:d.deliveryStatus??null,ended:d.ended,entries:d.participants.length,prize:d.prize,hasWinners:Array.isArray(d.winnerIds),winnerPingMessageId:d.winnerPingMessageId??null,revision:revision(row),deleting:d.deletion!==undefined,pendingSettled:d.deliveryStatus==='pending'&&settled(d,now)}}));
 }
 export async function duePostgresGiveaways(client,guildId){
+ const rows=listSQLiteGiveawayRows(client,guildId);
+ if(rows){const now=Date.now();return rows.map(r=>r.data).filter(d=>plain(d)&&d.ended===false&&d.isEnded===false&&d.deletion===undefined&&Number.isSafeInteger(d.endsAt)&&d.endsAt<=now).sort((a,b)=>a.endsAt-b.endsAt||(a.messageId<b.messageId?-1:1)).slice(0,1000).map(d=>d.messageId).filter(id);}
  const pool=store(client,guildId,'10000000000000000');
  const result=await pool.query(`SELECT message_id FROM ${pgConfig.tables.giveaways} WHERE guild_id=$1 AND ends_at <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') AND data->>'ended'='false' AND data->>'isEnded'='false' AND NOT (data ? 'deletion') ORDER BY ends_at,message_id LIMIT 1000`,[guildId]);
  return result.rows.map(r=>r.message_id).filter(id);

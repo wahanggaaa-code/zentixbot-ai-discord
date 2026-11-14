@@ -12,7 +12,7 @@ import { checkPostgresGiveaways, deliverPostgresGiveaway } from '../src/services
 import gdelete from '../src/commands/Giveaway/gdelete.js';
 import {
     adminId, botId, channelId, createGiveawayFixture, entrant, guildId, hasCode,
-    missingPermissions, pgEnabled, settle, strangerId, voiceId,
+    missingPermissions, pgEnabled, settle, strangerId, voiceId, onSQLite,
 } from './helpers/giveaway-postgres-fixture.js';
 
 const skip = { skip: !pgEnabled };
@@ -136,9 +136,12 @@ test('create refuses channels the bot cannot post in and legacy data, posting no
     assert.equal((await fx.call('create', 'POST', form())).body.code, 'GIVEAWAY_CHANNEL');
     fx.permissions.allowed = true;
 
-    await fx.pool.query('INSERT INTO temp_data(key,value) VALUES($1,$2)', [`guild:${guildId}:giveaways`, '{}']);
-    assert.equal((await fx.call('create', 'POST', form())).body.code, 'GIVEAWAY_LEGACY');
-    await fx.pool.query('DELETE FROM temp_data');
+    // PostgreSQL only: giveaways left in the old key and value table. On SQLite that row is the storage itself.
+    if (!onSQLite) {
+        await fx.pool.query('INSERT INTO temp_data(key,value) VALUES($1,$2)', [`guild:${guildId}:giveaways`, '{}']);
+        assert.equal((await fx.call('create', 'POST', form())).body.code, 'GIVEAWAY_LEGACY');
+        await fx.pool.query('DELETE FROM temp_data');
+    }
 
     fx.backend.isConnected = false;
     assert.equal((await fx.call('create', 'POST', form())).status, 503);
@@ -199,7 +202,8 @@ test('when storage becomes unreachable after posting, the orphan message is name
     assert.deepEqual(await fx.rows(), []);
 });
 
-test('a commit whose reply is lost still counts as created, with one message', skip, async (t) => {
+// PostgreSQL only: a SQLite commit happens in this process and its answer cannot get lost.
+test('a commit whose reply is lost still counts as created, with one message', onSQLite ? { skip: true } : skip, async (t) => {
     const fx = await createGiveawayFixture(t);
     fx.hooks.afterSend = async () => { fx.lost.commits = 1; };
 

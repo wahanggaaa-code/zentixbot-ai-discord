@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-    createLevelingFixture, pgEnabled, guildId, member, role, missingPermissions, unknownRole,
-} from './helpers/leveling-postgres-fixture.js';
+import { createLevelingFixture, pgEnabled, guildId, member, role, missingPermissions, unknownRole, onSQLite } from './helpers/leveling-postgres-fixture.js';
 import { addXp } from '../src/services/leveling/xpSystem.js';
 import {
     addLevels, removeLevels, setUserLevel, getUserLevelData, getXpForLevel,
@@ -113,7 +111,8 @@ test('awards without a cooldown are all counted', { skip }, async (t) => {
     assert.equal(stored.xp, 30);
 });
 
-test('a level set by staff is not overwritten by XP arriving at the same time', { skip }, async (t) => {
+// PostgreSQL only: on SQLite an award is one synchronous transaction and cannot be held half way.
+test('a level set by staff is not overwritten by XP arriving at the same time', { skip: skip || onSQLite }, async (t) => {
     const fx = await createLevelingFixture(t);
     const user = fx.addMember(member(1));
     await fx.setLevel(user.id, 0);

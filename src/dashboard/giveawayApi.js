@@ -1,6 +1,6 @@
 import express from 'express';
 import {pgConfig} from '../config/database/postgres.js';
-import {inspectPostgresGiveaway,markPostgresGiveawayDelivered,GIVEAWAY_PENDING_SETTLE_MS} from '../services/storage/postgresGiveawayTransactions.js';
+import {inspectPostgresGiveaway,markPostgresGiveawayDelivered,GIVEAWAY_PENDING_SETTLE_MS,listSQLiteGiveawayRows} from '../services/storage/postgresGiveawayTransactions.js';
 import {deliverPostgresGiveaway} from '../services/postgresGiveawayRuntime.js';
 import {canPostGiveaway,createPostgresGiveawayFromDashboard,deletePostgresGiveaway,redeliverPostgresGiveaway} from '../services/postgresGiveawayManagement.js';
 import {parseDuration,validatePrize,validateWinnerCount} from '../services/giveawayService.js';
@@ -77,7 +77,7 @@ const OUTCOMES={
  GIVEAWAY_CREATE_ORPHAN:[502,'Pesan Giveaway terkirim, tetapi catatannya tidak dapat dipastikan tersimpan. Periksa daftar; jika tidak ada, hapus pesannya di Discord.'],
  GIVEAWAY_DELETE_UNFINISHED:[502,'Penghapusan belum selesai: catatan ditandai dan masih ada. Muat ulang, periksa Discord, lalu lanjutkan penghapusan.'],
  GIVEAWAY_DELIVERY_UNKNOWN:[502,'Pengiriman ulang dimulai tetapi hasilnya tidak dapat dipastikan. Periksa Discord sebelum mencoba lagi.'],
- GIVEAWAY_UNAVAILABLE:[503,'Database PostgreSQL tidak tersedia. Tidak ada yang diubah.'],
+ GIVEAWAY_UNAVAILABLE:[503,'Database tidak tersedia. Tidak ada yang diubah.'],
  GIVEAWAY_SCOPE:[403,'Giveaway di luar server ini.'],
 };
 function reject(res,e){
@@ -112,7 +112,10 @@ export function createGiveawayApi(client,{auth,csrf,audit=defaultAudit}){
  router.use('/giveaway',(req,res,next)=>{res.set('Cache-Control','no-store');next()});
  router.get('/giveaway/list',auth,async(req,res)=>{res.set('Cache-Control','no-store');let conn;try{
   if(Object.keys(req.query).some(k=>k!=='after')||(req.query.after!==undefined&&!id(req.query.after)))throw failure(400,'Parameter halaman tidak valid.');
-  const after=req.query.after;conn=await pool(client).connect();
+  const after=req.query.after;
+  const stored=listSQLiteGiveawayRows(client,req.guild.id);
+  if(stored){const rows=stored.filter(r=>!after||r.message_id>after).slice(0,51),page=rows.slice(0,50);return res.json({giveaways:page.map(r=>summarize(r,req.guild.id)),next:rows.length>50?page.at(-1).message_id:null,legacyDetected:false});}
+  conn=await pool(client).connect();
   await conn.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');await conn.query("SET LOCAL statement_timeout = '10s'");
   // A legacy structured key in KV could represent data not visible in the
   // structured table. Do not present the list as complete in this situation.
@@ -123,7 +126,7 @@ export function createGiveawayApi(client,{auth,csrf,audit=defaultAudit}){
   if(rows.some(r=>!id(r.message_id)))throw failure(409,'ID giveaway tidak valid; periksa data sebelum melihat daftar.');
   await conn.query('COMMIT');const page=rows.slice(0,50);
   res.json({giveaways:page.map(r=>summarize(r,req.guild.id)),next:rows.length>50?page.at(-1).message_id:null,legacyDetected:legacy.rows.length>0});
- }catch(e){if(conn)await conn.query('ROLLBACK').catch(()=>{});res.status(e.status||503).json({error:e.status?e.message:'Gagal membaca data Giveaway dari PostgreSQL.'})}finally{conn?.release()}});
+ }catch(e){if(conn)await conn.query('ROLLBACK').catch(()=>{});res.status(e.status||503).json({error:e.status?e.message:'Gagal membaca data Giveaway dari database.'})}finally{conn?.release()}});
  router.get('/giveaway/prepare',auth,async(req,res)=>{try{
   if(Object.keys(req.query).join(',')!=='messageId'||!id(req.query.messageId))throw failure(400,'ID pesan tidak valid.');
   const view=await inspectPostgresGiveaway(client,req.guild.id,req.query.messageId);

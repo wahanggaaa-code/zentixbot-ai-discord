@@ -1,7 +1,8 @@
 import express from 'express';
 import {ChannelType, PermissionFlagsBits} from 'discord.js';
 import {pgConfig} from '../config/database/postgres.js';
-import {validBirthday} from '../services/storage/sqliteBirthdays.js';
+import {validBirthday,listSQLiteBirthdays,hasSQLiteBirthday,updateSQLiteBirthdayFromDashboard,addSQLiteBirthdayFromDashboard} from '../services/storage/sqliteBirthdays.js';
+import {sqliteFor} from '../services/storage/sqliteRows.js';
 import {assertNoPostgresBirthdayLegacy,updatePostgresBirthdayFromDashboard,addPostgresBirthdayFromDashboard,hasPostgresBirthday} from '../services/storage/postgresBirthdays.js';
 import {LEAP_DAY_FALLBACK} from '../utils/birthdayDates.js';
 import {logEvent,EVENT_TYPES} from '../services/loggingService.js';
@@ -12,6 +13,10 @@ const object=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const id=x=>typeof x==='string'&&/^\d{17,20}$/.test(x);
 const err=(status,message)=>Object.assign(new Error(message),{status});
 function pool(client){const db=client?.db,s=db?.getStatus?.();if(s?.connectionType!=='postgresql'||s.isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool?.connect)throw err(503,'Database PostgreSQL tidak tersedia.');return db.db.pool;}
+// SQLite: the guild config and the welcome config are one row each.
+const unavailable=()=>err(503,'Database tidak tersedia.');
+const sqliteOf=client=>sqliteFor(client,unavailable);
+const configKey=guild=>`guild:${guild}:config`,welcomeKey=guild=>`guild:${guild}:welcome`;
 function channelValue(config){
  if(!object(config)||(config.ok!==undefined&&config.value!==undefined))throw err(409,'Konfigurasi server perlu diperiksa sebelum diedit.');
  const value=config.birthdayChannelId??null;
@@ -54,8 +59,9 @@ export function createBirthdayApi(client,{auth,csrf,audit=defaultAudit}){
  // Never delays or fails the response; the change is already stored.
  const record=(req,action,targetId)=>{Promise.resolve().then(()=>audit(client,req.guild.id,req.session?.user?.id??null,action,targetId)).catch(()=>{})};router.use(express.json({limit:'4kb'}));router.use((req,res,next)=>{res.set('Cache-Control','no-store');next()});
  router.get('/birthday/settings',auth,async(req,res)=>{try{
-  const result=await pool(client).query(`SELECT config FROM ${tables.guilds} WHERE id=$1`,[req.guild.id]);
-  const channelId=channelValue(result.rows.length?result.rows[0].config:{});
+  const sqlite=sqliteOf(client);
+  const stored=sqlite?sqlite.botGet(configKey(req.guild.id))??{}:await pool(client).query(`SELECT config FROM ${tables.guilds} WHERE id=$1`,[req.guild.id]).then(result=>result.rows.length?result.rows[0].config:{});
+  const channelId=channelValue(stored);
   const channels=[...req.guild.channels.cache.values()].filter(c=>c.type===ChannelType.GuildText).map(c=>({id:c.id,name:c.name}));
   res.json({channelId,channels});
  }catch(e){respond(res,e)}});
@@ -67,6 +73,17 @@ export function createBirthdayApi(client,{auth,csrf,audit=defaultAudit}){
     const channel=req.guild.channels.cache.get(b.channelId),me=req.guild.members.me;
     if(!channel||channel.type!==ChannelType.GuildText)throw err(400,'Pilih channel teks dari server ini.');
     if(!me||!channel.permissionsFor(me)?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.EmbedLinks]))throw err(403,'Bot memerlukan izin View Channel, Send Messages, dan Embed Links.');
+   }
+   const sqlite=sqliteOf(client);
+   if(sqlite){
+    sqlite.transaction(tx=>{
+     const raw=tx.botGet(configKey(req.guild.id))??{},old=channelValue(raw);
+     if(old!==b.expectedChannelId)throw err(409,'Channel ulang tahun berubah. Muat ulang sebelum menyimpan.');
+     const other=tx.botGet(welcomeKey(req.guild.id))??{};assertOnboardingShape(raw,other);
+     const next={...raw,birthdayChannelId:b.channelId};assertOnboardingCompatible(next,other);
+     tx.botSet(configKey(req.guild.id),next);
+    });
+    return res.json({ok:true,channelId:b.channelId});
    }
    conn=await pool(client).connect();await conn.query('BEGIN');
    await conn.query(`INSERT INTO ${tables.guilds}(id) VALUES($1) ON CONFLICT(id) DO NOTHING`,[req.guild.id]);
@@ -84,6 +101,12 @@ export function createBirthdayApi(client,{auth,csrf,audit=defaultAudit}){
   if(Object.keys(req.query).some(k=>k!=='after'))throw err(400,'Parameter daftar tidak valid.');
   const after=parseCursor(req.query.after),args=after?[req.guild.id,after.month,after.day,after.userId]:[req.guild.id];
   const filter=after?' AND (month,day,user_id)>($2,$3,$4)':'';
+  const sqlite=sqliteOf(client);
+  if(sqlite){
+   const all=listSQLiteBirthdays(client,req.guild.id),start=after?all.findIndex(r=>r.month>after.month||(r.month===after.month&&(r.day>after.day||(r.day===after.day&&(r.user_id.length>after.userId.length||(r.user_id.length===after.userId.length&&r.user_id>after.userId)))))):0;
+   const page=start<0?[]:all.slice(start,start+51),rows=page.slice(0,50);
+   return res.json({birthdays:rows.map(r=>({userId:r.user_id,month:r.month,day:r.day})),next:page.length>50?cursor(rows[rows.length-1]):null,leapDayFallback:{...LEAP_DAY_FALLBACK}});
+  }
   conn=await pool(client).connect();await conn.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
   await assertNoPostgresBirthdayLegacy(conn,req.guild.id);
   const result=await conn.query(`SELECT user_id,month,day FROM ${tables.birthdays} WHERE guild_id=$1${filter} ORDER BY month,day,user_id LIMIT 51`,args);
@@ -95,7 +118,8 @@ export function createBirthdayApi(client,{auth,csrf,audit=defaultAudit}){
   const b=req.body,validDate=x=>object(x)&&Object.keys(x).sort().join(',')==='day,month'&&validBirthday(x.month,x.day);
   if(!id(req.params.userId)||!object(b)||Object.keys(b).sort().join(',')!=='expected,next'||!validDate(b.expected)||(b.next!==null&&!validDate(b.next)))throw err(400,'Tanggal ulang tahun tidak valid.');
   if(b.next!==null)await fetchMember(req.guild,req.params.userId);
-  await updatePostgresBirthdayFromDashboard(client,req.guild.id,req.params.userId,b.expected,b.next);
+  if(sqliteOf(client))updateSQLiteBirthdayFromDashboard(client,req.guild.id,req.params.userId,b.expected,b.next);
+  else await updatePostgresBirthdayFromDashboard(client,req.guild.id,req.params.userId,b.expected,b.next);
   record(req,b.next===null?'Removed':'Updated',req.params.userId);res.json({ok:true});
  }catch(e){respond(res,e)}});
 
@@ -107,7 +131,7 @@ export function createBirthdayApi(client,{auth,csrf,audit=defaultAudit}){
    userId:member.id,
    name:memberName(member),
    bot:member.user?.bot===true,
-   hasBirthday:await hasPostgresBirthday(client,req.guild.id,member.id),
+   hasBirthday:sqliteOf(client)?hasSQLiteBirthday(client,req.guild.id,member.id):await hasPostgresBirthday(client,req.guild.id,member.id),
    leapDayFallback:{...LEAP_DAY_FALLBACK},
   });
  }catch(e){respond(res,e)}});
@@ -118,7 +142,8 @@ export function createBirthdayApi(client,{auth,csrf,audit=defaultAudit}){
   if(!object(b)||Object.keys(b).sort().join(',')!=='confirmed,day,month,userId'||b.confirmed!==true||!id(b.userId)||!validBirthday(b.month,b.day))throw err(400,'Tanggal ulang tahun tidak valid.');
   const member=await fetchMember(req.guild,b.userId);
   if(member.user?.bot===true)throw err(400,'Akun bot tidak dapat diberi tanggal ulang tahun.');
-  await addPostgresBirthdayFromDashboard(client,req.guild.id,member.id,{month:b.month,day:b.day});
+  if(sqliteOf(client))addSQLiteBirthdayFromDashboard(client,req.guild.id,member.id,{month:b.month,day:b.day});
+  else await addPostgresBirthdayFromDashboard(client,req.guild.id,member.id,{month:b.month,day:b.day});
   record(req,'Added',member.id);res.json({ok:true});
  }catch(e){respond(res,e)}});
  return router;

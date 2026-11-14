@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ChannelType, MessageType, PermissionFlagsBits } from 'discord.js';
 import { createCountingFixture, GAME_KEY, guildId, memberId, missingPermissions, serverError } from './helpers/counting-fixture.js';
-import { pgEnabled } from './helpers/leveling-postgres-fixture.js';
+import { pgEnabled, onSQLite, isRefused, assertCommitFailureSaid } from './helpers/leveling-postgres-fixture.js';
 import command from '../src/commands/Fun/count.js';
 import messageCreate from '../src/events/messageCreate.js';
 import {
@@ -79,7 +79,7 @@ test('store: a change is all or nothing', { skip }, async (t) => {
     fx.control.failQuery = gameWrites;
     await assert.rejects(mutateGame(fx.client, guildId, (game) => ({ game: { ...game, nextNumber: 6 } })), code('COUNTING_UNAVAILABLE'));
     fx.control.failQuery = (sql) => sql === 'COMMIT';
-    await assert.rejects(mutateGame(fx.client, guildId, (game) => ({ game: { ...game, nextNumber: 6 } })), code('COUNTING_UNCERTAIN'));
+    await assert.rejects(mutateGame(fx.client, guildId, (game) => ({ game: { ...game, nextNumber: 6 } })), code(onSQLite ? 'COUNTING_UNAVAILABLE' : 'COUNTING_UNCERTAIN'));
     fx.control.failQuery = null;
     assert.deepEqual(await fx.stored(), before);
 
@@ -93,8 +93,8 @@ test('store: a change is all or nothing', { skip }, async (t) => {
 test('store: the generic key-value layer can read the game but can no longer replace or delete it', { skip }, async (t) => {
     const fx = await createCountingFixture(t);
     const before = await fx.seed({ nextNumber: 5, bestStreak: 30, leaderboard: { [fx.bob.id]: 70 } });
-    assert.equal(await fx.client.db.set(GAME_KEY, { enabled: false }), false);
-    assert.equal(await fx.client.db.delete(GAME_KEY), false);
+    assert.equal(await isRefused(fx.client.db.set(GAME_KEY, { enabled: false })), true);
+    assert.equal(await isRefused(fx.client.db.delete(GAME_KEY)), true);
     assert.deepEqual(await fx.stored(), before);
     assert.deepEqual(await fx.client.db.get(GAME_KEY), before);
 });
@@ -518,7 +518,7 @@ test('/count: a database failure is reported as one, never as done', { skip }, a
     fx.control.failQuery = (sql) => sql === 'COMMIT';
     const unsure = await run(fx, { subcommand: 'disable' });
     fx.control.failQuery = null;
-    assert.match(unsure.last(), /Database Error\nThe database did not confirm the change\. Check `\/count status` before trying again\./);
+    assertCommitFailureSaid(unsure.last(), /Database Error\nThe database did not confirm the change\. Check `\/count status` before trying again\./, /Database Error\nThe database could not b/);
 });
 
 test('/count status and leaderboard: what is stored, with a warning when the game cannot run', { skip }, async (t) => {

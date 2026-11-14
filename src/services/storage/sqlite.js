@@ -1,7 +1,7 @@
 import {mkdirSync,openSync,closeSync,unlinkSync,lstatSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
 
-// Experimental building block: NOT wired into application startup yet.
+// The SQLite file store. Startup opens it when no PostgreSQL connection is configured (see utils/database/wrapper.js).
 // SQLite's synchronous transaction callbacks must never await network/Discord/provider calls.
 const error=(message,code='SQLITE_INVALID')=>Object.assign(new Error(message),{code});
 const validKey=k=>typeof k==='string'&&k.length>0&&k.length<=255&&!/[\u0000-\u001f]/.test(k);
@@ -10,7 +10,7 @@ function encode(value){let text;try{text=JSON.stringify(value)}catch{throw error
 function decode(value){try{return JSON.parse(value)}catch{throw error('Data SQLite rusak.','SQLITE_CORRUPT')}}
 export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  if(typeof path!=='string'||!path||path.includes('\0')||!Number.isInteger(busyTimeout)||busyTimeout<0||busyTimeout>5000)throw error('Konfigurasi SQLite tidak valid.');
- let DatabaseSync,backupSQLite;try{({DatabaseSync,backup:backupSQLite}=await import('node:sqlite'))}catch{throw error('SQLite memerlukan Node.js 22.5 atau lebih baru.','SQLITE_RUNTIME')}
+ let DatabaseSync,backupSQLite;try{({DatabaseSync,backup:backupSQLite}=await import('node:sqlite'))}catch{throw error('SQLite memerlukan Node.js 22.13 atau lebih baru.','SQLITE_RUNTIME')}
  const file=path===':memory:'?path:resolve(path);
  if(file!==':memory:'){
   // A trusted, private parent directory is still required. New files are private;
@@ -75,6 +75,7 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
  const putBot=database.prepare('INSERT INTO zentix_bot_kv(key,value,expires_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,expires_at=excluded.expires_at,updated_at=excluded.updated_at');
  const delBot=database.prepare('DELETE FROM zentix_bot_kv WHERE key=?');
  const listBot=database.prepare('SELECT key FROM zentix_bot_kv WHERE substr(key,1,length(?))=? AND (expires_at IS NULL OR expires_at>?) ORDER BY key LIMIT 10001');
+ const listBotRows=database.prepare('SELECT key,value FROM zentix_bot_kv WHERE key>=? AND key<? AND substr(key,1,length(?))=? AND (expires_at IS NULL OR expires_at>?) ORDER BY key LIMIT 10001');
  const listLevels=database.prepare('SELECT key,value FROM zentix_bot_kv WHERE (substr(key,1,length(?))=? OR substr(key,1,length(?))=?) AND (expires_at IS NULL OR expires_at>?) ORDER BY key LIMIT 10001');
  const listWarningKeysRaw=database.prepare("SELECT key FROM (SELECT key FROM zentix_bot_kv WHERE substr(key,1,length(?))=? OR substr(key,1,length(?))=? UNION ALL SELECT key FROM zentix_kv WHERE substr(key,1,length(?))=? OR substr(key,1,length(?))=?) ORDER BY key LIMIT 10001");
  const listTicketKeysRaw=database.prepare("SELECT key FROM zentix_bot_kv WHERE substr(key,1,length(?))=? AND key<>? ORDER BY key LIMIT 10001");
@@ -116,6 +117,8 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
   importTicket(key,value,updatedAt){open();checkKey(key);if(!/^guild:\d{17,20}:ticket:\d{17,20}$/.test(key)||!Number.isSafeInteger(updatedAt)||updatedAt<0)throw error('Tiket impor tidak valid.');importTicket.run(key,encode(value),updatedAt)},
   botDelete(key){open();checkKey(key);return Number(delBot.run(key).changes)>0},
   botList(prefix=''){open();if(typeof prefix!=='string'||prefix.length>255||/[\u0000-\u001f]/.test(prefix))throw error('Prefix tidak valid.');const rows=listBot.all(prefix,prefix,Date.now());if(rows.length>10000)throw error('Terlalu banyak key untuk didaftar.','SQLITE_LIST_LIMIT');return rows.map(row=>row.key)},
+  // Keys and values under one prefix. The range bounds let SQLite use the primary key; the substr test keeps the match exact.
+  botRows(prefix){open();if(typeof prefix!=='string'||!prefix||prefix.length>255||/[\u0000-\u001f]/.test(prefix))throw error('Prefix tidak valid.');const rows=listBotRows.all(prefix,`${prefix}\u{10ffff}`,prefix,prefix,Date.now());if(rows.length>10000)throw error('Terlalu banyak key untuk didaftar.','SQLITE_LIST_LIMIT');return rows.map(row=>({key:row.key,value:decode(row.value)}))},
   botLevels(guild){open();if(!validId(guild))throw error('Guild tidak valid.');const canonical=`guild:${guild}:leveling:users:`,legacy=`${guild}:leveling:users:`,rows=listLevels.all(canonical,canonical,legacy,legacy,Date.now());if(rows.length>10000)throw error('Terlalu banyak akun level.','SQLITE_LIST_LIMIT');const found=new Map();for(const row of rows){const isCanonical=row.key.startsWith(canonical),user=row.key.slice((isCanonical?canonical:legacy).length);if(!validId(user))continue;const value=decode(row.value);if(value!==null&&(!found.has(user)||isCanonical))found.set(user,value);}return [...found].map(([userId,data])=>({userId,data}))},
   warningKeysRaw(guild){open();if(!validId(guild))throw error('Guild tidak valid.');const canonical=`guild:${guild}:warnings:`,legacy=`moderation:warnings:${guild}:`;const rows=listWarningKeysRaw.all(canonical,canonical,legacy,legacy,canonical,canonical,legacy,legacy);if(rows.length>10000)throw error('Terlalu banyak key peringatan.','SQLITE_LIST_LIMIT');return rows.map(row=>row.key)},
   ticketKeysRaw(guild){open();if(!validId(guild))throw error('Guild tidak valid.');const prefix=`guild:${guild}:ticket:`,counter=`${prefix}counter`;if(anyTicketKeyAI.get(prefix,prefix,counter))throw error('Data tiket legacy perlu direkonsiliasi.','TICKET_LEGACY_CONFLICT');const rows=listTicketKeysRaw.all(prefix,prefix,counter);if(rows.length>10000)throw error('Terlalu banyak tiket.','SQLITE_LIST_LIMIT');return rows.map(row=>row.key)},
@@ -139,6 +142,8 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
   botGet(key){return ops.botGet(key)},
   verificationAudit(guild,limit=100){return ops.verificationAudit(guild,limit)},
   botList(prefix=''){return ops.botList(prefix)},
+  botRows(prefix){return ops.botRows(prefix)},
+  botGetRaw(key){return ops.botGetRaw(key)},
   botTickets(guild,limit){return ops.botTickets(guild,limit)},
   ticketKeysRaw(guild){return ops.ticketKeysRaw(guild)},
   warningKeysRaw(guild){return ops.warningKeysRaw(guild)},

@@ -8,6 +8,7 @@
 
 import { createHash } from 'node:crypto';
 import { pgConfig } from '../../config/database/postgres.js';
+import { sqliteFor, readRow, changeRows } from '../storage/sqliteRows.js';
 
 const tables = pgConfig.tables;
 const SNOWFLAKE = /^\d{17,20}$/;
@@ -94,8 +95,30 @@ function assertGuild(guildId) {
 }
 
 /** The stored counters with their revision. Throws on a database error. */
+const unavailable = () => fail('Database unavailable for server stats counters', 'SERVERSTATS_UNAVAILABLE');
+/** On SQLite the counters of a guild are one row; on PostgreSQL they are a column of the guild row. */
+const countersKey = (guildId) => `guild:${guildId}:counters`;
+
+function mutateOnSQLite(sqlite, guildId, mutate) {
+    return changeRows(sqlite, (rows) => {
+        const { counters } = decodeCounters(rows.get(countersKey(guildId)) ?? null, guildId);
+        const out = mutate(counters.map((counter) => ({ ...counter })), revisionOf(counters));
+        if (!out || typeof out !== 'object' || typeof out.then === 'function') throw fail('Invalid counter mutation result', 'SERVERSTATS_INVALID');
+        if (out.write === false) return out.result;
+        const { counters: next, rejected } = decodeCounters(out.counters, guildId);
+        if (rejected > 0 || next.length > MAX_COUNTERS) throw fail('Refusing to store an invalid counter list', 'SERVERSTATS_INVALID');
+        rows.put(countersKey(guildId), next);
+        return out.result;
+    });
+}
+
 export async function readCounters(client, guildId) {
     assertGuild(guildId);
+    const sqlite = sqliteFor(client, unavailable);
+    if (sqlite) {
+        const { counters, rejected } = decodeCounters(readRow(sqlite, countersKey(guildId)) ?? null, guildId);
+        return { counters, rejected, revision: revisionOf(counters) };
+    }
     const pool = counterPool(client);
     const result = await pool.query(`SELECT counters FROM ${tables.guilds} WHERE id = $1`, [guildId]);
     const { counters, rejected } = decodeCounters(result.rows[0]?.counters ?? null, guildId);
@@ -114,6 +137,8 @@ export async function mutateCounters(client, guildId, mutate) {
     if (typeof mutate !== 'function' || mutate.constructor?.name === 'AsyncFunction') {
         throw fail('Counter mutation must be synchronous', 'SERVERSTATS_INVALID');
     }
+    const sqlite = sqliteFor(client, unavailable);
+    if (sqlite) return mutateOnSQLite(sqlite, guildId, mutate);
     const pool = counterPool(client);
     const conn = await pool.connect();
     try {

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ChannelType, PermissionsBitField } from 'discord.js';
 import { createServerStatsFixture, guildId, missingPermissions } from './helpers/serverstats-fixture.js';
-import { pgEnabled } from './helpers/leveling-postgres-fixture.js';
+import { pgEnabled, isRefused } from './helpers/leveling-postgres-fixture.js';
 import { handleCreate } from '../src/commands/ServerStats/modules/serverstats_create.js';
 import { handleList } from '../src/commands/ServerStats/modules/serverstats_list.js';
 import { handleUpdate } from '../src/commands/ServerStats/modules/serverstats_update.js';
@@ -182,8 +182,8 @@ test('store: the generic key-value layer can no longer replace the list', { skip
     const fx = await createServerStatsFixture(t);
     await create(fx, 'members');
     const before = await fx.stored();
-    assert.equal(await fx.client.db.set(`guild:${guildId}:counters`, []), false);
-    await fx.client.db.delete(`guild:${guildId}:counters`);
+    assert.equal(await isRefused(fx.client.db.set(`guild:${guildId}:counters`, [])), true);
+    await isRefused(fx.client.db.delete(`guild:${guildId}:counters`));
     assert.deepEqual(await fx.stored(), before);
 });
 

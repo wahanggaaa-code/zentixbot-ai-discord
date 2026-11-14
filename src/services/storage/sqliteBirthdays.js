@@ -20,3 +20,35 @@ export function setSQLiteBirthday(client,guild,user,month,day){const sqlite=stor
 export function deleteSQLiteBirthday(client,guild,user){const sqlite=store(client,guild);if(!id(user))throw fail('Invalid user');return sqlite.transaction(tx=>{const key=getGuildBirthdaysKey(guild),current=load(tx,key);if(Object.hasOwn(current.value,user)){delete current.value[user];write(tx,key,current,current.value)}return true})}
 export function moveSQLiteBirthdayOnLeave(client,guild,user){const sqlite=store(client,guild);if(!id(user))throw fail('Invalid user');return sqlite.transaction(tx=>{const key=getGuildBirthdaysKey(guild),backupKey=getBirthdayLeftBackupKey(guild),current=load(tx,key),backup=load(tx,backupKey),value=current.value[user];if(!value)return false;if(backup.value[user]&&JSON.stringify(backup.value[user])!==JSON.stringify(value))throw fail('Existing birthday backup conflicts','BIRTHDAY_BACKUP_CONFLICT');backup.value[user]=value;delete current.value[user];write(tx,backupKey,backup,backup.value);write(tx,key,current,current.value);return true})}
 export function restoreSQLiteBirthdayOnJoin(client,guild,user){const sqlite=store(client,guild);if(!id(user))throw fail('Invalid user');return sqlite.transaction(tx=>{const key=getGuildBirthdaysKey(guild),backupKey=getBirthdayLeftBackupKey(guild),current=load(tx,key),backup=load(tx,backupKey),value=backup.value[user];if(!value)return false;if(current.value[user]&&JSON.stringify(current.value[user])!==JSON.stringify(value))throw fail('Existing birthday conflicts with backup','BIRTHDAY_BACKUP_CONFLICT');current.value[user]=value;delete backup.value[user];write(tx,key,current,current.value);write(tx,backupKey,backup,backup.value);return true})}
+
+// ---- dashboard --------------------------------------------------------------
+// Same rules as on PostgreSQL: an edit needs the date the page showed, a new record never
+// replaces an existing one, and a member with a leave backup is left for review.
+const dateInput=x=>x!==null&&typeof x==='object'&&!Array.isArray(x)&&Object.keys(x).sort().join(',')==='day,month'&&validBirthday(x.month,x.day);
+const sameDate=(a,b)=>a.month===b.month&&a.day===b.day;
+/** Every stored date of the guild as `{user_id,month,day}`, ordered by month, day and user id. */
+export function listSQLiteBirthdays(client,guild){
+ const value=readSQLiteBirthdays(client,guild);
+ return Object.entries(value).map(([user_id,b])=>({user_id,month:b.month,day:b.day})).sort((a,b)=>a.month-b.month||a.day-b.day||(a.user_id.length-b.user_id.length)||(a.user_id<b.user_id?-1:a.user_id>b.user_id?1:0));
+}
+/** Whether a member has a stored date. Does not return the date. */
+export function hasSQLiteBirthday(client,guild,user){if(!id(user))throw fail('Invalid user');return Object.hasOwn(readSQLiteBirthdays(client,guild),user)}
+export function updateSQLiteBirthdayFromDashboard(client,guild,user,expected,next){
+ const sqlite=store(client,guild);if(!id(user)||!dateInput(expected)||(next!==null&&!dateInput(next)))throw fail('Invalid birthday input');
+ return sqlite.transaction(tx=>{
+  const key=getGuildBirthdaysKey(guild),current=load(tx,key),row=Object.hasOwn(current.value,user)?current.value[user]:null;
+  if(!row||!sameDate(row,expected))throw fail('Birthday changed; reload before saving','BIRTHDAY_STALE');
+  if(Object.hasOwn(load(tx,getBirthdayLeftBackupKey(guild)).value,user))throw fail('Birthday leave backup requires review','BIRTHDAY_BACKUP_CONFLICT');
+  if(next===null)delete current.value[user];else current.value[user]={month:next.month,day:next.day};
+  write(tx,key,current,current.value);return true;
+ });
+}
+export function addSQLiteBirthdayFromDashboard(client,guild,user,next){
+ const sqlite=store(client,guild);if(!id(user)||!dateInput(next))throw fail('Invalid birthday input');
+ return sqlite.transaction(tx=>{
+  const key=getGuildBirthdaysKey(guild),current=load(tx,key);
+  if(Object.hasOwn(current.value,user))throw fail('Birthday already exists','BIRTHDAY_EXISTS');
+  if(Object.hasOwn(load(tx,getBirthdayLeftBackupKey(guild)).value,user))throw fail('Birthday leave backup requires review','BIRTHDAY_BACKUP_CONFLICT');
+  current.value[user]={month:next.month,day:next.day};write(tx,key,current,current.value);return true;
+ });
+}

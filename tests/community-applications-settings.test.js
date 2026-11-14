@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ChannelType, Collection } from 'discord.js';
 import { createCommunityFixture, guildId, memberId, roleId } from './helpers/community-fixture.js';
-import { pgEnabled } from './helpers/leveling-postgres-fixture.js';
+import { pgEnabled, onSQLite, isRefused, assertCommitFailureSaid } from './helpers/leveling-postgres-fixture.js';
 import interactionCreate from '../src/events/interactionCreate.js';
 import applyCommand from '../src/commands/Community/apply.js';
 import appAdminCommand from '../src/commands/Community/app-admin.js';
@@ -129,7 +129,8 @@ test('a form created while the stored forms cannot be read or written is not cre
     await fx.seedConfig({ forms: [{ role: fx.helper, name: 'Helper', questions: ['One?'] }, { role: fx.reviewerRole, name: 'Recruiter', questions: ['Two?'] }] });
     const before = await fx.stored();
 
-    for (const failing of [/SELECT/, /INSERT/, /COMMIT/, /pg_advisory_xact_lock/]) {
+    // The per-server lock is a PostgreSQL statement; SQLite has one writer by design.
+    for (const failing of [/SELECT/, /INSERT/, /COMMIT/, ...(onSQLite ? [] : [/pg_advisory_xact_lock/])]) {
         fx.control.failQuery = (sql) => failing.test(sql) && (/temp_data/.test(sql) || !/SELECT/.test(String(failing)));
         const out = await newForm(fx, {}, { member: fx.owner });
         fx.control.failQuery = null;
@@ -430,7 +431,7 @@ test('settings that could not be saved are shown as not saved, with the dashboar
     fx.control.failQuery = (sql) => /COMMIT/.test(sql);
     const unsure = await fx.run(fx.button('app:switch:on'));
     fx.control.failQuery = null;
-    assert.match(unsure.embed().description, /^\*\*Not saved\.\*\* The database did not confirm the change\. It may or may not have been saved; please check before trying again\./);
+    assertCommitFailureSaid(unsure.embed().description, /^\*\*Not saved\.\*\* The database did not confirm the change\. It may or may not have been saved; please check before trying again\./, /^\*\*Not saved\.\*\* The applications data could not be read or saved right now\. Nothing was changed/);
     assert.deepEqual(await fx.stored(), before);
     const config = (await fx.query('SELECT config FROM guilds WHERE id = $1', [guildId])).rows[0].config;
     assert.equal(config.logging?.channels?.applications, undefined, 'the logging settings were not written for a channel that was not stored');
@@ -489,9 +490,9 @@ test('the rows of this feature are written by its own store only; a stale revisi
     const before = await fx.stored();
     for (const key of ['settings', 'roles', `role:${fx.staff.id}:settings`, `${Date.now()}-abc`, `users:${fx.alice.id}`]) {
         const full = `guild:${guildId}:applications:${key}`;
-        assert.equal(await fx.client.db.set(full, { enabled: false }), false, key);
-        assert.equal(await fx.client.db.delete(full), false, key);
-        await assert.rejects(fx.client.db.increment(full), { code: 'CONFIG_WRITE_DISABLED' }, key);
+        assert.equal(await isRefused(fx.client.db.set(full, { enabled: false })), true, key);
+        assert.equal(await isRefused(fx.client.db.delete(full)), true, key);
+        await assert.rejects(fx.client.db.increment(full), { code: onSQLite ? 'APPLICATION_WRITE_DISABLED' : 'CONFIG_WRITE_DISABLED' }, key);
     }
     assert.deepEqual(await fx.stored(), before);
 

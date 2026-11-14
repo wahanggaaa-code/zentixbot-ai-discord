@@ -30,3 +30,9 @@ export function saveSQLiteTicket(wrapper,guild,channel,value){
   tx.botSet(getTicketKey(guild,channel),value);
  });track(value,sqlite,guild,channel);return true;
 }
+
+/** Deletes every ticket record of the guild in one transaction; the ticket counter stays. Returns how many were deleted. */
+export function deleteSQLiteTickets(wrapper,guild){
+ const sqlite=backendStore(wrapper,guild);
+ return sqlite.transaction(tx=>{const keys=tx.ticketKeysRaw(guild);for(const key of keys)tx.botDelete(key);return keys.length});
+}

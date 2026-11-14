@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import express from 'express';
 import { ChannelType } from 'discord.js';
 import { JSDOM } from 'jsdom';
-import { createLevelingFixture, adminId } from './helpers/leveling-postgres-fixture.js';
+import { createLevelingFixture, adminId, pgEnabled } from './helpers/leveling-postgres-fixture.js';
 import { createBotApiRouter } from '../src/dashboard/botApi.js';
 import { createGoodbyeApi } from '../src/dashboard/goodbyeApi.js';
 import { createBirthdayApi } from '../src/dashboard/birthdayApi.js';
@@ -66,8 +66,8 @@ const COVERED_ELSEWHERE = {
 // Reads that legitimately answer with an error in this fixture.
 const EXPECTED_READ_ERRORS = { 'bot/logs': 404 }; // no audit channel is configured
 
-async function openDashboard(t) {
-    const fx = await createLevelingFixture(t);
+async function openDashboard(t, backend) {
+    const fx = await createLevelingFixture(t, {}, { backend });
     const { client, guild } = fx;
     const env = { OWNER_IDS: adminId };
     client.isReady = () => true;
@@ -88,9 +88,9 @@ async function openDashboard(t) {
         send: async () => { throw new Error('sending is not available in this walk'); },
     });
     // A running counting game, so that the page offers its reset form as well as its settings form.
-    await fx.query('INSERT INTO temp_data (key, value) VALUES ($1, $2::jsonb)', [`countingGame:${guild.id}`, JSON.stringify({
+    await fx.putRow(`countingGame:${guild.id}`, {
         enabled: true, channelId: '623456789012345004', system: 'decimal', nextNumber: 4, lastUserId: null, currentStreak: 3, bestStreak: 3, leaderboard: {},
-    })]);
+    });
     // Two application forms, so the page has forms to change, and two more roles, so its role picker has another
     // role to switch to. Creating a form must be refused throughout: a form that really got created would change the
     // page between the two submits of a comparison. It is: the picker's first role is the bot's own, which cannot be
@@ -103,7 +103,7 @@ async function openDashboard(t) {
         ['roles', [{ roleId: '623456789012345006', name: 'uji', enabled: true }, { roleId: '623456789012345007', name: 'ujiz', enabled: true }]],
         ['role:623456789012345006:settings', { questions: ['Why?'], logChannelId: null }],
         ['role:623456789012345007:settings', { questions: ['Why?'], logChannelId: null }],
-    ]) await fx.query('INSERT INTO temp_data (key, value) VALUES ($1, $2::jsonb)', [applications + key, JSON.stringify(value)]);
+    ]) await fx.putRow(applications + key, value);
     client.commands = new Map([
         ['ping', { data: { name: 'ping', description: 'Ping' }, category: 'Core' }],
         ['balance', { data: { name: 'balance', description: 'Balance' }, category: 'Economy' }],
@@ -133,7 +133,7 @@ async function openDashboard(t) {
     const w = dom.window;
     w.scrollTo = () => {};
     w.confirm = () => true;
-    const state = { inflight: 0, reads: [], writes: [], errors: [] };
+    const state = { inflight: 0, reads: [], writes: [], errors: [], statuses: {} };
     w.fetch = async (url, options = {}) => {
         const path = String(url).replace('/dashboard/api/', '');
         const method = options.method || 'GET';
@@ -143,6 +143,7 @@ async function openDashboard(t) {
             const text = await response.text();
             if (method === 'GET') state.reads.push({ path, status: response.status });
             else state.writes.push(`${method} ${path} ${typeof options.body === 'string' ? options.body : '[binary]'}`);
+            if (method !== 'GET') { const k = `${method} ${path.split('?')[0]} ${response.status}`; state.statuses[k] = (state.statuses[k] ?? 0) + 1; }
             return { ok: response.ok, status: response.status, json: async () => JSON.parse(text), text: async () => text };
         } finally {
             state.inflight--;
@@ -193,8 +194,12 @@ async function listTabs(page) {
     return list;
 }
 
-test('live dashboard: every tab loads from the bot, without mock forms or script errors', async (t) => {
-    const page = await openDashboard(t);
+// The same walk runs on both databases the bot supports. The PostgreSQL half needs the local test server.
+const walkStatuses = {};
+for (const backend of ['postgresql', 'sqlite']) {
+const skip = backend === 'postgresql' && !pgEnabled;
+test(`live dashboard on ${backend}: every tab loads from the bot, without mock forms or script errors`, { skip }, async (t) => {
+    const page = await openDashboard(t, backend);
     const tabs = await listTabs(page);
     assert.equal(tabs.length, 21 + 21 + 1);
     let seenReportChannel = 0;
@@ -219,8 +224,8 @@ test('live dashboard: every tab loads from the bot, without mock forms or script
     assert.deepEqual(page.state.errors, []);
 });
 
-test('live dashboard: every control of every form changes the request that is sent', async (t) => {
-    const page = await openDashboard(t);
+test(`live dashboard on ${backend}: every control of every form changes the request that is sent`, { skip }, async (t) => {
+    const page = await openDashboard(t, backend);
     const { w, main, state } = page;
     const tabs = await listTabs(page);
 
@@ -307,6 +312,10 @@ test('live dashboard: every control of every form changes the request that is se
         }
     }
 
+    // Every write must be answered the same way on both databases (same route, same status, same count).
+    assert.ok(Object.values(state.statuses).reduce((sum, n) => sum + n, 0) > 500, 'the walk sent its writes');
+    walkStatuses[backend] = state.statuses;
+    if (backend === 'sqlite' && walkStatuses.postgresql) assert.deepEqual(state.statuses, walkStatuses.postgresql, 'SQLite answers the writes like PostgreSQL');
     assert.deepEqual(unsent.sort(), Object.keys(NEEDS_PRECONDITION).sort());
     assert.equal(formCount, 45, 'forms on the live dashboard');
     assert.equal(checked, 272, 'controls on the live dashboard');
@@ -314,3 +323,4 @@ test('live dashboard: every control of every form changes the request that is se
     const applications = await (await w.fetch('/dashboard/api/bot/applications')).json();
     assert.equal(applications.forms.length, 2, 'no application form was created along the way');
 });
+}

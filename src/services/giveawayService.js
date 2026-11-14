@@ -334,7 +334,7 @@ export async function checkGiveaways(client) {
       return;
     }
 
-    if(client.db.getStatus?.()?.connectionType==='postgresql'){
+    if(['postgresql','sqlite'].includes(client.db.getStatus?.()?.connectionType)){
       const {checkPostgresGiveaways}=await import('./postgresGiveawayRuntime.js');
       await checkPostgresGiveaways(client);return;
     }

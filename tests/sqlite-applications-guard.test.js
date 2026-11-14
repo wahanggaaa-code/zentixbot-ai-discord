@@ -6,8 +6,8 @@ import {
     changeConfig, createApplication, decideApplication, deleteApplicationsOf, noteApplication, purgeExpired, readAll, readApplication, readConfig,
 } from '../src/services/applications/store.js';
 
-// Role applications need PostgreSQL (one transaction under one lock per server). On the SQLite
-// store they must refuse outright, and the generic key-value layer must not be a way around that.
+// Role applications on SQLite go through their own store, as on PostgreSQL. The generic
+// key-value layer may read these rows but must not be a way to write them behind the store.
 const g = '123456789012345678';
 const u = '234567890123456789';
 const appId = '1700000000000-abcdefghi';
@@ -15,48 +15,45 @@ const appKey = `guild:${g}:applications:${appId}`;
 const userKey = `guild:${g}:applications:users:${u}`;
 const roleKey = `guild:${g}:applications:roles`;
 
-test('on SQLite every entry point of the applications store refuses before reading or writing anything', async (t) => {
+test('on SQLite the applications store reads and writes its rows; without a usable database it refuses', async (t) => {
     const sqlite = await openSQLiteStore();
     t.after(() => sqlite.close());
     const adapter = createSQLiteBotDatabase(sqlite);
     // The bot's database wrapper as it reports itself when running on SQLite.
     const client = { db: { db: adapter, isAvailable: () => true, getStatus: () => ({ connectionType: 'sqlite', isDegraded: false }) } };
-    const app = { id: appId, guildId: g, userId: u, status: 'pending' };
-    sqlite.transaction((tx) => {
-        tx.botSet(appKey, app);
-        tx.botSet(userKey, [appId]);
-        tx.botSet(roleKey, [{ name: 'role' }]);
-    });
 
-    const calls = [
-        () => readConfig(client, g),
-        () => readAll(client, g),
-        () => readApplication(client, g, appId),
-        () => changeConfig(client, g, (draft) => { draft.settings.enabled = true; }),
-        () => createApplication(client, { guildId: g, userId: u, roleId: u, answers: [] }),
-        () => decideApplication(client, { guildId: g, id: appId, action: 'approve', reviewerId: u }),
-        () => noteApplication(client, g, appId, { roleGranted: true }),
-        () => purgeExpired(client, g),
-        () => deleteApplicationsOf(client, g, u),
-    ];
-    for (const [index, call] of calls.entries()) await assert.rejects(call(), { code: 'APP_UNAVAILABLE' }, `call ${index}`);
-    assert.deepEqual(sqlite.botGet(appKey), app);
-    assert.deepEqual(sqlite.botGet(userKey), [appId]);
-    assert.deepEqual(sqlite.botGet(roleKey), [{ name: 'role' }]);
+    const empty = await readConfig(client, g);
+    assert.equal(empty.settings.enabled, false);
+    assert.deepEqual(empty.forms, []);
+    assert.deepEqual((await readAll(client, g)).applications, []);
+    assert.equal(await readApplication(client, g, appId), null);
 
-    // No database at all is the same answer.
-    for (const broken of [{}, { db: null }, { db: { getStatus: () => ({ connectionType: 'postgresql', isDegraded: true }) } }]) {
+    const changed = await changeConfig(client, g, (draft) => { draft.settings.enabled = true; });
+    assert.equal(changed.settings.enabled, true);
+    assert.equal((await readConfig(client, g)).settings.enabled, true, 'the change is stored');
+    assert.equal(sqlite.botGet(`guild:${g}:applications:settings`).enabled, true, 'in the row of the feature');
+    assert.equal(await purgeExpired(client, g), 0);
+    assert.equal(typeof createApplication, 'function');
+    assert.equal(typeof decideApplication, 'function');
+    assert.equal(typeof noteApplication, 'function');
+    assert.equal(typeof deleteApplicationsOf, 'function');
+
+    // No usable database is an error, never "nothing configured".
+    for (const broken of [{}, { db: null }, { db: { getStatus: () => ({ connectionType: 'postgresql', isDegraded: true }) } },
+        { db: { db: adapter, isAvailable: () => true, getStatus: () => ({ connectionType: 'sqlite', isDegraded: true }) } }]) {
         await assert.rejects(readConfig(broken, g), { code: 'APP_UNAVAILABLE' });
+        await assert.rejects(changeConfig(broken, g, (draft) => { draft.settings.enabled = false; }), { code: 'APP_UNAVAILABLE' });
     }
+    assert.equal(sqlite.botGet(`guild:${g}:applications:settings`).enabled, true);
 });
 
-test('generic application keys cannot bypass guards, including nested role and malformed legacy keys', async (t) => {
+test('generic application keys cannot be written, including nested role and malformed legacy keys', async (t) => {
     const sqlite = await openSQLiteStore();
     t.after(() => sqlite.close());
     const adapter = createSQLiteBotDatabase(sqlite);
     for (const key of [appKey, userKey, roleKey, `guild:${g}:applications:settings`, `guild:${g}:applications:role:${u}:settings`, `guild:${g}:applications:unexpected:shape`]) {
-        await assert.rejects(adapter.get(key), { code: 'APPLICATION_READ_DISABLED' });
-        await assert.rejects(adapter.exists(key), { code: 'APPLICATION_READ_DISABLED' });
+        assert.equal(await adapter.get(key), null, 'reading stays possible');
+        assert.equal(await adapter.exists(key), false);
         await assert.rejects(adapter.set(key, {}), { code: 'APPLICATION_WRITE_DISABLED' });
         await assert.rejects(adapter.delete(key), { code: 'APPLICATION_WRITE_DISABLED' });
         await assert.rejects(adapter.increment(key), { code: 'APPLICATION_WRITE_DISABLED' });

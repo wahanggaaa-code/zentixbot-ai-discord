@@ -17,8 +17,6 @@ import { logTicketEvent } from '../utils/ticket/ticketLogging.js';
 import { createError, ErrorTypes } from '../utils/errorHandler.js';
 import { ensureTypedServiceError, wrapServiceBoundary } from '../utils/serviceErrorBoundary.js';
 import { PRIORITY_MAP } from '../utils/helpers.js';
-import {db as ticketDb} from '../utils/database/wrapper.js';
-import {isSQLiteTicketBackend} from './storage/sqliteTickets.js';
 const TICKET_DELETE_DELAY_MS = 3000;
 const TICKET_DELETE_DELAY_SECONDS = Math.floor(TICKET_DELETE_DELAY_MS / 1000);
 const TICKET_SERVICE = 'ticketService';
@@ -181,7 +179,6 @@ export const getUserTicketCount = wrapServiceBoundary(async function getUserTick
 
 export async function createTicket(guild, member, categoryId, reason = 'No reason provided', priority = 'none') {
   try {
-    if (isSQLiteTicketBackend(ticketDb) || guild?.client?.db?.db?.sqlite?.dialect==='sqlite') ticketUserError('SQLite ticket creation unavailable','Ticket creation is temporarily unavailable. No channel was created.',ErrorTypes.DATABASE);
     // One creation at a time per user: the limit check and the new record must not interleave.
     return await runInTurn(`${guild.id}:${member.id}`, () => createTicketInTurn(guild, member, categoryId, reason, priority));
   } catch (error) {
@@ -864,7 +861,6 @@ const pendingDeletions = new Set();
 
 export async function deleteTicket(channel, deleter, { delayMs = TICKET_DELETE_DELAY_MS } = {}) {
   try {
-    if (isSQLiteTicketBackend(ticketDb) || channel?.client?.db?.db?.sqlite?.dialect==='sqlite') ticketUserError('SQLite ticket deletion unavailable','Ticket deletion is temporarily unavailable. No channel was deleted.',ErrorTypes.DATABASE);
     const ticketData = requireTicket(await getTicketData(channel.guild.id, channel.id), channel);
 
     if (pendingDeletions.has(channel.id)) {

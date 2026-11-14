@@ -4,7 +4,7 @@ import { PermissionsBitField } from 'discord.js';
 import {
     createCommunityFixture, guildId, memberId, missingPermissions, serverError, unknownMember,
 } from './helpers/community-fixture.js';
-import { pgEnabled } from './helpers/leveling-postgres-fixture.js';
+import { pgEnabled, assertCommitFailureSaid } from './helpers/leveling-postgres-fixture.js';
 import applyCommand from '../src/commands/Community/apply.js';
 import appAdminCommand from '../src/commands/Community/app-admin.js';
 import guildMemberRemove from '../src/events/guildMemberRemove.js';
@@ -299,7 +299,7 @@ test('a submission that could not be stored says so and leaves nothing behind', 
 
     fx.control.failQuery = (sql) => /COMMIT/.test(sql);
     const unsure = await fx.run(fx.form(open.modalId(), { q0: 'Because.' }, { member: fx.alice, fromMessage: false }));
-    assert.match(unsure.said(), /did not confirm the change\. It may or may not have been saved; please check before trying again\./);
+    assertCommitFailureSaid(unsure.said(), /did not confirm the change\. It may or may not have been saved; please check before trying again\./, STORAGE);
 
     fx.control.failQuery = null;
     assert.equal((await fx.applications()).length, 0);
@@ -652,7 +652,7 @@ test('a decision that could not be stored gives no role, sends no message and le
     assert.match(failed.said(), STORAGE);
     fx.control.failQuery = (sql) => /COMMIT/.test(sql);
     const unsure = await fx.run(fx.form(asked.modalId(), { review_reason: '' }, { member: fx.manager }));
-    assert.match(unsure.said(), /did not confirm the change/);
+    assertCommitFailureSaid(unsure.said(), /did not confirm the change/, STORAGE);
     fx.control.failQuery = null;
 
     assert.equal((await fx.applications())[0].status, 'pending');

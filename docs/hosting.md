@@ -13,11 +13,31 @@ Itu pengamatan dari kiriman pemilik, bukan pengujian yang dijalankan di sini. Pe
 
 ## Yang dibutuhkan bot
 
-- Node.js 20.10 ke atas. Regresi penuh dijalankan pada Node 22, jadi pilih image Node 22 bila tersedia.
+- Node.js 22.13 ke atas (image Node 22). Itu syarat database bawaan, SQLite. Node 20.10 ke atas hanya cukup bila memakai PostgreSQL.
 - Berkas utama `index.js` (atau perintah `npm start`).
-- Database PostgreSQL dari luar panel. Tanpa database bot berhenti saat startup; SQLite belum dapat dipilih.
+- Database: tidak perlu disiapkan. Bot membuat berkas SQLite `data/zentix.db` di folder bot. PostgreSQL dari luar panel bersifat pilihan; lihat "Database" di bawah.
 - Dua intent khusus dinyalakan di Discord Developer Portal: Server Members dan Message Content.
 - Disk sekitar 175 MB setelah `npm ci`.
+
+## Database
+
+Tanpa pengaturan apa pun bot memakai SQLite: satu berkas, `data/zentix.db`, di folder tempat bot dijalankan. Folder dan berkasnya dibuat saat startup pertama. Log startup menyebut lokasinya:
+
+```text
+START  Database: SQLite, data is kept in the file /home/container/data/zentix.db (back this file up; set POSTGRES_URL to use PostgreSQL instead)
+```
+
+Hal yang perlu diperhatikan di hosting:
+
+- **Folder `data/` harus bertahan saat restart.** Di panel Pterodactyl, berkas di `/home/container` biasanya bertahan. Di layanan yang membuat ulang container setiap deploy, folder itu hilang kecuali diletakkan di volume persisten; arahkan `DATABASE_PATH` ke volume itu, atau pakai PostgreSQL. Ini belum diuji di hosting sungguhan.
+- **Cadangan:** hentikan bot, lalu salin seluruh folder `data/` (berkas `zentix.db` beserta `zentix.db-wal` dan `zentix.db-shm` bila ada). Menyalin hanya `zentix.db` saat bot menyala dapat menghasilkan salinan yang tidak lengkap.
+- **Mengunggah ulang kode:** jangan menimpa atau menghapus folder `data/`. Folder itu tidak ikut di Git.
+- **Pindah ke PostgreSQL atau sebaliknya:** data tidak disalin. Database yang baru mulai kosong.
+- **PostgreSQL diatur tetapi mati:** bot berhenti dengan `POSTGRES_UNAVAILABLE`. Ia tidak beralih ke SQLite, supaya tidak berjalan dengan data kosong tanpa disadari.
+- **Dua pengaturan sekaligus** (`DATABASE_PATH` dan `POSTGRES_URL`): bot berhenti dan meminta `DATABASE_ENGINE`.
+- **Node lebih lama dari 22.13:** bot berhenti dengan pesan bahwa SQLite memerlukan Node.js yang lebih baru. Ganti image ke Node 22, atau isi `POSTGRES_URL`.
+- `ExperimentalWarning: SQLite is an experimental feature` di log berasal dari Node.js dan bukan galat.
+- `/ready` menjawab 200 bila berkas database dapat dipakai, dan 503 bila tidak.
 
 ## Variabel lingkungan
 
@@ -29,7 +49,14 @@ Wajib:
 | `CLIENT_ID` | Application ID |
 | `GUILD_ID` | ID satu server yang dilayani bot |
 | `NODE_ENV` | `production` |
-| `POSTGRES_URL` | Alamat database, misalnya `postgresql://user:password@host/namadb?sslmode=require` |
+
+Database (pilihan; tanpa satu pun dari ini bot memakai SQLite di `data/zentix.db`):
+
+| Variabel | Isi |
+| --- | --- |
+| `DATABASE_PATH` | Lokasi berkas SQLite bila bukan `data/zentix.db`, misalnya `/home/container/data/zentix.db` |
+| `POSTGRES_URL` | Alamat PostgreSQL, misalnya `postgresql://user:password@host/namadb?sslmode=require`. Bila diisi, bot hanya memakai PostgreSQL |
+| `DATABASE_ENGINE` | `sqlite` atau `postgresql`. Hanya perlu bila pengaturan SQLite dan PostgreSQL sama-sama terisi |
 
 Disarankan:
 

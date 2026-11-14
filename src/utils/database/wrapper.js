@@ -1,6 +1,9 @@
 import { pgDb } from '../postgresDatabase.js';
 import { logger } from '../logger.js';
 import { validateGuildConfigOrThrow } from '../schemas.js';
+import { chooseDatabase } from '../../config/database/engine.js';
+import { openSQLiteStore } from '../../services/storage/sqlite.js';
+import { createSQLiteBotDatabase } from '../../services/storage/sqliteBotDatabase.js';
 
 class DatabaseWrapper {
     constructor() {
@@ -17,13 +20,12 @@ class DatabaseWrapper {
             return;
         }
 
-        // Never interpret a SQLite deployment request as permission to fall back to RAM.
-        // SQLite integration is still incomplete, so abort before connecting to anything.
-        const sqliteRequested = ['DATABASE_ENGINE','DATABASE_DRIVER','DB_TYPE'].some(key => process.env[key]?.trim().toLowerCase() === 'sqlite') || /^(sqlite|file):/i.test((process.env.DATABASE_URL || '').trim()) || Boolean(process.env.DATABASE_PATH?.trim());
-        if (sqliteRequested) {
-            const error = new Error('SQLite deployment is not yet supported; startup aborted without fallback.');
-            error.code = 'SQLITE_INCOMPLETE';
-            throw error;
+        // The environment alone decides the database. There is no switch from one to the
+        // other when the chosen one fails, and no keeping data in memory instead.
+        const choice = chooseDatabase(process.env);
+        if (choice.engine === 'sqlite') {
+            await this.initializeSQLite(choice);
+            return;
         }
 
         let connected = false;
@@ -54,6 +56,25 @@ class DatabaseWrapper {
         this.degradedReason = null;
         this.initialized = true;
         logger.debug('PostgreSQL Database initialized - using persistent database');
+    }
+
+    async initializeSQLite(choice) {
+        let store;
+        try {
+            store = await openSQLiteStore({ path: choice.path });
+        } catch (error) {
+            if (error?.code === 'SQLITE_RUNTIME') {
+                throw Object.assign(new Error(`SQLite needs Node.js 22.13 or newer (22.16 or newer for backups); this is ${process.version}. Update Node.js, or set POSTGRES_URL to use PostgreSQL.`), { code: 'SQLITE_RUNTIME' });
+            }
+            throw Object.assign(new Error(`SQLite database file cannot be opened: ${choice.path}. Startup aborted; no in-memory fallback is used.`), { code: error?.code?.startsWith?.('SQLITE_') ? error.code : 'SQLITE_UNAVAILABLE', cause: error });
+        }
+        this.db = createSQLiteBotDatabase(store);
+        this.useFallback = false;
+        this.connectionType = 'sqlite';
+        this.degradedReason = null;
+        this.databasePath = store.file;
+        this.initialized = true;
+        logger.debug(`SQLite database initialized at ${store.file} (${choice.reason})`);
     }
 
     async set(key, value, ttl = null) {
@@ -136,6 +157,7 @@ class DatabaseWrapper {
             isDegraded: this.useFallback,
             isAvailable: this.isAvailable(),
             degradedReason: this.degradedReason,
+            ...(this.connectionType === 'sqlite' ? { path: this.databasePath ?? null } : {}),
         };
     }
 
@@ -148,7 +170,7 @@ export const db = new DatabaseWrapper();
 
 export async function initializeDatabase() {
     try {
-        logger.debug('Initializing persistent database (PostgreSQL)...');
+        logger.debug('Initializing persistent database...');
         await db.initialize();
         logger.debug('Database initialized');
         return { db };

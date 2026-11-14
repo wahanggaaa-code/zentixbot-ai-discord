@@ -5,7 +5,7 @@ import express from 'express';
 import { JSDOM } from 'jsdom';
 import { ChannelType } from 'discord.js';
 import { createCountingFixture, GAME_KEY, guildId, memberId } from './helpers/counting-fixture.js';
-import { pgEnabled } from './helpers/leveling-postgres-fixture.js';
+import { pgEnabled, onSQLite } from './helpers/leveling-postgres-fixture.js';
 import { createCountingApi } from '../src/dashboard/countingApi.js';
 import { MAX_START } from '../src/services/countingGame/manage.js';
 import messageCreate from '../src/events/messageCreate.js';
@@ -191,7 +191,8 @@ test('API: bot not ready, database failure and an unreadable stored value change
     }
     fx.control.failQuery = (sql) => sql === 'COMMIT';
     const unsure = await writes()[2];
-    assert.deepEqual([unsure.status, unsure.body], [503, { error: 'Database tidak mengonfirmasi perubahan. Muat ulang untuk melihat keadaan terbaru sebelum mencoba lagi.' }]);
+    // A failed COMMIT is an unknown outcome on PostgreSQL and a rollback on SQLite.
+    assert.deepEqual([unsure.status, unsure.body], [503, { error: onSQLite ? 'Database tidak dapat dihubungi. Tidak ada yang diubah.' : 'Database tidak mengonfirmasi perubahan. Muat ulang untuk melihat keadaan terbaru sebelum mencoba lagi.' }]);
     fx.control.failQuery = null;
     assert.deepEqual(await fx.stored(), seeded);
 
