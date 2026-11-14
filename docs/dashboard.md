@@ -14,7 +14,7 @@ Inventaris kode per perubahan dashboard ini, bukan sertifikasi produksi. **Live*
 | Music | Player, antrean, pencarian dan kontrol yang didukung | Memerlukan Lavalink dan Discord; perilaku langsung dan resource hosting belum diuji. |
 | Logging | Pengaturan dan riwayat terbatas dari channel audit | Bukan riwayat lengkap semua event; bergantung pada izin dan pesan yang tersedia. |
 | Birthday | Channel pengumuman serta lihat, tambah, ubah, atau hapus tanggal pada PostgreSQL; perubahan dicatat ke channel audit bila logging aktif | Penulis lama tidak atomik dan perlu dihentikan saat upgrade. Scheduler dan Discord perlu diuji langsung; catatan audit bersifat best-effort. |
-| AI Studio | Jalur untuk welcome/goodbye AI, Activities, chat, pengetahuan, tools, gambar, builder dan fondasi provider. Semua khusus owner bot; akun lain diberi label | Beberapa fungsi memerlukan provider/biaya/izin dan konfirmasi. Tidak ada opsi simulasi di dashboard login (lihat "Audit simulasi"). Lihat [`docs/tahap-8.md`](tahap-8.md); label live tidak membuktikan provider sehat. |
+| AI Studio | Sembilan ruang: welcome/goodbye AI, Activities, chat (termasuk AI interaktif), pengetahuan, tools, gambar, builder, fondasi provider dan Fitur pintar (FAQ & cache, menu pesan, koran pagi, sapaan multibahasa, terjemahan otomatis, laporan pemakaian). Semua khusus owner bot; akun lain diberi label | Beberapa fungsi memerlukan provider/biaya/izin dan konfirmasi. Tidak ada opsi simulasi di dashboard login (lihat "Audit simulasi"). Lihat [`docs/tahap-8.md`](tahap-8.md); label live tidak membuktikan provider sehat. |
 | Pengaturan utama | Pusat kendali baca-saja: kondisi server dan izin bot di Discord, penyimpanan, dasar akses sesi, status konfigurasi hosting, pintasan ke halaman fitur | Tidak menyimpan atau mengubah apa pun. Izin yang ditampilkan adalah izin tingkat server. Lihat bagian "Pengaturan utama" di bawah. |
 | Core | Akses perintah dan kategori dari registry bot; baca dan ubah pada PostgreSQL | Tidak mengelola data atau konfigurasi setiap fitur; lihat [`docs/core-dashboard.md`](core-dashboard.md). |
 | Giveaway | Daftar PostgreSQL; buat, akhiri, undi ulang, hapus; perbaikan pengiriman yang tertunda (tandai terkirim atau kirim ulang) | Discord dan database bukan satu transaksi; setiap aksi bisa terhenti di tengah dan perlu dilanjutkan manual. Belum diuji di Discord nyata. `/gcreate` belum memakai pembersihan pesan yatim. |
@@ -245,6 +245,31 @@ Yang dilaporkan: tombol di halaman ini tidak rapi di HP. Sebabnya, tiap tombol d
 Sekarang setiap kelompok tombol berada di satu baris `.b-actions` (jarak 10px; pada layar ≤ 650px setiap tombol selebar panel dan bertumpuk), kotak centang izin tersusun dua kolom (satu kolom pada ≤ 360px), JSON berada di dalam bagian terlipat, dan keterangan status berada di bawah tombolnya. Aturan baru hanya berlaku untuk kelas `b-*` dan formulir `.b-form` di halaman ini; halaman lain tidak berubah.
 
 Diukur dengan Chromium 153 headless pada lima keadaan halaman (rancangan kosong, rancangan tampil, sudah diterapkan, riwayat dengan tinjauan bongkar, ubah objek): halaman tidak lebih lebar dari layar (0px) pada 280, 320, 360, 412 dan 1280px. Pada 320px ke atas ketiga tab muat tanpa digeser; pada 280px baris tab digeser di dalam kotaknya sendiri seperti di halaman lain. Mesin uji tidak mempunyai huruf emoji dan bukan Brave di Android; tampilan di HP sungguhan belum dilihat.
+
+## AI Studio — Fitur pintar
+
+Arti tiap fitur dan batasnya dijelaskan di [`docs/tahap-8.md`](tahap-8.md#fitur-pintar-14-november-2026). Bagian ini hanya tentang halamannya. Semua khusus owner bot.
+
+Ruang kesembilan, `#ai/smart`, dengan enam tab. Setiap formulir menyimpan bagiannya sendiri; formulir lain di ruang ini tidak ikut berubah.
+
+| Tab | Formulir | Saklar | Pilihan channel |
+|---|---|---|---|
+| **FAQ & cache** | FAQ (saklar dan channel), "Tambah entri", "Cache jawaban"; tombol Hapus per entri | Aktifkan FAQ · Jawab otomatis tanpa dipanggil · Aktifkan cache jawaban | Beberapa, paling banyak 10 |
+| **Menu pesan** | Satu | Satu per entri menu (empat), ditambah bahasa terjemahan | Tidak ada (menu berlaku di seluruh server) |
+| **Koran pagi** | Satu, dengan tombol "Kirim tes sekarang" | Aktifkan koran pagi · Berita · Fakta hari ini | Beberapa, paling banyak 10 |
+| **Sapaan multibahasa** | Satu | Sapaan dari berbagai bahasa · Lama bergabung pada pesan perpisahan | Tidak ada (mengikuti channel AI Welcome / Goodbye) |
+| **Terjemahan otomatis** | Satu | Aktifkan terjemahan otomatis | Beberapa, paling banyak 10 |
+| **Laporan pemakaian** | Saklar, lalu laporan 7 / 14 / 30 hari | Catat pemakaian AI | Tidak ada |
+
+- Menambah atau menghapus entri FAQ langsung tersimpan; tidak ada tombol simpan terpisah untuk daftar itu.
+- Fitur yang dinyalakan tanpa channel ditolak server dengan alasannya, dan tidak ada yang tersimpan.
+- Tab "AI interaktif" di ruang **Agent & chat** mendapat delapan kontrol baru (enam saklar, nama panggilan, lama obrolan lanjutan).
+- Nama channel, nama anggota dan isi FAQ ditampilkan sebagai teks biasa, tidak pernah sebagai HTML.
+- Pada layar HP, deretan tab bergeser sendiri sehingga tab yang sedang dibuka terlihat (berlaku untuk semua ruang AI Studio), dan di laporan nama fitur serta ID anggota mendapat baris sendiri supaya tidak terpotong.
+
+Alamat API (di bawah `/dashboard/api/ai`, semuanya khusus owner; PATCH dan POST memerlukan token CSRF dan isi dengan kunci yang persis): GET `smart`, `smart/usage?days=1..30`; PATCH `smart/faq`, `smart/cache`, `smart/usage`, `smart/menu`, `smart/digest`, `smart/greeting`, `smart/translate`; POST `smart/digest/test` dengan `{"confirmed":true}`. Jawaban PATCH `smart/menu` memuat `menuSync`: `true` bila perintah menu didaftarkan ulang ke Discord, `false` bila gagal (pengaturan tetap tersimpan), `null` bila tidak ada yang perlu didaftarkan.
+
+Diukur dengan Chromium 153 headless terhadap API sungguhan dengan penyimpanan di memori dan Discord tiruan, pada 280, 320, 360, 390, 768 dan 1280 px: keenam tab, laporan 30 hari dan tab "AI interaktif" tidak lebih lebar dari layar (0 px), tanpa galat skrip. Belum dilihat di browser HP nyata.
 
 ## Audit simulasi — halaman fitur dan AI Studio
 

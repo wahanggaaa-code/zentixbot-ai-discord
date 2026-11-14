@@ -275,7 +275,7 @@ export function createBuilder({ client, foundation = client.aiFoundation, now = 
 
             let plan = null, reason = null;
             try {
-                const output = await foundation.generate({ guildId, userId, consent: true, prompt: buildPrompt(description, planSizeFor(maxOutputTokens), community) });
+                const output = await foundation.generate({ guildId, userId, consent: true,kind:'builder', prompt: buildPrompt(description, planSizeFor(maxOutputTokens), community) });
                 try {
                     plan = validatePlan(parsePlanText(output.text));
                 } catch {

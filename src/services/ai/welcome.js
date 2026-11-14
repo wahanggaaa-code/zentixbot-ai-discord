@@ -36,10 +36,12 @@ export function safeGeneratedTemplate(text){
  return s;
 }
 export async function generateWelcomeTemplate({foundation,guildId,actorId,cfg,kind='welcome'}){
- try{if(!foundation)throw Error('unavailable');const result=await foundation.generate({guildId,userId:actorId,consent:true,prompt:welcomePrompt(cfg,kind)});const template=safeGeneratedTemplate(result.text);if(!template)throw Error('invalid');return {template,source:'ai'};}catch{return {template:cfg.fallback,source:'fallback'};}
+ try{if(!foundation)throw Error('unavailable');const result=await foundation.generate({guildId,userId:actorId,consent:true,prompt:welcomePrompt(cfg,kind),kind:'welcome'});const template=safeGeneratedTemplate(result.text);if(!template)throw Error('invalid');return {template,source:'ai'};}catch{return {template:cfg.fallback,source:'fallback'};}
 }
 // The returned text is rendered locally, after generation, without passing Discord names to AI.
 export function renderAIWelcome(template,member){return formatWelcomeMessage(template,{member,user:member.user,guild:member.guild}).slice(0,1900);}
+// Greeting word in another language and time spent in the server: added by the bot, switched on in AI Studio → Fitur pintar.
+async function withExtras(content,member,kind){try{return (await member.client.aiSmart?.decorateGreeting?.(content,member,kind))??content}catch{return content}}
 export async function deliverJoinWelcome(member,legacyConfig,{store,foundation}={}){
  const guild=member.guild, client=member.client;
  if(!guild||!client||guild.id!==client.homeGuildId)return {source:'blocked'};
@@ -55,7 +57,7 @@ export async function deliverJoinWelcome(member,legacyConfig,{store,foundation}=
  const canChannel=Boolean(perms?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages]));
  if(!canChannel&&!cfg.toDm)return {source:'unavailable'};
  const generated=await generateWelcomeTemplate({foundation:foundation||client.aiFoundation,guildId:guild.id,actorId:client.user?.id,cfg});
- const content=renderAIWelcome(generated.template,member);const payload={content,allowedMentions:{parse:[]}};
+ const content=await withExtras(renderAIWelcome(generated.template,member),member,'welcome');const payload={content,allowedMentions:{parse:[]}};
  const sends=[];if(canChannel)sends.push(Promise.resolve().then(()=>channel.send(payload)));if(cfg.toDm)sends.push(Promise.resolve().then(()=>member.send(payload)));
  const results=await Promise.allSettled(sends);return {source:generated.source,sent:results.filter(r=>r.status==='fulfilled').length,failed:results.filter(r=>r.status==='rejected').length+(cfg.toChannel&&!canChannel?1:0)};
 }
@@ -67,5 +69,5 @@ export async function deliverLeaveGoodbye(member,legacy,{store,foundation}={}){
  const channel=guild.channels.cache.get(cfg.channelId),me=guild.members.me,perms=channel?.type===ChannelType.GuildText&&me?channel.permissionsFor(me):null;
  if(!perms?.has([PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages]))return {source:'unavailable'};
  const generated=await generateWelcomeTemplate({foundation:foundation||client.aiFoundation,guildId:guild.id,actorId:client.user?.id,cfg,kind:'goodbye'});
- await channel.send({content:renderAIWelcome(generated.template,member),allowedMentions:{parse:[]}});return {source:generated.source};
+ await channel.send({content:await withExtras(renderAIWelcome(generated.template,member),member,'goodbye'),allowedMentions:{parse:[]}});return {source:generated.source};
 }

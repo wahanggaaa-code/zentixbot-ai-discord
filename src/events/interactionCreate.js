@@ -167,6 +167,10 @@ export default {
               subtype: COMMAND_ERROR_SUBTYPES[interaction.commandName] || error?.context?.subtype,
             }, interactionTraceContext));
           }
+        } else if (interaction.isMessageContextMenuCommand?.()) {
+          // "Terjemahkan", "Jelaskan pesan ini", "Cek fakta", "Rangkum dari pesan ini": see services/ai/menus.js.
+          const handled = await client.aiSmart?.menus?.handle(interaction);
+          if (!handled) logger.warn(`No handler for message menu: ${interaction.commandName}`);
         } else if (interaction.isAutocomplete()) {
           const autocompleteCommand = client.commands.get(interaction.commandName);
           if (autocompleteCommand?.autocomplete) {

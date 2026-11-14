@@ -196,7 +196,7 @@ async function listTabs(page) {
 test('live dashboard: every tab loads from the bot, without mock forms or script errors', async (t) => {
     const page = await openDashboard(t);
     const tabs = await listTabs(page);
-    assert.equal(tabs.length, 21 + 15 + 1);
+    assert.equal(tabs.length, 21 + 21 + 1);
     let seenReportChannel = 0;
 
     for (const { hash, attr, tab, where } of tabs) {
@@ -308,8 +308,8 @@ test('live dashboard: every control of every form changes the request that is se
     }
 
     assert.deepEqual(unsent.sort(), Object.keys(NEEDS_PRECONDITION).sort());
-    assert.equal(formCount, 37, 'forms on the live dashboard');
-    assert.equal(checked, 235, 'controls on the live dashboard');
+    assert.equal(formCount, 45, 'forms on the live dashboard');
+    assert.equal(checked, 272, 'controls on the live dashboard');
     assert.deepEqual(state.errors, []);
     const applications = await (await w.fetch('/dashboard/api/bot/applications')).json();
     assert.equal(applications.forms.length, 2, 'no application form was created along the way');

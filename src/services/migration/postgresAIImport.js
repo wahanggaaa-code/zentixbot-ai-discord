@@ -6,9 +6,11 @@ const validId=x=>typeof x==='string'&&/^\d{17,20}$/.test(x);
 function quote(v){if(typeof v!=='string'||!v||v.includes('\0')||Buffer.byteLength(v)>63)throw fail('Invalid schema');return `"${v.replaceAll('"','""')}"`}
 function count(v){if(typeof v!=='string'||!/^\d+$/.test(v))throw fail('Invalid count');return BigInt(v)}
 function allowedKey(key,g){
- const singles=['ai:foundation:config:','ai:foundation:usage:g:','ai:welcome:settings:','ai:goodbye:settings:','ai:chat:settings:','ai:chat:proactive:','ai:interactive:settings:','ai:builder:history:','ai:activity:settings:','ai:activity:round:','ai:activity:schedule:','ai:knowledge:docs:'];
+ const singles=['ai:foundation:config:','ai:foundation:usage:g:','ai:welcome:settings:','ai:goodbye:settings:','ai:chat:settings:','ai:chat:proactive:','ai:interactive:settings:','ai:builder:history:','ai:smart:settings:','ai:digest:sent:','ai:activity:settings:','ai:activity:round:','ai:activity:schedule:','ai:knowledge:docs:'];
  if(singles.some(prefix=>key===prefix+g))return true;
  for(const prefix of [`ai:foundation:usage:u:${g}:`,`ai:activity:points:${g}:`])if(key.startsWith(prefix)&&validId(key.slice(prefix.length)))return true;
+ // The usage report keeps one record per UTC day.
+ if(key.startsWith(`ai:usage:day:${g}:`)&&/^\d{4}-\d{2}-\d{2}$/.test(key.slice(`ai:usage:day:${g}:`.length)))return true;
  return false;
 }
 export async function importPostgresAIDataSnapshot(conn,sqlite,guildId){

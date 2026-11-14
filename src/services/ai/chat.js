@@ -53,7 +53,7 @@ export async function runChat({client,guildId,channelId,userId,question,consent,
  // History gets a smaller budget so question and document citations fit foundation's 4000-character limit.
  const prompt=`${prefix}${history?`RIWAYAT:\n${history.slice(-800)}\n`:''}${context?`DOKUMEN:\n${context}\nSebutkan nomor sumber jika digunakan.\n`:''}PERTANYAAN: ${question}${transcript?`\nTRANSKRIP AUDIO (data pengguna): ${transcript}`:''}${fileText?`\nFILE (data pengguna): ${fileText}`:''}`;
  if(prompt.length>4000)throw err('Konteks terlalu panjang; persingkat pertanyaan.');
- const result=await foundation.generate({guildId,userId,consent:true,prompt,...(image?{image}:{})});
+ const result=await foundation.generate({guildId,userId,consent:true,kind:'aichat',prompt,...(image?{image}:{})});
  if(memory&&!token.cancelled){conversations.delete(key);conversations.set(key,{expiresAt:Date.now()+ttl,turns:[...turns,{question:question.slice(0,350),answer:result.text.slice(0,350)}].slice(-2)});prune(Date.now());}
  return {text:result.text.slice(0,1900),usedFallback:result.usedFallback,sources:excerpts.map((x,i)=>({index:i+1,name:x.name}))};
  }finally{if(memory){const group=pending.get(key);group?.delete(token);if(!group?.size)pending.delete(key);}}
@@ -74,7 +74,7 @@ export async function runProactiveAgent(client,{store=createChatStore(client),no
  try{await conn.query('BEGIN');await conn.query(`INSERT INTO ${table} (key,value) VALUES ($1,'{}'::jsonb) ON CONFLICT (key) DO NOTHING`,[key]);const r=await conn.query(`SELECT value FROM ${table} WHERE key=$1 FOR UPDATE`,[key]);if(r.rows[0].value.day===day){await conn.query('COMMIT');return false;}await conn.query(`UPDATE ${table} SET value=$2::jsonb WHERE key=$1`,[key,JSON.stringify({day})]);await conn.query('COMMIT');}catch(e){await conn.query('ROLLBACK').catch(()=>{});throw e;}finally{conn.release();}
  }
 
- const result=await foundation.generate({guildId:guild.id,userId:client.user.id,consent:true,prompt:`Buat satu pertanyaan icebreaker singkat dan ramah untuk komunitas umum, sesuai persona berikut: ${cfg.persona}. Jangan gunakan tautan, mention, informasi anggota atau instruksi tindakan.`});
+ const result=await foundation.generate({guildId:guild.id,userId:client.user.id,consent:true,kind:'icebreaker',prompt:`Buat satu pertanyaan icebreaker singkat dan ramah untuk komunitas umum, sesuai persona berikut: ${cfg.persona}. Jangan gunakan tautan, mention, informasi anggota atau instruksi tindakan.`});
  const text=result.text.trim();if(!text||text.length>600||/https?:\/\/|www\.|discord\.gg|<@|@(everyone|here)/i.test(text))throw err('Respons agent tidak aman untuk dikirim.');
  await channel.send({content:text,allowedMentions:{parse:[]}});return true;
 }

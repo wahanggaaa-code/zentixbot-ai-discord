@@ -75,7 +75,8 @@ export function createAIFoundation({client,store=createAIStore(client),env=proce
  return {
   store,
   credentials(){return Object.fromEntries(Object.entries(PROVIDERS).map(([id,p])=>[id,Boolean(env[p.key]?.trim())]));},
-  async generate({guildId,userId,prompt,consent,image=null}){
+  // `kind` only labels the request for the usage report; it does not reach the provider.
+  async generate({guildId,userId,prompt,consent,image=null,kind='other'}){
    if(!snowflake.test(guildId||'')||guildId!==client?.homeGuildId||!snowflake.test(userId||''))throw error('FORBIDDEN','Identitas server atau anggota tidak valid.',403);
    if(consent!==true)throw error('CONSENT_REQUIRED','Persetujuan pemrosesan data diperlukan.',403);
    if(typeof prompt!=='string'||!prompt.trim()||prompt.length>4000)throw error('INVALID_INPUT','Input harus 1–4000 karakter.');
@@ -94,6 +95,7 @@ export function createAIFoundation({client,store=createAIStore(client),env=proce
       const data=await boundedJSON(response);const choice=data?.choices?.[0];
       if(choice?.finish_reason==='content_filter'||choice?.message?.refusal)throw error('FILTERED','Respons diblokir oleh kebijakan provider.',422);
       const output=choice?.message?.content;if(typeof output!=='string'||!output.trim()||output.length>32000)throw error('PROVIDER_RESPONSE','Respons provider tidak valid.',502);
+      try{Promise.resolve(client?.aiUsage?.record?.({guildId,userId,kind,tokens:Number(data?.usage?.total_tokens)||0})).catch(()=>{})}catch{}
       return {text:output,provider:id,model,usedFallback:id!==cfg.primary,usage};
      }catch(e){if(e.code==='FILTERED'||e.code==='REQUEST_REJECTED')throw e; /* no provider body, prompt or secret is logged */}
     }
