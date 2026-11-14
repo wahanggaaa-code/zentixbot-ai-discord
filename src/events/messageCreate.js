@@ -32,6 +32,10 @@ export default {
         return;
       }
 
+      // Interactive AI (mention, reply, joining in, image comments). Not awaited: writing an answer takes
+      // seconds and must not hold up commands or XP. It never throws.
+      client.aiInteractive?.handleMessage(message);
+
       await handlePrefixCommand(message, client);
 
       await handleLeveling(message, client);

@@ -9,6 +9,8 @@ import { createImageService } from './services/ai/images.js';
 import { createSearchService } from './services/ai/search.js';
 import { describeExtraProviders } from './services/ai/extraProviders.js';
 import { runProactiveAgent } from './services/ai/chat.js';
+import { createInteractive } from './services/ai/interactive.js';
+import { getCommandPrefix } from './config/bot.js';
 import { runScheduledActivity } from './services/ai/activities.js';
 import { requireHomeGuildId, isHomeGuild } from './utils/singleGuild.js';
 import cron from 'node-cron';
@@ -56,6 +58,13 @@ class ZentixBot extends Client {
     this.config = config;
     this.homeGuildId = requireHomeGuildId(process.env.GUILD_ID);
     this.aiFoundation = createAIFoundation({client:this});
+    // The prefix is looked up per message: a server can change it, and those messages are commands, not chat.
+    this.aiInteractive = createInteractive({
+      client: this,
+      prefix: async (message) => {
+        try { return (await getGuildConfig(this, message.guild.id))?.prefix || getCommandPrefix(); } catch { return getCommandPrefix(); }
+      },
+    });
     this.aiImageService = createImageService({client:this});
     this.aiAudioService = createAudioService({client:this});
     this.aiSearchService = createSearchService({client:this});
@@ -221,6 +230,7 @@ class ZentixBot extends Client {
     cron.schedule('* * * * *', runSafeTask('giveaway_check', () => checkGiveaways(this)));
     cron.schedule('* * * * *', runSafeTask('ai_activity', () => runScheduledActivity(this)));
     cron.schedule('* * * * *', runSafeTask('ai_proactive', () => runProactiveAgent(this)));
+    cron.schedule('* * * * *', runSafeTask('ai_interactive_idle', () => this.aiInteractive.runIdle()));
     cron.schedule('*/15 * * * *', runSafeTask('counter_update', () => this.updateAllCounters()));
   }
 

@@ -72,6 +72,41 @@ Provider yang tersedia ada empat: Groq, Gemini, OpenRouter dan NVIDIA NIM. Satu 
 
 Pengaturan yang disimpan sebelum 14 November 2026 (satu cadangan) tetap terbaca; cadangan 2 dan 3 dianggap kosong sampai diisi dan disimpan.
 
+## AI interaktif: bot yang ikut mengobrol di channel
+
+Sejak 14 November 2026 bot dapat menjawab pesan biasa tanpa perintah. Menyalakannya:
+
+1. **AI Studio → Provider & fallback**: AI aktif dan disetujui (sama seperti untuk `/aichat`).
+2. **AI Studio → Agent & chat → tab "AI interaktif"**: nyalakan "Aktifkan AI interaktif", centang channel chat, pilih cara yang diinginkan, lalu **Simpan**. Berlaku pada pesan berikutnya, tanpa restart.
+
+| Yang diinginkan | Saklar |
+|---|---|
+| Bot membalas saat di-mention atau pesannya di-reply | "Balas saat di-mention atau di-reply" (sudah nyala); "…di semua channel" bila tidak hanya di channel chat |
+| Bot nimbrung sendiri di tengah obrolan | "Ikut nimbrung", dengan peluang dan jedanya |
+| Bot menyapa saat channel sepi | "Menyapa saat channel sepi", dengan lama sepi, jam aktif dan batas per hari |
+| Bot mengomentari gambar di channel galeri | "Baca gambar" dan centang channel galeri |
+| Bot tahu jam | Selalu; pilih zona WIB, WITA atau WIT |
+| Bot menyapa dengan nama | "Panggil anggota dengan namanya" (sudah nyala) |
+
+Yang perlu diketahui sebelum menyalakannya:
+
+- Pesan anggota di channel yang dipilih dikirim ke provider AI tanpa persetujuan per pesan. Beri tahu anggota.
+- Setiap jawaban memakai kuota harian. Dengan "Ikut nimbrung" 20 % di channel yang ramai, kuota anggota (bawaan 20 per hari) dan kuota server (bawaan 200) cepat habis; naikkan kuota atau turunkan peluangnya. "Batas pesan bot per jam" adalah rem terakhir.
+- Gambar memerlukan model yang bisa membaca gambar pada provider utama. Model teks saja membuat komentar galeri tidak muncul.
+- Video tidak dibaca.
+- Bot memerlukan izin **View Channel**, **Send Messages** dan sebaiknya **Read Message History** di channel itu, dan **Message Content Intent** harus menyala di Discord Developer Portal (bot ini memang memintanya saat start).
+- Mematikan: matikan "Aktifkan AI interaktif" lalu simpan. Bot langsung berhenti membaca pesan untuk AI.
+
+Bila bot diam, lihat log. Contoh baris:
+
+```text
+12:00:03  WARN   AI interactive: reply skipped (AI belum diaktifkan atau belum disetujui.)
+12:00:03  WARN   AI interactive: reply skipped (Semua provider gagal atau timeout.)
+12:00:03  WARN   AI interactive: gallery skipped (Provider menolak permintaan.)
+```
+
+Tidak ada baris sama sekali berarti bot memang memutuskan diam: fitur mati, channel tidak dicentang, batas per jam tercapai, kuota anggota habis, atau bot tidak punya izin menulis. Rinciannya ada di [tahap-8.md](tahap-8.md).
+
 ## Perintah `/…` yang menjawab "that command does not exist"
 
 Bot ini mendaftarkan perintahnya hanya untuk server di `GUILD_ID`. Bila aplikasi Discord yang sama pernah dipakai program bot lain, perintah **global** program itu tetap tersimpan di Discord dan tetap ditawarkan saat mengetik `/`, tetapi bot ini tidak mengenalnya. Contoh nyata (14 November 2026): `/ai chat`, `/ai config` dan `/ai status` muncul di samping `/aichat` milik bot ini.
@@ -336,6 +371,7 @@ Contoh saat menyala (dari menjalankan bot di lingkungan uji dengan Discord tirua
 
 ## Yang belum diuji
 
+- AI interaktif terhadap Discord dan provider sungguhan. Tesnya memakai pesan Discord tiruan dan provider tiruan: yang terbukti adalah kapan bot memutuskan menjawab, apa yang dikirim ke provider, dan apa yang ditulis ke channel. Belum pernah dicoba: seperti apa jawaban model sungguhan dengan prompt ini (gaya, panjang, apakah benar terasa seperti anggota), apakah model yang dipakai pemilik bot membaca gambar, apakah proxy media Discord menerima permintaan JPEG yang diperkecil seperti yang disusun bot, dan berapa kuota yang terpakai di channel yang ramai. Tampilan tab "AI interaktif" hanya diperiksa di jsdom, bukan di peramban.
 - Rantai tiga cadangan terhadap provider sungguhan. Tesnya memakai provider tiruan: yang terbukti adalah urutan percobaan, provider mana yang dilewati, dan kapan rantai berhenti. Bahwa Gemini, OpenRouter atau NVIDIA menerima permintaan bot ini belum pernah dicoba.
 - Penghapusan perintah global terhadap Discord sungguhan. Tesnya memakai klien REST tiruan. Bahwa `/ai` di aplikasi pemilik bot memang perintah global adalah kesimpulan dari kode (bot ini menimpa daftar perintah server setiap start dan tidak punya `/ai`), belum dilihat langsung.
 - Tidak ada yang dijalankan di sini pada panel sungguhan. Yang diketahui tentang panel hanyalah kiriman pemilik bot di awal dokumen ini; batas RAM, perilaku saat restart dan pemakaian memori belum diperiksa.
