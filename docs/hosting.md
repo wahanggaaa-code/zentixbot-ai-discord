@@ -225,6 +225,22 @@ Bila halaman login menolak:
 | "Login hanya diterima dari …" | Dashboard dibuka lewat alamat yang berbeda dari `DASHBOARD_URL`. |
 | "Bot belum siap memverifikasi server." | Bot belum tersambung ke Discord; tunggu sampai log menulis ONLINE. |
 
+### Perbaikan 14 November 2026: formulir menolak, tautan diterima
+
+Sampai versi sebelumnya, mengetik token di `/dashboard/login` selalu dijawab "Login hanya diterima dari …" (atau "Permintaan tidak valid …" bila `DASHBOARD_URL` kosong), walaupun alamatnya benar. Tautan `/masuk/TOKEN` tetap bisa dipakai.
+
+Sebabnya: halaman login dikirim dengan kebijakan `Referrer-Policy: no-referrer`. Dengan kebijakan itu peramban berbasis Chromium (Chrome, Brave, Edge) mengirim formulir dengan header `Origin: null`, bukan alamat dashboard, dan server menolak karena `null` tidak sama dengan alamat dashboard. Tes yang ada mengirim alamat yang benar atau tidak mengirim `Origin` sama sekali, sehingga tidak menangkapnya.
+
+Yang berubah:
+
+- Halaman login dan halaman lain sebelum dashboard terbuka kini memakai `Referrer-Policy: same-origin`, sehingga peramban menyebut alamat dashboard saat mengirim formulir. Dashboard sendiri tetap `no-referrer`.
+- `Origin: null` pada formulir login diterima bila permintaan sampai di alamat dashboard (header `Host` sama dengan `DASHBOARD_URL` bila itu diisi), dan ditolak bila peramban menandainya sebagai permintaan dari situs lain (`Sec-Fetch-Site`; header ini hanya dikirim lewat HTTPS dan di `localhost`). Ini menolong tab login lama yang masih terbuka dan peramban yang menyembunyikan asal halaman.
+- Lewat HTTP biasa, formulir di situs lain jadi bisa mengirim token ke halaman login. Yang didapatnya tidak ada: jawabannya tidak bisa dibaca situs itu, percobaan tetap dihitung per alamat IP (30 per 15 menit), dan siapa pun yang tahu token memang bisa masuk. Perubahan di dalam dashboard (simpan, hapus, keluar) tetap menuntut `Origin` yang sama persis dengan alamat dashboard.
+
+### Tampilan halaman login
+
+Halaman login, halaman "login gagal", "login belum dikonfigurasi" dan "terlalu banyak percobaan" memakai sistem desain yang sama dengan dashboard (warna, huruf, panel bergaris tanpa sudut membulat, tombol lime). Sumbernya `src/dashboard/loginPage.js`; nilainya disalin dari `:root` pada `dashboard-preview/style.css`, dan tes gagal bila keduanya tidak lagi sama. Halaman itu satu dokumen utuh: tanpa skrip dan tanpa mengambil berkas lain, karena ditampilkan kepada orang yang belum login.
+
 ## Dashboard lewat HTTP
 
 Bagian ini tentang login lewat Discord. Bawaan: login itu hanya aktif pada alamat `https://` (atau `http://localhost` saat pengembangan). Dengan `DASHBOARD_URL=http://ip:port` saja, halaman login menjawab 503 dan menjelaskan sebabnya.
@@ -275,7 +291,7 @@ Server web membatasi jumlah permintaan per alamat IP. Ada tiga hitungan terpisah
 
 Sebelumnya hanya ada satu hitungan, 100 per 15 menit untuk semuanya. Satu kali membuka dashboard mengambil 31 berkas yang tidak di-cache, ditambah panggilan data, sehingga jatah itu habis setelah dua atau tiga kali buka dan peramban menerima `{"error":"Too many requests"}`.
 
-Permintaan yang ditolak mendapat status 429 dan header `Retry-After`. Di bawah `/dashboard` isinya kalimat berbahasa Indonesia yang menyebut berapa lama harus menunggu. Permintaan yang ditolak tidak memperpanjang waktu tunggu. Hitungan disimpan di memori dan kembali nol saat bot dimulai ulang. Angka login dan dashboard tetap di `src/utils/webRateLimit.js`; tidak ada variabel lingkungan untuk mengubahnya.
+Permintaan yang ditolak mendapat status 429 dan header `Retry-After`. Di bawah `/dashboard` isinya kalimat berbahasa Indonesia yang menyebut berapa lama harus menunggu: sebagai halaman bergaya dashboard untuk alamat yang dibuka orang, sebagai JSON untuk `/dashboard/api/…`. Permintaan yang ditolak tidak memperpanjang waktu tunggu. Hitungan disimpan di memori dan kembali nol saat bot dimulai ulang. Angka login dan dashboard tetap di `src/utils/webRateLimit.js`; tidak ada variabel lingkungan untuk mengubahnya.
 
 Hitungan memakai alamat IP yang tersambung langsung ke bot. Di belakang reverse proxy, semua pengunjung terhitung sebagai satu alamat.
 
