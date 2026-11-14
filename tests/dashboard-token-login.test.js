@@ -5,10 +5,11 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import { PermissionFlagsBits } from 'discord.js';
 import { mountDashboard } from '../src/dashboard/router.js';
-import { loginFormPage, tokenLoginStatus, tokenMatches, tokenOffMessage, TOKEN_MIN_LENGTH, TOKEN_SESSION_MS } from '../src/dashboard/tokenLogin.js';
+import http from 'node:http';
+import { linkToken, loginFormPage, tokenLoginStatus, tokenMatches, tokenOffMessage, TOKEN_MIN_LENGTH, TOKEN_SESSION_MS } from '../src/dashboard/tokenLogin.js';
 import { dashboardLoginStatus } from '../src/dashboard/origin.js';
 import { describeDashboard } from '../src/utils/startupReport.js';
-import { createWebRateLimit } from '../src/utils/webRateLimit.js';
+import { createWebRateLimit, webRateLimitBucket } from '../src/utils/webRateLimit.js';
 import { logger } from '../src/utils/logger.js';
 
 const home = '123456789012345678';
@@ -253,6 +254,138 @@ test('an https DASHBOARD_URL makes the session cookie Secure and silences the wa
     assert.equal(response.status, 303);
     assert.match(response.headers.getSetCookie().find((line) => line.startsWith('zx_session=')), /; Secure; /);
     assert.deepEqual(warnings, []);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Login by link
+// ---------------------------------------------------------------------------------------------
+
+test('the token of a login link is everything after /masuk/', () => {
+    assert.equal(linkToken('/my-token-123456'), 'my-token-123456');
+    assert.equal(linkToken('/p%40ss%2Fw%20ord%2B12345'), 'p@ss/w ord+12345');
+    assert.equal(linkToken('/part/after/slashes'), 'part/after/slashes');
+    assert.equal(linkToken('/token/'), 'token/', 'a closing slash is part of what was sent');
+    assert.equal(linkToken('/%ZZbroken'), '%ZZbroken', 'broken encoding is kept as it stands');
+    for (const none of ['/', '', undefined, null]) assert.equal(linkToken(none), null, JSON.stringify(none));
+});
+
+test('login links are counted as login attempts, in both spellings', () => {
+    for (const path of ['/masuk/abc', '/MASUK/abc', '/masuk', '/masuk/', '/dashboard/masuk/abc', '/Dashboard/Masuk/abc/def', '/dashboard/masuk']) {
+        assert.equal(webRateLimitBucket(path), 'login', path);
+    }
+    assert.equal(webRateLimitBucket('/masukan'), 'general');
+    assert.equal(webRateLimitBucket('/dashboard/masukan'), 'dashboard');
+    assert.equal(webRateLimitBucket('/x/masuk/abc'), 'general');
+});
+
+test('opening /masuk/<token> or /dashboard/masuk/<token> logs in and goes on to the dashboard', async (t) => {
+    const { req, infos, warnings } = await site(t);
+    for (const path of [`/masuk/${TOKEN}`, `/dashboard/masuk/${TOKEN}`, `/MASUK/${TOKEN}`]) {
+        const response = await req(path);
+        assert.equal(response.status, 303, path);
+        assert.equal(response.headers.get('location'), '/dashboard/');
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+        assert.equal((await response.text()).includes(TOKEN), false, 'the answer does not repeat the token');
+        const setCookie = response.headers.getSetCookie().find((line) => line.startsWith('zx_session='));
+        assert.match(setCookie, /^zx_session=[0-9a-f]{64}; Max-Age=43200; Path=\/dashboard; Expires=[^;]+; HttpOnly; SameSite=Lax$/);
+        const cookie = setCookie.split(';')[0];
+        assert.equal((await req('/dashboard/', { headers: { cookie } })).status, 200);
+        const me = await (await req('/dashboard/api/me', { headers: { cookie } })).json();
+        assert.deepEqual(me.user, { id: ownerId, username: 'operator' });
+        assert.equal(me.botOwner, true);
+    }
+    assert.deepEqual(infos.filter((line) => line.startsWith('Dashboard:')), Array(3).fill(`Dashboard: token login by link from 127.0.0.1, acting as ${ownerId}`));
+    assert.equal([...infos, ...warnings].join('\n').includes(TOKEN), false, 'the token is never logged');
+});
+
+test('a link with a wrong token shows the login page and opens nothing', async (t) => {
+    const { req, warnings, fetched } = await site(t);
+    for (const path of ['/masuk/wrong-token-value', `/masuk/${TOKEN}x`, `/masuk/${TOKEN}/`, `/dashboard/masuk/${TOKEN.slice(0, -1)}`, '/masuk/%ZZ', `/masuk/${TOKEN}/extra`]) {
+        const response = await req(path);
+        assert.equal(response.status, 401, path);
+        assert.equal(response.headers.getSetCookie().length, 0, path);
+        const html = await response.text();
+        assert.match(html, /<p class="error" role="alert">Token di tautan tidak cocok\. Periksa tautannya, atau ketik token di bawah ini\.<\/p>/);
+        assert.match(html, /name="token" type="password"/);
+        assert.equal(html.includes('wrong-token-value') || html.includes(TOKEN.slice(0, -1)), false, 'what was sent is not shown');
+    }
+    assert.deepEqual(fetched, []);
+    assert.deepEqual(warnings.slice(1), Array(6).fill('Dashboard: token login refused for 127.0.0.1 (wrong token in a login link)'));
+
+    // A link without a token leads to the login page; only opening a link logs in, posting to it does not.
+    for (const path of ['/masuk', '/masuk/', '/dashboard/masuk', '/dashboard/masuk/']) {
+        const response = await req(path);
+        assert.equal(response.status, 302, path);
+        assert.equal(response.headers.get('location'), '/dashboard/login');
+    }
+    const posted = await req(`/masuk/${TOKEN}`, { method: 'POST' });
+    assert.equal(posted.status, 404);
+    assert.equal(posted.headers.getSetCookie().length, 0);
+});
+
+test('a token with special characters works in a link when it is percent-encoded', async (t) => {
+    const special = 'p@ss/w ord+12345?#&=';
+    const { req } = await site(t, { env: { DASHBOARD_TOKEN: special, OWNER_IDS: ownerId } });
+    assert.equal((await req(`/masuk/${encodeURIComponent(special)}`)).status, 303);
+    assert.equal((await req(`/dashboard/masuk/${encodeURIComponent(special)}`)).status, 303);
+    assert.equal((await req(`/masuk/${special}`)).status, 401, 'unencoded, the browser cuts the address at "?" and "#"');
+});
+
+test('links share the login limit with the form', async (t) => {
+    const { req, submit } = await site(t);
+    const statuses = [];
+    for (let attempt = 1; attempt <= 10; attempt += 1) statuses.push((await req(`/masuk/guess-number-${attempt}`)).status);
+    for (let attempt = 11; attempt <= 20; attempt += 1) statuses.push((await req(`/dashboard/masuk/guess-number-${attempt}`)).status);
+    for (let attempt = 21; attempt <= 30; attempt += 1) statuses.push((await submit(`guess-number-${attempt}`)).status);
+    assert.deepEqual(statuses, Array(30).fill(401));
+    for (const path of [`/masuk/${TOKEN}`, `/dashboard/masuk/${TOKEN}`]) {
+        const refused = await req(path);
+        assert.equal(refused.status, 429, path);
+        assert.equal(refused.headers.getSetCookie().length, 0);
+        assert.match(await refused.text(), /^Terlalu banyak percobaan login dari alamat ini\./);
+    }
+});
+
+test('a link does nothing while the token login is off, and follows DASHBOARD_URL when that is set', async (t) => {
+    for (const [env, text] of [
+        [DISCORD_ENV, /^Login dengan token belum aktif: isi DASHBOARD_TOKEN dan OWNER_IDS\.$/],
+        [{ DASHBOARD_TOKEN: 'short', OWNER_IDS: ownerId }, /DASHBOARD_TOKEN harus minimal 12 karakter/],
+        [{ DASHBOARD_TOKEN: TOKEN }, /isi OWNER_IDS dengan ID akun Discord kamu/],
+    ]) {
+        const { req } = await site(t, { env });
+        for (const path of [`/masuk/${env.DASHBOARD_TOKEN ?? TOKEN}`, `/dashboard/masuk/${env.DASHBOARD_TOKEN ?? TOKEN}`]) {
+            const response = await req(path);
+            assert.equal(response.status, 503, path);
+            assert.equal(response.headers.getSetCookie().length, 0);
+            assert.match(await response.text(), text);
+        }
+    }
+
+    // With DASHBOARD_URL set, the link has to be opened at that address. The address the browser
+    // used arrives in the Host header; fetch cannot set it, node:http can.
+    const { base } = await site(t, { env: { ...TOKEN_ENV, DASHBOARD_URL: 'http://203.0.113.5:11991', DASHBOARD_ALLOW_HTTP: 'true' } });
+    const open = (host) => new Promise((resolve, reject) => {
+        http.get(`${base}/masuk/${TOKEN}`, { headers: { host } }, (res) => {
+            let body = ''; res.on('data', (chunk) => { body += chunk; }); res.on('end', () => resolve({ status: res.statusCode, cookies: res.headers['set-cookie'] ?? [], body }));
+        }).on('error', reject);
+    });
+    const elsewhere = await open(new URL(base).host);
+    assert.equal(elsewhere.status, 403);
+    assert.deepEqual(elsewhere.cookies, []);
+    assert.match(elsewhere.body, /Login hanya diterima dari http:\/\/203\.0\.113\.5:11991\/dashboard\/login\./);
+    assert.equal((await open('203.0.113.5:11992')).status, 403, 'another port is another address');
+    const right = await open('203.0.113.5:11991');
+    assert.equal(right.status, 303);
+    assert.equal(right.cookies.length, 1);
+});
+
+test('through a link, too, the account in OWNER_IDS has to be a member of the server', async (t) => {
+    const { req } = await site(t, { members: {} });
+    const response = await req(`/masuk/${TOKEN}`);
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.getSetCookie().length, 0);
+    assert.match(await response.text(), new RegExp(`Akun di OWNER_IDS \\(${ownerId}\\) bukan anggota server yang dikonfigurasi`));
 });
 
 // ---------------------------------------------------------------------------------------------

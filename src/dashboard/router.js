@@ -7,7 +7,7 @@ import { isHomeGuild } from '../utils/singleGuild.js';
 import { logger } from '../utils/logger.js';
 import { dashboardLoginStatus, notConfiguredMessage } from './origin.js';
 import { callbackProblem, loginProblemPage } from './loginProblem.js';
-import { loginFormPage, tokenLoginStatus, tokenMatches, tokenOffMessage, TOKEN_SESSION_MS } from './tokenLogin.js';
+import { linkToken, loginFormPage, tokenLoginStatus, tokenMatches, tokenOffMessage, TOKEN_SESSION_MS } from './tokenLogin.js';
 import { createBotApiRouter } from './botApi.js';
 import { createGoodbyeApi } from './goodbyeApi.js';
 import { createBirthdayApi } from './birthdayApi.js';
@@ -39,6 +39,8 @@ const NO_CACHE = 'no-store';
  * through; redirecting it too sends the browser in a circle and the page never opens.
  */
 export function mountDashboard(app, client, options) {
+  // "/masuk/<token>" is the short form of the login link "/dashboard/masuk/<token>".
+  app.use((req, res, next) => { if (/^\/masuk(?:\/|$)/i.test(req.path)) req.url = `/dashboard${req.url}`; next(); });
   app.get('/dashboard', (req, res, next) => (req.path.endsWith('/') ? next() : res.redirect('/dashboard/')));
   app.use('/dashboard', createDashboardRouter(client, options));
 }
@@ -94,14 +96,9 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
     const q = new URLSearchParams({ client_id: env.CLIENT_ID, redirect_uri: origin + '/dashboard/callback', response_type: 'code', scope: 'identify', state });
     res.redirect('https://discord.com/oauth2/authorize?' + q);
   });
-  router.post('/login', express.urlencoded({ extended: false, limit: '2kb' }), async (req,res) => {
-    const form = (status, error) => res.status(status).send(loginFormPage({ error, discord: configured }));
-    if (!tokenLogin.enabled) return res.status(503).send(tokenOffMessage(tokenLogin.reason));
-    if (req.get('origin') && !fromOwnPage(req)) return form(403, origin ? `Login hanya diterima dari ${origin}/dashboard/login. Buka alamat itu, atau sesuaikan DASHBOARD_URL dengan alamat yang kamu pakai.` : 'Permintaan tidak valid. Buka halaman login ini langsung dari alamat dashboard.');
-    if (!tokenMatches(req.body?.token, env)) {
-      logger.warn(`Dashboard: token login refused for ${req.ip} (wrong token)`);
-      return form(401, 'Token salah.');
-    }
+  const WRONG_ADDRESS = `Login hanya diterima dari ${origin}/dashboard/login. Buka alamat itu, atau sesuaikan DASHBOARD_URL dengan alamat yang kamu pakai.`;
+  // Opens the session of a token login once the token has been found right; `form` shows the login page with a message.
+  async function openTokenSession(req, res, form, how) {
     purge();
     const access = await authorize(tokenLogin.ownerId, true);
     if (access.error) {
@@ -112,8 +109,34 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
     const person = access.member?.user;
     const id = random(); sessions.set(id, { user: { id: tokenLogin.ownerId, username: person?.globalName || person?.username || 'Owner' }, csrf: random(), expires: Date.now() + TOKEN_SESSION_MS, operator: true });
     res.cookie('zx_session', id, { ...options, maxAge: TOKEN_SESSION_MS });
-    logger.info(`Dashboard: token login from ${req.ip}, acting as ${tokenLogin.ownerId}`);
+    logger.info(`Dashboard: token login${how} from ${req.ip}, acting as ${tokenLogin.ownerId}`);
     res.redirect(303, '/dashboard/');
+  }
+  router.post('/login', express.urlencoded({ extended: false, limit: '2kb' }), async (req,res) => {
+    const form = (status, error) => res.status(status).send(loginFormPage({ error, discord: configured }));
+    if (!tokenLogin.enabled) return res.status(503).send(tokenOffMessage(tokenLogin.reason));
+    if (req.get('origin') && !fromOwnPage(req)) return form(403, origin ? WRONG_ADDRESS : 'Permintaan tidak valid. Buka halaman login ini langsung dari alamat dashboard.');
+    if (!tokenMatches(req.body?.token, env)) {
+      logger.warn(`Dashboard: token login refused for ${req.ip} (wrong token)`);
+      return form(401, 'Token salah.');
+    }
+    await openTokenSession(req, res, form, '');
+  });
+  // Login by link: /dashboard/masuk/<token>, where the token is everything after "/masuk/". The
+  // address of a link ends up in the browser's history and wherever the link is pasted, so the
+  // answer never repeats it and the browser is sent on to /dashboard/ at once.
+  router.use('/masuk', async (req, res, next) => {
+    if (req.method !== 'GET') return next();
+    const form = (status, error) => res.status(status).send(loginFormPage({ error, discord: configured }));
+    const typed = linkToken(req.path);
+    if (typed === null) return res.redirect('/dashboard/login');
+    if (!tokenLogin.enabled) return res.status(503).send(tokenOffMessage(tokenLogin.reason));
+    if (origin && new URL(origin).host !== req.get('host')) return form(403, WRONG_ADDRESS);
+    if (!tokenMatches(typed, env)) {
+      logger.warn(`Dashboard: token login refused for ${req.ip} (wrong token in a login link)`);
+      return form(401, 'Token di tautan tidak cocok. Periksa tautannya, atau ketik token di bawah ini.');
+    }
+    await openTokenSession(req, res, form, ' by link');
   });
   router.get('/callback', async (req,res) => {
     if (!configured) return res.status(503).send(notConfiguredMessage(reason));

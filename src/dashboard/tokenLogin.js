@@ -34,6 +34,22 @@ export function tokenMatches(candidate, env) {
     return crypto.timingSafeEqual(digest(candidate.trim()), digest(expected));
 }
 
+/**
+ * The token carried by a login link, /dashboard/masuk/<token>.
+ * @param {string} rest  the part of the path after "/masuk", e.g. "/my-token"
+ * @returns {string | null} null when the link carries no token
+ */
+export function linkToken(rest) {
+    const raw = String(rest ?? '').replace(/^\//, '');
+    if (!raw) return null;
+    try {
+        return decodeURIComponent(raw);
+    } catch {
+        // Broken percent-encoding ("%ZZ"): taken as it stands, and it will not match.
+        return raw;
+    }
+}
+
 /** Why the token login is off, for someone who opens the login page. */
 export function tokenOffMessage(reason) {
     if (reason === 'too_short') return `Login dengan token belum aktif: DASHBOARD_TOKEN harus minimal ${TOKEN_MIN_LENGTH} karakter.`;

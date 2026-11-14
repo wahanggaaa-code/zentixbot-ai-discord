@@ -127,6 +127,23 @@ Yang perlu diketahui:
 - Bila dashboard dibuka lewat alamat `https://`, isi `DASHBOARD_URL` dengan alamat itu: cookie sesi lalu hanya dikirim lewat HTTPS, dan catatan "Tanpa enkripsi" di halaman Pengaturan tidak muncul.
 - Login lewat Discord tetap ada. Bila keduanya dikonfigurasi, halaman login menampilkan tautan "Masuk dengan akun Discord".
 
+### Tautan login
+
+Token dapat juga dibawa di alamat, seperti pada proyek referensi:
+
+```text
+http://IP:PORT/masuk/TOKEN
+```
+
+Membuka alamat itu langsung membuat sesi dan meneruskan ke dashboard, tanpa mengetik. `http://IP:PORT/dashboard/masuk/TOKEN` adalah alamat yang sama dalam bentuk panjang.
+
+- **Alamat ini sama rahasianya dengan token.** Peramban menyimpannya di riwayat dan dapat menawarkannya lagi saat kamu mengetik. Pakai hanya di perangkat sendiri, misalnya sebagai bookmark.
+- **Jangan tempel tautan ini di chat**, termasuk di Discord: aplikasi chat membuka tautan untuk membuat pratinjau, dan semua yang dapat membaca chat itu ikut mendapat token.
+- Bot tidak pernah menulis token ke log, dan jawaban server tidak mengulanginya. Yang tidak dapat dicegah bot adalah riwayat peramban dan log perantara di jalur HTTP.
+- Token yang berisi karakter selain huruf, angka, `-` dan `_` harus ditulis dengan percent-encoding di tautan (misalnya `@` menjadi `%40`). Lebih mudah memakai token dari huruf dan angka saja.
+- Tautan yang salah menampilkan halaman login dengan pesan "Token di tautan tidak cocok." dan dihitung sebagai percobaan login.
+- Bila `DASHBOARD_URL` diisi, tautan hanya diterima di alamat itu.
+
 Bila halaman login menolak:
 
 | Pesan | Sebab |
@@ -182,7 +199,7 @@ Server web membatasi jumlah permintaan per alamat IP. Ada tiga hitungan terpisah
 
 | Hitungan | Berlaku untuk | Batas |
 | --- | --- | --- |
-| Login | `/dashboard/login` dan `/dashboard/callback` | 30 per 15 menit |
+| Login | `/dashboard/login`, `/dashboard/callback` dan tautan login `/masuk/…` | 30 per 15 menit |
 | Dashboard | Semua alamat lain di bawah `/dashboard` | 600 per menit |
 | Umum | Alamat lain: `/`, `/health`, `/ready` | 100 per 15 menit (dari `src/config/application.js`) |
 
@@ -287,7 +304,7 @@ Contoh saat menyala (dari menjalankan bot di lingkungan uji dengan Discord tirua
 - Tidak ada yang dijalankan di sini pada panel sungguhan. Yang diketahui tentang panel hanyalah kiriman pemilik bot di awal dokumen ini; batas RAM, perilaku saat restart dan pemakaian memori belum diperiksa.
 - Login Discord sungguhan sampai masuk ke dashboard pada alamat `http://ip:port`, termasuk setelah perbaikan batas permintaan dan pesan login.
 - Sebab login pemilik bot gagal pada 13 November 2026: satu sebab ditemukan pada 14 November (halaman `/dashboard/` berputar tanpa henti, lihat di atas). Apakah ada sebab lain, misalnya client secret, tidak diketahui.
-- Login dengan token di panel sungguhan dan di peramban sungguhan. Di sini diuji dengan permintaan HTTP langsung ke bot yang berjalan dengan klien Discord tiruan.
+- Login dengan token dan tautan login di panel sungguhan dan di peramban sungguhan, termasuk apa yang tersimpan di riwayat peramban setelah tautan dibuka. Di sini diuji dengan permintaan HTTP langsung ke bot yang berjalan dengan klien Discord tiruan.
 - Tampilan log di konsol panel: apakah warnanya tampil, dan baris-baris setelah login Discord sungguhan (pendaftaran slash command, rangkuman ONLINE, pemeriksaan saat menyala, node Lavalink). Di sini baris-baris itu hanya dihasilkan dengan Discord tiruan.
 - Dashboard di peramban sungguhan; tesnya memakai jsdom dan permintaan HTTP langsung. Jumlah panggilan data per halaman tidak diukur; angka 31 hanya menghitung berkas yang disebut `index.html`.
 - Groq (transkripsi), Tavily, Cloudflare Workers AI dan Pollinations yang sesungguhnya. Tesnya memakai penyedia tiruan: yang terbukti adalah permintaan yang disusun bot dan cara bot membaca jawaban, bukan bahwa layanan itu menerimanya. Bentuk permintaan diambil dari dokumentasi tiap layanan.

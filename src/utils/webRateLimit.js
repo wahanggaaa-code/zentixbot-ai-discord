@@ -4,8 +4,8 @@
  * Three budgets are counted separately, so that browsing the dashboard cannot use up the login
  * attempts and the other way round:
  *
- * - `login`: /dashboard/login and /dashboard/callback. Each login reserves a pending state on the
- *   server and may call Discord, so it stays tight.
+ * - `login`: /dashboard/login, /dashboard/callback and the login links (/masuk/<token>). Each login
+ *   reserves a pending state on the server or tries a token, so it stays tight.
  * - `dashboard`: everything else under /dashboard. Opening the page once fetches about thirty
  *   files that are never cached, and every tab reads its data afterwards, so this one is wide.
  * - `general`: all other paths (/, /health, /ready); its numbers come from the bot configuration.
@@ -26,6 +26,8 @@ export const WEB_RATE_LIMITS = Object.freeze({
 export function webRateLimitBucket(path) {
     const normal = String(path).toLowerCase().replace(/\/+$/, '');
     if (normal === '/dashboard/login' || normal === '/dashboard/callback') return 'login';
+    // Login links carry the token in the path: /masuk/<token> and /dashboard/masuk/<token>.
+    if (/^(?:\/dashboard)?\/masuk(?:\/|$)/.test(normal)) return 'login';
     if (normal === '/dashboard' || normal.startsWith('/dashboard/')) return 'dashboard';
     return 'general';
 }
