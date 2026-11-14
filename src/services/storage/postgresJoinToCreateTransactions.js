@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { pgConfig } from '../../config/database/postgres.js';
 import { getJoinToCreateConfigKey, getJoinToCreateChannelsKey } from '../../utils/database/keys.js';
 import { parseJoinToCreatePending } from '../../utils/joinToCreatePending.js';
+import { sqliteFor } from './sqliteRows.js';
 
 /**
  * Join to Create storage protocol (PostgreSQL).
@@ -70,6 +71,56 @@ function canonicalJson(value) {
 /** Revision of the administrator-editable configuration only (not channels or pending). */
 function configRevisionOf(data) {
     return sha256(canonicalJson(Object.fromEntries(CONFIG_FIELDS.map((field) => [field, data[field]]))));
+}
+
+/** The SQLite store when the bot runs on SQLite, null on PostgreSQL. Same scope rule as getPool. */
+function sqliteStore(client, guildId) {
+    const sqlite = sqliteFor(client, () => fail('JTC_UNAVAILABLE', 'Database unavailable'));
+    if (sqlite && (!isId(guildId) || !isId(client?.homeGuildId) || client.homeGuildId !== guildId)) {
+        throw fail('JTC_SCOPE', 'Invalid guild scope');
+    }
+    return sqlite;
+}
+
+/**
+ * The same steps as the PostgreSQL transaction below, on SQLite: one synchronous
+ * transaction on the single Join to Create row of the guild. Sizes are those of the
+ * stored JSON text.
+ */
+function sqliteTransaction(sqlite, { key, channelsKey, limit }, fn, allowPending) {
+    const bytes = (value) => Buffer.byteLength(JSON.stringify(value), 'utf8');
+    return sqlite.transaction((tx) => {
+        if (tx.hasRawAIKey(key) || tx.hasRawKey(channelsKey)) throw fail('JTC_LEGACY', 'Conflicting Join to Create data requires review');
+        const row = tx.botGetRaw(key);
+        if (row && row.expiresAt !== null) throw fail('JTC_EXPIRY', 'Expiring Join to Create record requires review');
+
+        const data = row ? validate(bytes(row.value) <= limit ? row.value : null) : defaults();
+        const revision = sha256(row ? `stored:${JSON.stringify(row.value)}` : 'missing');
+        const pendingBefore = Object.keys(data.pendingCreates).length;
+        const outcome = fn(data, { exists: Boolean(row), revision, configRevision: configRevisionOf(data) });
+
+        if (outcome.write) {
+            if (pendingBefore && !allowPending) throw fail('JTC_PENDING', 'A channel create is pending');
+            if (bytes(data) > limit) throw invalid();
+            validate(data);
+
+            const pending = Object.entries(data.pendingCreates);
+            if (pending.length) {
+                // Room for the worst-case channel id and date, as on PostgreSQL.
+                const [token, item] = pending[0];
+                let candidate = 99999999999999999999n;
+                const completed = structuredClone(data);
+                while (Object.hasOwn(completed.temporaryChannels, String(candidate))) candidate--;
+                const recorded = structuredClone(data);
+                recorded.pendingCreates[token] = { ...item, stage: 'created', channelId: String(candidate) };
+                delete completed.pendingCreates[token];
+                completed.temporaryChannels[String(candidate)] = { ownerId: item.ownerId, triggerChannelId: item.triggerId, createdAt: 8640000000000000 };
+                if (bytes(recorded) > limit || bytes(completed) > limit) throw invalid();
+            }
+            tx.botSet(key, data);
+        }
+        return outcome.value;
+    });
 }
 
 function getPool(client, guildId) {
@@ -205,6 +256,8 @@ async function transaction(client, guildId, fn, { allowPending = false } = {}) {
     const key = getJoinToCreateConfigKey(guildId);
     const channelsKey = getJoinToCreateChannelsKey(guildId);
     const limit = JTC_LIMITS.recordBytes;
+    const sqlite = sqliteStore(client, guildId);
+    if (sqlite) return sqliteTransaction(sqlite, { key, channelsKey, limit }, fn, allowPending);
     const conn = await getPool(client, guildId).connect();
     let begun = false;
     try {

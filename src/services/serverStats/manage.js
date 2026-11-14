@@ -30,7 +30,7 @@ export const COUNTER_ERRORS = {
     SERVERSTATS_MISSING: { en: 'That counter no longer exists. Use `/serverstats list` to see the counters.', id: 'Counter itu sudah tidak ada. Muat ulang halaman.' },
     SERVERSTATS_STALE: { en: 'The counters changed in the meantime. Check the list and try again.', id: 'Daftar counter berubah sejak halaman dimuat. Muat ulang, periksa, lalu ulangi.' },
     SERVERSTATS_INVALID: { en: 'The stored counter data needs to be checked before it can be changed.', id: 'Data counter tersimpan perlu diperiksa sebelum dapat diubah.' },
-    SERVERSTATS_UNAVAILABLE: { en: 'The database is not available right now. Nothing was changed.', id: 'Database PostgreSQL tidak tersedia. Tidak ada yang diubah.' },
+    SERVERSTATS_UNAVAILABLE: { en: 'The database is not available right now. Nothing was changed.', id: 'Database tidak tersedia. Tidak ada yang diubah.' },
     SERVERSTATS_CHANNEL_FAILED: {
         en: 'Discord refused the channel change. Nothing was changed.',
         id: 'Discord menolak perubahan channel. Tidak ada yang diubah.',

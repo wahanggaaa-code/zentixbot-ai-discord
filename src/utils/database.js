@@ -7,6 +7,7 @@ import { assertOnboardingCompatible, assertOnboardingShape } from '../services/c
 import { createError, ErrorTypes, ZentixBotError } from './errorHandler.js';
 import { BotConfig } from '../config/bot.js';
 import {isSQLiteBirthdayBackend,readSQLiteBirthdays,setSQLiteBirthday,deleteSQLiteBirthday} from '../services/storage/sqliteBirthdays.js';
+import { sqliteFor } from '../services/storage/sqliteRows.js';
 import {isPostgresBirthdayBackend,readPostgresBirthdays,setPostgresBirthday,deletePostgresBirthday} from '../services/storage/postgresBirthdays.js';
 
 export {
@@ -431,6 +432,13 @@ async function readWelcomeForWrite(client, guildId) {
     if (!wrapper || typeof wrapper.get !== 'function' || (wrapper.isAvailable && !wrapper.isAvailable())) {
         throw new Error('Welcome configuration database unavailable');
     }
+    const sqlite = welcomeSQLite(client);
+    if (sqlite) {
+        const stored = sqlite.botGet(getWelcomeConfigKey(guildId));
+        const exists = stored !== null && stored !== undefined;
+        const raw = exists ? stored : {};
+        return welcomeSnapshot(sqlite, guildId, normalizeWelcomeConfig(checkedWelcome(raw)), JSON.stringify(raw), exists);
+    }
     const pool = welcomePool(wrapper);
     if (pool) {
         const result = await pool.query(`SELECT config FROM ${pgConfig.tables.welcome_configs} WHERE guild_id=$1`, [guildId]);
@@ -451,6 +459,44 @@ export async function getWelcomeConfigForEditing(client, guildId) {
         throw createError('Failed to read welcome configuration', ErrorTypes.DATABASE,
             'Failed to load welcome settings. The database is unavailable or needs review.', {guildId});
     }
+}
+/** The open SQLite store of a bot running on SQLite, or null on PostgreSQL. Throws when the file cannot be used. */
+function welcomeSQLite(client) {
+    return sqliteFor(client, () => new Error('SQLite unavailable'));
+}
+/**
+ * The SQLite counterpart of writePostgresWelcome: the same checks, in one transaction.
+ * A full save (`replace`) needs the object returned by getWelcomeConfigForEditing and is
+ * refused when the stored settings changed since it was read.
+ */
+function writeSQLiteWelcome(sqlite, guildId, changes, replace) {
+    const entry = replace && welcomePostgresSnapshots.get(changes);
+    if (replace && (!entry || entry.pool !== sqlite || entry.guildId !== guildId)) {
+        throw createError('Welcome snapshot required', ErrorTypes.CONFIGURATION, 'Reload welcome settings before saving.');
+    }
+    const requested = JSON.parse(JSON.stringify(changes));
+    const key = getWelcomeConfigKey(guildId);
+    const serialized = sqlite.transaction((tx) => {
+        const guildConfig = unwrapReplitData(tx.botGet(`guild:${guildId}:config`) || {});
+        const stored = tx.botGet(key);
+        const exists = stored !== null && stored !== undefined;
+        const raw = exists ? stored : {};
+        const current = checkedWelcome(raw);
+        if (raw.ok !== undefined && raw.value !== undefined) {
+            throw createError('Legacy welcome config', ErrorTypes.CONFIGURATION, 'Legacy welcome settings need review before editing.');
+        }
+        if (replace && (exists !== entry.exists || JSON.stringify(raw) !== entry.raw)) {
+            throw createError('Stale welcome configuration', ErrorTypes.CONFIGURATION, 'Welcome settings changed. Reload before saving.');
+        }
+        assertOnboardingShape(guildConfig, raw);
+        const merged = { ...normalizeWelcomeConfig(current), ...requested };
+        assertOnboardingCompatible(guildConfig, merged);
+        tx.botSet(key, merged);
+        // What a later read returns, so the next full save compares against the same text.
+        return JSON.stringify(tx.botGet(key));
+    });
+    if (replace) welcomeSnapshot(sqlite, guildId, changes, serialized);
+    return welcomeSnapshot(sqlite, guildId, JSON.parse(serialized), serialized);
 }
 async function writePostgresWelcome(pool, guildId, changes, replace) {
     const entry = replace && welcomePostgresSnapshots.get(changes);
@@ -502,6 +548,8 @@ async function writePostgresWelcome(pool, guildId, changes, replace) {
 async function writeWelcomeChanges(client, guildId, changes, replace = false) {
     try {
         if (!changes || typeof changes !== 'object' || Array.isArray(changes) || typeof client?.db?.set !== 'function') throw new Error('Invalid welcome write');
+        const sqlite = welcomeSQLite(client);
+        if (sqlite) return writeSQLiteWelcome(sqlite, guildId, changes, replace);
         const pool = welcomePool(client.db);
         if (pool) return await writePostgresWelcome(pool, guildId, changes, replace);
         const existing = await readWelcomeForWrite(client, guildId);

@@ -65,14 +65,24 @@ export async function getTicketData(guildId, channelId) {
 }
 
 /**
- * The user's open tickets on PostgreSQL, as tracked records that can be saved back.
- * Returns null on other backends, where this listing is not available.
+ * The user's open tickets, as tracked records that can be saved back.
  */
 export async function listOpenTicketsForUser(guildId, userId, limit = 25) {
     if (!db.initialized) {
         await db.initialize();
     }
-    if (isSQLiteTicketBackend(db)) return null;
+    if (isSQLiteTicketBackend(db)) {
+        const prefix = `guild:${guildId}:ticket:`;
+        const open = [];
+        for (const key of listSQLiteTicketKeys(db, guildId).sort()) {
+            const channelId = key.slice(prefix.length);
+            if (!/^\d{17,20}$/.test(channelId)) continue;
+            const data = readSQLiteTicket(db, guildId, channelId);
+            if (data && data.userId === userId && data.status === 'open') open.push({ channelId, data });
+            if (open.length >= limit) break;
+        }
+        return open;
+    }
     const pool = requireTicketPool();
     const result = await pool.query(
         `SELECT channel_id, data FROM ${pgConfig.tables.tickets}
@@ -138,12 +148,22 @@ export async function saveTicketData(guildId, channelId, data) {
     await savePostgresTicket(guildId, channelId, data);
 }
 
+function backendSQLiteDelete(guildId, channelId) {
+    // Checked like a read first, so a record that needs review is not removed unseen.
+    if (readSQLiteTicket(db, guildId, channelId) === null) return false;
+    return db.db.sqlite.transaction((tx) => tx.botDelete(getTicketKey(guildId, channelId)));
+}
+
 export async function deleteTicketData(guildId, channelId) {
     if (!db.initialized) {
         await db.initialize();
     }
 
-    if (isSQLiteTicketBackend(db)) throw Object.assign(new Error('SQLite ticket deletion is disabled pending safe Discord coordination'),{code:'TICKET_DELETE_DISABLED'});
+    if (isSQLiteTicketBackend(db)) {
+        const removed = backendSQLiteDelete(guildId, channelId);
+        if (!removed) throw Object.assign(new Error('Ticket data could not be deleted'), {code:'TICKET_DELETE_FAILED'});
+        return;
+    }
     const key = getTicketKey(guildId, channelId);
     if (!await db.delete(key)) throw Object.assign(new Error('Ticket data could not be deleted'), {code:'TICKET_DELETE_FAILED'});
 }

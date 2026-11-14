@@ -16,6 +16,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { pgConfig } from '../../config/database/postgres.js';
+import { sqliteFor, readRows as readSQLiteRows, readPrefixes, rowTransaction } from '../storage/sqliteRows.js';
 
 const table = pgConfig.tables.temp_data;
 const SNOWFLAKE = /^\d{17,20}$/;
@@ -222,14 +223,34 @@ function decodeAll(guildId, rows, now) {
     return { settings, forms, applications, expired };
 }
 
+const unavailable = () => fail('Database unavailable for applications', 'APP_UNAVAILABLE');
+
+/**
+ * The stored rows with one of `keys` or under one of `prefixes`, as `{ key, value }`.
+ * `text` and `params` are the same question for PostgreSQL.
+ */
+async function rowsOf(client, { keys = [], prefixes = [] }, text, params) {
+    const sqlite = sqliteFor(client, unavailable);
+    if (!sqlite) return (await query(client, text, params)).rows;
+    try {
+        return [
+            ...[...readSQLiteRows(sqlite, keys)].map(([key, value]) => ({ key, value })),
+            ...readPrefixes(sqlite, ...prefixes),
+        ];
+    } catch (error) {
+        throw wrap(error);
+    }
+}
+
 /** Settings and forms of a server: one query. */
 export async function readConfig(client, guildId) {
-    const result = await query(
+    const rows = await rowsOf(
         client,
+        { keys: [settingsKey(guildId), formsKey(guildId)], prefixes: [`${prefixOf(guildId)}role:`] },
         `SELECT key, value FROM ${table} WHERE key = ANY($1::text[]) OR key LIKE $2`,
         [[settingsKey(guildId), formsKey(guildId)], `${prefixOf(guildId)}role:%`],
     );
-    const { settings, forms } = decodeAll(guildId, result.rows, Date.now());
+    const { settings, forms } = decodeAll(guildId, rows, Date.now());
     return { settings, forms };
 }
 
@@ -238,20 +259,21 @@ export async function readConfig(client, guildId) {
  * Applications past their retention are left out whether or not they were deleted yet.
  */
 export async function readAll(client, guildId, now = Date.now()) {
-    const result = await query(client, `SELECT key, value FROM ${table} WHERE key LIKE $1`, [`${prefixOf(guildId)}%`]);
-    const { settings, forms, applications } = decodeAll(guildId, result.rows, now);
+    const rows = await rowsOf(client, { prefixes: [prefixOf(guildId)] }, `SELECT key, value FROM ${table} WHERE key LIKE $1`, [`${prefixOf(guildId)}%`]);
+    const { settings, forms, applications } = decodeAll(guildId, rows, now);
     return { settings, forms, applications };
 }
 
 /** One application, or null when there is none with this id (or it is past its retention). */
 export async function readApplication(client, guildId, id, now = Date.now()) {
     if (!isApplicationId(id)) return null;
-    const result = await query(
+    const rows = await rowsOf(
         client,
+        { keys: [settingsKey(guildId), applicationKey(guildId, id)] },
         `SELECT key, value FROM ${table} WHERE key = ANY($1::text[])`,
         [[settingsKey(guildId), applicationKey(guildId, id)]],
     );
-    const { applications } = decodeAll(guildId, result.rows, now);
+    const { applications } = decodeAll(guildId, rows, now);
     return applications[0] ?? null;
 }
 
@@ -260,8 +282,20 @@ export async function readApplication(client, guildId, id, now = Date.now()) {
  * Anything `work` throws rolls everything back and is passed on.
  */
 async function transaction(client, guildId, work) {
-    const pool = applicationsPool(client);
     const prefix = prefixOf(guildId);
+    const sqlite = sqliteFor(client, unavailable);
+    if (sqlite) {
+        try {
+            return await rowTransaction(sqlite, `applications:${guildId}`, (rows) => work({
+                all: (now) => decodeAll(guildId, rows.rows(prefix), now),
+                put: rows.put,
+                del: (keys) => rows.del(keys),
+            }));
+        } catch (error) {
+            throw wrap(error);
+        }
+    }
+    const pool = applicationsPool(client);
     let conn;
     try {
         conn = await pool.connect();

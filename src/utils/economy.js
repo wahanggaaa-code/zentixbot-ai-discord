@@ -68,8 +68,8 @@ export async function getEconomyData(client, guildId, userId) {
         getEconomyKey(guildId, userId);
         return readEconomyAccount(pool, guildId, userId);
     }
-    if (client?.db?.db?.pool) {
-        // PostgreSQL is the store but is not usable right now. The fallback
+    if (client?.db?.db?.pool || client?.db?.db?.sqlite?.dialect === 'sqlite') {
+        // PostgreSQL or SQLite is the store but is not usable right now. The fallback
         // below would show an empty account.
         throw Object.assign(new Error('Economy storage is unavailable.'), { code: 'ECONOMY_UNAVAILABLE' });
     }

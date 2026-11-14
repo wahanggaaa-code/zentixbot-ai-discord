@@ -19,6 +19,8 @@ attached_assets/
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Runtime data
+# The SQLite database file the bot creates when no PostgreSQL is configured.
+/data/
 pids
 *.pid
 *.seed

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import express from 'express';
 import { JSDOM } from 'jsdom';
 import { createCommunityFixture, guildId, memberId, roleId } from './helpers/community-fixture.js';
-import { pgEnabled } from './helpers/leveling-postgres-fixture.js';
+import { pgEnabled, onSQLite } from './helpers/leveling-postgres-fixture.js';
 import { createApplicationsApi } from '../src/dashboard/applicationsApi.js';
 import { LIMITS, readConfig } from '../src/services/applications/store.js';
 import { logger } from '../src/utils/logger.js';
@@ -235,7 +235,8 @@ test('API: bot not ready, a database failure and unreadable stored data change n
     }
     fx.control.failQuery = (sql) => /COMMIT/.test(sql);
     const unsure = await req(...[bodies[0][1], bodies[0][0], bodies[0][2]]);
-    assert.deepEqual([unsure.status, unsure.body], [503, { error: 'Database tidak mengonfirmasi perubahan. Muat ulang untuk melihat keadaan terbaru sebelum mencoba lagi.' }]);
+    // A failed COMMIT is an unknown outcome on PostgreSQL and a rollback on SQLite.
+    assert.deepEqual([unsure.status, unsure.body], [503, { error: onSQLite ? 'Database sedang tidak dapat dipakai. Tidak ada yang diubah.' : 'Database tidak mengonfirmasi perubahan. Muat ulang untuk melihat keadaan terbaru sebelum mencoba lagi.' }]);
     fx.control.failQuery = (sql) => /temp_data/.test(sql);
     const read = await req(BASE);
     assert.deepEqual([read.status, read.body], [503, { error: 'Pengaturan lamaran tidak dapat dibaca dari database.' }]);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createUtilityFixture, memberId } from './helpers/utility-fixture.js';
-import { pgEnabled } from './helpers/leveling-postgres-fixture.js';
+import { pgEnabled, onSQLite, isRefused, assertCommitFailureSaid } from './helpers/leveling-postgres-fixture.js';
 import todo from '../src/commands/Utility/todo.js';
 import addButton, {
     sharedTodoCompleteHandler, sharedTodoRemoveHandler,
@@ -116,8 +116,8 @@ test('a commit without an answer is reported as unknown, not as done or failed',
     fx.control.failQuery = (sql) => /^\s*COMMIT/i.test(sql);
     const add = await run({ subcommand: 'add', task: 'one' });
     fx.control.failQuery = null;
-    assert.match(add.said(), /may or may not have been saved/);
-    assert.doesNotMatch(add.said(), /Nothing was changed|Added #/);
+    assertCommitFailureSaid(add.said(), /may or may not have been saved/, /Nothing was changed/);
+    assert.doesNotMatch(add.said(), onSQLite ? /Added #/ : /Nothing was changed|Added #/);
 });
 
 test('tasks added at the same moment are all kept', opts, async (t) => {
@@ -585,8 +585,8 @@ test('to-do rows can only be written by the to-do store', opts, async (t) => {
     await run({ subcommand: 'add', task: 'one' });
     const before = await personal();
     for (const key of [`todo_${fx.alice.id}`, KEY, `user_shared_lists_${fx.alice.id}`]) {
-        assert.equal(await fx.client.db.set(key, { tasks: [] }), false, key);
-        assert.equal(await fx.client.db.delete(key), false, key);
+        assert.equal(await isRefused(fx.client.db.set(key, { tasks: [] })), true, key);
+        assert.equal(await isRefused(fx.client.db.delete(key)), true, key);
     }
     assert.deepEqual(await personal(), before);
     assert.equal(await fx.row(KEY), undefined);

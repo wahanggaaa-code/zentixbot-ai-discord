@@ -6,8 +6,19 @@ import { PostgreSQLDatabase } from '../../src/utils/postgresDatabase.js';
 import { createGiveawayApi } from '../../src/dashboard/giveawayApi.js';
 import { createDashboardRouter } from '../../src/dashboard/router.js';
 import { discordError, unknownChannel } from './fake-discord-guild.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { openSQLiteStore } from '../../src/services/storage/sqlite.js';
+import { createSQLiteBotDatabase } from '../../src/services/storage/sqliteBotDatabase.js';
 
-export const pgEnabled = process.env.ZENTIX_TEST_PG_SOCKET === '/tmp/zentix-local-pg';
+// node:sqlite exists from Node 22.5 on. On an older Node the PostgreSQL side of this fixture
+// still has to load, so the module is looked up here instead of being imported at the top.
+const { DatabaseSync } = await import('node:sqlite').catch(() => ({}));
+
+// `ZENTIX_TEST_BACKEND=sqlite` runs the same suite on a SQLite file (see tests/sqlite-feature-suites.test.js).
+export const onSQLite = process.env.ZENTIX_TEST_BACKEND === 'sqlite';
+export const pgEnabled = onSQLite || process.env.ZENTIX_TEST_PG_SOCKET === '/tmp/zentix-local-pg';
 export const guildId = '123456789012345678';
 export const channelId = '423456789012345678';
 export const voiceId = '433456789012345678';
@@ -22,18 +33,8 @@ export const hasCode = (code) => (error) => error.code === code;
 
 const base = { host: '/tmp/zentix-local-pg', port: 55432, user: 'user', database: 'postgres' };
 
-/**
- * PostgreSQL schema, a fake Discord text channel that keeps its messages, and
- * the giveaway API mounted twice: with test auth headers, and behind the real
- * dashboard router.
- *
- * `hooks` are awaited before the matching Discord call takes effect, so a
- * test can make it fail or do something at that exact moment:
- *   hooks.send(payload)  hooks.afterSend(message)  hooks.fetch(id)
- *   hooks.edit(message)  hooks.delete(message)     hooks.afterDelete(message)
- *   hooks.channelFetch(id)
- */
-export async function createGiveawayFixture(t) {
+/** The PostgreSQL side of the fixture: an isolated schema, dropped after the test. */
+async function postgresStorage(t) {
     const admin = new pg.Client(base);
     await admin.connect();
     const schema = `gw_manage_${randomBytes(6).toString('hex')}`;
@@ -83,6 +84,99 @@ export async function createGiveawayFixture(t) {
     const backend = new PostgreSQLDatabase();
     backend.pool = pool;
     backend.isConnected = true;
+
+    const rows = async () => (await pool.query(
+        'SELECT message_id, data FROM giveaways WHERE guild_id=$1 ORDER BY id', [guildId],
+    )).rows;
+    const read = async (messageId) => (await pool.query(
+        'SELECT data FROM giveaways WHERE guild_id=$1 AND message_id=$2', [guildId, messageId],
+    )).rows[0]?.data ?? null;
+    const ageDelivery = (messageId, ms = 10 * 60_000) => pool.query(
+        `UPDATE giveaways SET data = jsonb_set(data, '{deliveryClaimedAt}', to_jsonb((data->>'deliveryClaimedAt')::bigint - $3::bigint))
+         WHERE guild_id=$1 AND message_id=$2`,
+        [guildId, messageId, ms],
+    );
+    return { connectionType: 'postgresql', pool, backend, lost, rows, read, ageDelivery };
+}
+
+/**
+ * The SQLite side: a file in a temporary folder. All giveaways of the server are one row,
+ * an object from message id to giveaway. `pool` and `lost` are PostgreSQL tools; the tests
+ * that need them are PostgreSQL only.
+ */
+async function sqliteStorage(t) {
+    const dir = mkdtempSync(join(tmpdir(), 'zentix-giveaway-sqlite-'));
+    const file = join(dir, 'data.db');
+    const sqlite = await openSQLiteStore({ path: file });
+    const backend = createSQLiteBotDatabase(sqlite);
+    // Tests switch the database off with `isConnected = false`, as they do on PostgreSQL.
+    const available = backend.isAvailable.bind(backend);
+    backend.isConnected = true;
+    backend.isAvailable = () => backend.isConnected !== false && available();
+    const raw = new DatabaseSync(file);
+    t.after(() => {
+        raw.close();
+        if (sqlite.isOpen()) sqlite.close();
+        rmSync(dir, { recursive: true, force: true });
+    });
+    const key = `guild:${guildId}:giveaways`;
+    const map = () => {
+        const row = raw.prepare('SELECT value FROM zentix_bot_kv WHERE key=?').get(key);
+        return row ? JSON.parse(row.value) : {};
+    };
+    const rows = async () => Object.entries(map()).map(([message_id, data]) => ({ message_id, data }));
+    const read = async (messageId) => map()[messageId] ?? null;
+    const ageDelivery = async (messageId, ms = 10 * 60_000) => {
+        const all = map();
+        all[messageId].deliveryClaimedAt -= ms;
+        raw.prepare('UPDATE zentix_bot_kv SET value=? WHERE key=?').run(JSON.stringify(all), key);
+    };
+    const store = (all) => raw.prepare('UPDATE zentix_bot_kv SET value=? WHERE key=?').run(JSON.stringify(all), key);
+    const change = (messageId, edit) => { const all = map(); edit(all[messageId]); store(all); };
+    const realEnd = new Map();
+    // The statements the suite uses to arrange stored data, done to the one row SQLite keeps.
+    const statements = {
+        // A write the database refuses.
+        "ALTER TABLE giveaways ADD CONSTRAINT refuse CHECK (data->>'prize' <> 'Blocked')": () => raw.exec(`
+            CREATE TRIGGER refuse_insert BEFORE INSERT ON zentix_bot_kv WHEN NEW.value LIKE '%"prize":"Blocked"%' BEGIN SELECT RAISE(ABORT, 'refused'); END;
+            CREATE TRIGGER refuse_update BEFORE UPDATE ON zentix_bot_kv WHEN NEW.value LIKE '%"prize":"Blocked"%' BEGIN SELECT RAISE(ABORT, 'refused'); END;`),
+        // The giveaway looks overdue, and later gets its real end back.
+        "UPDATE giveaways SET ends_at = now() - interval '1 day' WHERE message_id=$1": ([messageId]) => change(messageId, (data) => {
+            realEnd.set(messageId, data.endsAt);
+            const past = Date.now() - 86_400_000;
+            data.endsAt = typeof data.endsAt === 'number' ? past : new Date(past).toISOString();
+        }),
+        "UPDATE giveaways SET ends_at = to_timestamp((data->>'endsAt')::double precision/1000) AT TIME ZONE 'UTC' WHERE message_id=$1": ([messageId]) => change(messageId, (data) => { data.endsAt = realEnd.get(messageId); }),
+        "UPDATE giveaways SET data = (data - 'deliveryClaimedAt') || '{\"endedAt\":\"2020-01-01T00:00:00.000Z\"}' WHERE message_id=$1": ([messageId]) => change(messageId, (data) => {
+            delete data.deliveryClaimedAt;
+            data.endedAt = '2020-01-01T00:00:00.000Z';
+        }),
+    };
+    const pool = {
+        async query(sql, params = []) {
+            const run = statements[String(sql).replace(/\s+/g, ' ').trim()];
+            if (!run) throw Object.assign(new Error(`this statement is not available on the SQLite fixture: ${sql}`), { code: 'SQLITE_FIXTURE_SQL' });
+            run(params);
+            return { rows: [] };
+        },
+    };
+    return { connectionType: 'sqlite', pool, backend, lost: { commits: 0 }, rows, read, ageDelivery, sqlite, raw };
+}
+
+/**
+ * PostgreSQL schema, a fake Discord text channel that keeps its messages, and
+ * the giveaway API mounted twice: with test auth headers, and behind the real
+ * dashboard router.
+ *
+ * `hooks` are awaited before the matching Discord call takes effect, so a
+ * test can make it fail or do something at that exact moment:
+ *   hooks.send(payload)  hooks.afterSend(message)  hooks.fetch(id)
+ *   hooks.edit(message)  hooks.delete(message)     hooks.afterDelete(message)
+ *   hooks.channelFetch(id)
+ */
+export async function createGiveawayFixture(t) {
+    const storage = onSQLite ? await sqliteStorage(t) : await postgresStorage(t);
+    const { pool, backend, lost, rows, read, ageDelivery } = storage;
 
     // ---- Discord ----------------------------------------------------------
     const hooks = {};
@@ -172,7 +266,7 @@ export async function createGiveawayFixture(t) {
         guilds: { cache: new Map([[guildId, guild]]) },
         db: {
             db: backend,
-            getStatus: () => ({ connectionType: 'postgresql', isDegraded: false }),
+            getStatus: () => ({ connectionType: storage.connectionType, isDegraded: false }),
             isAvailable: () => Boolean(backend.isAvailable()),
             get: (...args) => backend.get(...args),
             set: (...args) => backend.set(...args),
@@ -224,24 +318,12 @@ export async function createGiveawayFixture(t) {
     };
 
     // ---- Shortcuts --------------------------------------------------------
-    const rows = async () => (await pool.query(
-        'SELECT message_id, data FROM giveaways WHERE guild_id=$1 ORDER BY id', [guildId],
-    )).rows;
-    const read = async (messageId) => (await pool.query(
-        'SELECT data FROM giveaways WHERE guild_id=$1 AND message_id=$2', [guildId, messageId],
-    )).rows[0]?.data ?? null;
     const prepare = async (messageId) => (await call(`prepare?messageId=${messageId}`)).body;
     /** Prepare, then act with the fresh revision: what the page does after the confirm dialog. */
     const act = async (messageId, action) => {
         const fresh = await prepare(messageId);
         return call('action', 'POST', { messageId, action, revision: fresh.revision, confirmed: true });
     };
-    /** Make an unfinished delivery look old enough that it cannot still be running. */
-    const ageDelivery = (messageId, ms = 10 * 60_000) => pool.query(
-        `UPDATE giveaways SET data = jsonb_set(data, '{deliveryClaimedAt}', to_jsonb((data->>'deliveryClaimedAt')::bigint - $3::bigint))
-         WHERE guild_id=$1 AND message_id=$2`,
-        [guildId, messageId, ms],
-    );
     const sent = () => log.filter(([kind]) => kind === 'send').map(([, id]) => id);
 
     return {

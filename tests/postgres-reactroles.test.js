@@ -4,7 +4,7 @@ import { ComponentType, PermissionsBitField } from 'discord.js';
 import {
     createReactRolesFixture, guildId, memberId, roleId, missingPermissions, serverError,
 } from './helpers/reactroles-fixture.js';
-import { pgEnabled } from './helpers/leveling-postgres-fixture.js';
+import { pgEnabled, onSQLite, isRefused } from './helpers/leveling-postgres-fixture.js';
 import command from '../src/commands/Reaction_roles/reactroles.js';
 import messageDelete from '../src/events/messageDelete.js';
 import { handleReactionRolesSelectMenu } from '../src/handlers/interactionHandlers/reactionRolesSelectMenu.js';
@@ -128,9 +128,9 @@ test('the generic key-value layer may read panels but not write or delete them',
     const fx = await createReactRolesFixture(t);
     const message = await fx.seedPanel();
     const key = `guild:${guildId}:reaction_roles:${message.id}`;
-    assert.equal(await fx.client.db.set(key, { roles: [] }), false);
-    assert.equal(await fx.client.db.set(`reaction_roles:${guildId}:${message.id}`, { roles: [] }), false);
-    assert.equal(await fx.client.db.delete(key), false);
+    assert.equal(await isRefused(fx.client.db.set(key, { roles: [] })), true);
+    assert.equal(await isRefused(fx.client.db.set(`reaction_roles:${guildId}:${message.id}`, { roles: [] })), true);
+    assert.equal(await isRefused(fx.client.db.delete(key)), true);
     assert.equal(await storedRoles(fx, message.id), '12');
     assert.equal(tail((await fx.client.db.get(key)).roles), '12');
 });
@@ -780,7 +780,8 @@ test('a deleted panel message keeps its record; other people\'s messages are not
     fx.panelChannel.messages.cache.delete(message.id);
     // Not cached when it was deleted: the author is unknown, so the record is looked up.
     await messageDelete.execute({ id: message.id, guild: fx.guild, client: fx.client, author: null, channel: fx.panelChannel, partial: true, attachments: new Map(), embeds: [] });
-    assert.equal(queries.length, 1);
+    // One lookup: a single statement on PostgreSQL, the current and the old key on SQLite.
+    assert.equal(queries.length, onSQLite ? 2 : 1);
     fx.control.delayQuery = null;
     assert.equal(await storedRoles(fx, message.id), '12');
 

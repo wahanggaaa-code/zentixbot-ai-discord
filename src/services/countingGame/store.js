@@ -12,6 +12,7 @@
 import { createHash } from 'node:crypto';
 import { pgConfig } from '../../config/database/postgres.js';
 import { isCountingSystem } from './systems.js';
+import { sqliteFor, readRow, changeRows } from '../storage/sqliteRows.js';
 
 const table = pgConfig.tables.temp_data;
 const SNOWFLAKE = /^\d{17,20}$/;
@@ -90,8 +91,34 @@ function assertGuild(guildId) {
 const wrap = (error) => (error?.code?.startsWith?.('COUNTING_') ? error : fail('Counting game storage failed', 'COUNTING_UNAVAILABLE', { cause: error }));
 
 /** The stored game, or an empty one when the server has none. A failed read is thrown, never "no game". */
+const unavailable = () => fail('Database unavailable for the counting game', 'COUNTING_UNAVAILABLE');
+
+function mutateOnSQLite(sqlite, guildId, mutate) {
+    try {
+        return changeRows(sqlite, (rows) => {
+            const stored = rows.get(gameKey(guildId));
+            const current = stored === undefined ? emptyGame() : decodeGame(stored);
+            const out = mutate({ ...current, leaderboard: { ...current.leaderboard } });
+            if (!out || typeof out !== 'object' || typeof out.then === 'function') throw fail('Invalid counting game mutation result', 'COUNTING_INVALID');
+            if (out.write !== false) rows.put(gameKey(guildId), decodeGame(out.game));
+            return out.result;
+        });
+    } catch (error) {
+        throw wrap(error);
+    }
+}
+
 export async function readGame(client, guildId) {
     assertGuild(guildId);
+    const sqlite = sqliteFor(client, unavailable);
+    if (sqlite) {
+        try {
+            const stored = readRow(sqlite, gameKey(guildId));
+            return stored === undefined ? emptyGame() : decodeGame(stored);
+        } catch (error) {
+            throw wrap(error);
+        }
+    }
     const pool = countingPool(client);
     let result;
     try {
@@ -114,6 +141,8 @@ export async function mutateGame(client, guildId, mutate) {
     if (typeof mutate !== 'function' || mutate.constructor?.name === 'AsyncFunction') {
         throw fail('Counting game mutation must be synchronous', 'COUNTING_INVALID');
     }
+    const sqlite = sqliteFor(client, unavailable);
+    if (sqlite) return mutateOnSQLite(sqlite, guildId, mutate);
     const pool = countingPool(client);
     let conn;
     try {

@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger.js';
+import { chooseDatabase } from './database/engine.js';
 
 export const botConfig = {
   // =========================
@@ -483,14 +484,23 @@ export function validateConfig(config) {
     errors.push("Client ID is required (CLIENT_ID environment variable)");
   }
 
-  if (process.env.NODE_ENV === 'production') {
+  // The database: SQLite needs no setting at all. PostgreSQL values are checked only when
+  // PostgreSQL is what the bot will use (src/config/database/engine.js decides that).
+  let database = null;
+  try {
+    database = chooseDatabase(process.env);
+  } catch (error) {
+    errors.push(`Database configuration: ${error.message}`);
+  }
+
+  if (database?.engine === 'postgresql' && process.env.NODE_ENV === 'production') {
     // A full connection URL (DATABASE_URL / POSTGRES_URL) satisfies all Postgres
     // requirements, matching how src/config/database/postgres.js resolves the pool config.
     const hasConnectionUrl = Boolean(process.env.POSTGRES_URL || process.env.DATABASE_URL);
 
     if (!hasConnectionUrl) {
       if (!process.env.POSTGRES_HOST) {
-        errors.push("PostgreSQL connection is required in production (set DATABASE_URL/POSTGRES_URL, or POSTGRES_HOST)");
+        errors.push("PostgreSQL host is required in production (set DATABASE_URL/POSTGRES_URL, or POSTGRES_HOST)");
       }
       if (!process.env.POSTGRES_USER) {
         errors.push("PostgreSQL user is required in production (set DATABASE_URL/POSTGRES_URL, or POSTGRES_USER)");

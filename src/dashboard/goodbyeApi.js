@@ -4,6 +4,7 @@ import {ChannelType, PermissionFlagsBits} from 'discord.js';
 import {pgConfig} from '../config/database/postgres.js';
 import {normalizeWelcomeConfig} from '../utils/database.js';
 import {assertOnboardingShape, assertOnboardingCompatible} from '../services/config/onboardingConflict.js';
+import {sqliteFor} from '../services/storage/sqliteRows.js';
 
 const tables=pgConfig.tables;
 const record=x=>x!==null && typeof x==='object' && !Array.isArray(x);
@@ -11,8 +12,18 @@ const error=(status,message)=>Object.assign(new Error(message),{status});
 const version=serialized=>createHash('sha256').update('goodbye-v1:'+serialized).digest('hex');
 function pool(client){
  const db=client?.db, status=db?.getStatus?.();
- if(status?.connectionType!=='postgresql' || status.isDegraded || !db.isAvailable?.() || !db.db?.isAvailable?.() || !db.db.pool?.connect) throw error(503,'Database PostgreSQL tidak tersedia.');
+ if(status?.connectionType!=='postgresql' || status.isDegraded || !db.isAvailable?.() || !db.db?.isAvailable?.() || !db.db.pool?.connect) throw error(503,'Database tidak tersedia.');
  return db.db.pool;
+}
+// SQLite: the welcome/goodbye config is one row; its revision is the hash of the stored JSON text.
+const unavailable=()=>error(503,'Database tidak tersedia.');
+const welcomeKey=guild=>`guild:${guild}:welcome`,configKey=guild=>`guild:${guild}:config`;
+const sqliteVersion=stored=>stored===null?'missing':version(JSON.stringify(stored));
+// A stored colour is a number, or the "#RRGGBB" text the bot's own commands write as their default.
+function storedColor(value){
+ if(Number.isInteger(value)&&value>=0&&value<=0xffffff)return value;
+ if(typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value))return parseInt(value.slice(1),16);
+ return null;
 }
 function checked(raw){
  if(!record(raw)||(raw.ok!==undefined&&raw.value!==undefined)) throw error(409,'Format welcome/goodbye perlu diperiksa sebelum diedit.');
@@ -24,7 +35,7 @@ function checked(raw){
   if(!record(embed))throw error(409,'Embed goodbye tersimpan perlu diperiksa.');
   if(embed.title!==undefined&&(typeof embed.title!=='string'||!embed.title.trim()||embed.title.length>256))throw error(409,'Judul goodbye tersimpan perlu diperiksa.');
   if(embed.footer!==undefined&&(typeof embed.footer!=='string'||embed.footer.length>1024))throw error(409,'Footer goodbye tersimpan perlu diperiksa.');
-  if(embed.color!==undefined&&(!Number.isInteger(embed.color)||embed.color<0||embed.color>0xffffff))throw error(409,'Warna goodbye tersimpan perlu diperiksa.');
+  if(embed.color!==undefined&&storedColor(embed.color)===null)throw error(409,'Warna goodbye tersimpan perlu diperiksa.');
   if(embed.image!==undefined&&embed.image!==null&&typeof embed.image!=='string'&&(!record(embed.image)||typeof embed.image.url!=='string'))throw error(409,'Gambar goodbye tersimpan perlu diperiksa.');
  }
  return raw;
@@ -33,7 +44,7 @@ function view(raw){
  const cfg=normalizeWelcomeConfig(checked(raw)),embed=cfg.leaveEmbed;
  const image=typeof embed.image==='string'?embed.image:(embed.image?.url??null);
  return {enabled:cfg.goodbyeEnabled,channelId:cfg.goodbyeChannelId,message:cfg.leaveMessage,ping:cfg.goodbyePing,
-  title:embed.title??'👋 Goodbye',footer:embed.footer??'Goodbye from {server}!',color:embed.color??0xed4245,image};
+  title:embed.title??'👋 Goodbye',footer:embed.footer??'Goodbye from {server}!',color:embed.color===undefined?0xed4245:storedColor(embed.color),image};
 }
 function validate(body,guild){
  const keys=['revision','enabled','channelId','message','ping','image','title','footer','color'];
@@ -59,14 +70,29 @@ function fail(res,e){res.status(e.status||503).json({error:e.status?e.message:'G
 export function createGoodbyeApi(client,{auth,csrf}){
  const router=express.Router();router.use(express.json({limit:'16kb'}));
  router.get('/goodbye',auth,async(req,res)=>{try{
+  const channels=()=>[...req.guild.channels.cache.values()].filter(c=>c.type===ChannelType.GuildText).map(c=>({id:c.id,name:c.name}));
+  const sqlite=sqliteFor(client,unavailable);
+  if(sqlite){const stored=sqlite.botGet(welcomeKey(req.guild.id)),goodbye=view(stored??{});return res.json({goodbye,revision:sqliteVersion(stored),channels:channels()});}
   const result=await pool(client).query(`SELECT config,config::text AS serialized FROM ${tables.welcome_configs} WHERE guild_id=$1`,[req.guild.id]);
   const row=result.rows[0],raw=row?row.config:{},goodbye=view(raw);
-  const channels=[...req.guild.channels.cache.values()].filter(c=>c.type===ChannelType.GuildText).map(c=>({id:c.id,name:c.name}));
-  res.json({goodbye,revision:row?version(row.serialized):'missing',channels});
+  res.json({goodbye,revision:row?version(row.serialized):'missing',channels:channels()});
  }catch(e){fail(res,e)}});
  router.patch('/goodbye',auth,csrf,async(req,res)=>{
   let body;try{body=validate(req.body,req.guild)}catch(e){return fail(res,e)}
   let conn;try{
+   const sqlite=sqliteFor(client,unavailable);
+   if(sqlite){
+    const next=sqlite.transaction(tx=>{
+     const stored=tx.botGet(welcomeKey(req.guild.id)),raw=checked(stored??{});
+     if(sqliteVersion(stored)!==body.revision)throw error(409,'Pengaturan berubah. Muat ulang sebelum menyimpan.');
+     const guildConfig=tx.botGet(configKey(req.guild.id))??{};assertOnboardingShape(guildConfig,raw);assertOnboardingCompatible(guildConfig,raw);
+     const {image:_oldImage,...oldEmbed}=record(raw.leaveEmbed)?raw.leaveEmbed:normalizeWelcomeConfig({}).leaveEmbed;
+     const saved={...raw,goodbyeEnabled:body.enabled,goodbyeChannelId:body.channelId,leaveMessage:body.message,goodbyePing:body.ping,
+      leaveEmbed:{...oldEmbed,title:body.title,footer:body.footer,color:body.color,...(body.image===null?{}:{image:{url:body.image}})}};
+     tx.botSet(welcomeKey(req.guild.id),saved);return saved;
+    });
+    return res.json({ok:true,revision:sqliteVersion(next),goodbye:view(next)});
+   }
    conn=await pool(client).connect();await conn.query('BEGIN');
    await conn.query(`INSERT INTO ${tables.guilds}(id) VALUES($1) ON CONFLICT(id) DO NOTHING`,[req.guild.id]);
    const guild=await conn.query(`SELECT config FROM ${tables.guilds} WHERE id=$1 FOR UPDATE`,[req.guild.id]);

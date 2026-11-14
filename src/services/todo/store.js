@@ -1,4 +1,4 @@
-// store.js — to-do lists, read and written directly on PostgreSQL.
+// store.js — to-do lists, read and written directly on the database (PostgreSQL or SQLite).
 //
 // Three kinds of rows in `temp_data`:
 //   todo_{userId}               the personal list of a member
@@ -13,6 +13,7 @@
 // changing the same list are served one after the other.
 
 import { pgConfig } from '../../config/database/postgres.js';
+import { sqliteFor, readRow as readSQLiteRow, readRows as readSQLiteRows, rowTransaction } from '../storage/sqliteRows.js';
 
 const table = pgConfig.tables.temp_data;
 const SNOWFLAKE = /^\d{17,20}$/;
@@ -112,7 +113,17 @@ export function todoPool(client) {
 const wrap = (error) => (error?.code?.startsWith?.('TODO_') ? error : fail('To-do storage failed', 'TODO_UNAVAILABLE', { cause: error }));
 
 /** One stored value, or `undefined` when there is no row. A failed read is thrown, never "no data". */
+const unavailable = () => fail('Database unavailable for to-do lists', 'TODO_UNAVAILABLE');
+
 export async function readRow(client, key) {
+    const sqlite = sqliteFor(client, unavailable);
+    if (sqlite) {
+        try {
+            return readSQLiteRow(sqlite, key);
+        } catch (error) {
+            throw wrap(error);
+        }
+    }
     const pool = todoPool(client);
     try {
         const result = await pool.query(`SELECT value FROM ${table} WHERE key = $1`, [key]);
@@ -125,6 +136,14 @@ export async function readRow(client, key) {
 /** Stored values by key, for the keys that exist. */
 export async function readRows(client, keys) {
     if (keys.length === 0) return new Map();
+    const sqlite = sqliteFor(client, unavailable);
+    if (sqlite) {
+        try {
+            return readSQLiteRows(sqlite, keys);
+        } catch (error) {
+            throw wrap(error);
+        }
+    }
     const pool = todoPool(client);
     try {
         const result = await pool.query(`SELECT key, value FROM ${table} WHERE key = ANY($1::text[])`, [keys]);
@@ -148,6 +167,15 @@ export async function readRows(client, keys) {
  * Anything `work` throws rolls everything back and is passed on.
  */
 export async function transaction(client, work) {
+    const sqlite = sqliteFor(client, unavailable);
+    if (sqlite) {
+        // One to-do change at a time: SQLite has no row locks, so `lock` has nothing left to do.
+        try {
+            return await rowTransaction(sqlite, 'todo', (rows) => work({ lock: () => {}, get: rows.get, getMany: rows.getMany, put: rows.put, del: rows.del }));
+        } catch (error) {
+            throw wrap(error);
+        }
+    }
     const pool = todoPool(client);
     let conn;
     try {

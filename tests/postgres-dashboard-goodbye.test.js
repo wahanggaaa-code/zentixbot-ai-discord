@@ -104,3 +104,17 @@ test('goodbye patch preserves unrelated large JSONB numeric values exactly', {sk
  const {pool,req,payload}=await setup(t);await pool.query(`INSERT INTO guilds(id) VALUES($1)`,[guildId]);await pool.query(`INSERT INTO welcome_configs(guild_id,config) VALUES($1,'{"large":900719925474099312345,"leaveEmbed":{"extra":900719925474099312345}}')`,[guildId]);
  const initial=await (await req('/goodbye')).json();assert.equal((await req('/goodbye','PATCH',payload(initial.revision))).status,200);const row=(await pool.query(`SELECT config->>'large' AS n,config->'leaveEmbed'->>'extra' AS e FROM welcome_configs WHERE guild_id=$1`,[guildId])).rows[0];assert.equal(row.n,'900719925474099312345');assert.equal(row.e,'900719925474099312345');
 });
+
+// A bot command such as /welcome or /autorole stores the complete settings, and the bot's
+// default goodbye colour is written as "#ED4245". The page has to load and save such settings.
+test('goodbye settings last written by a bot command load in the page and can be saved', {skip:!enabled},async t=>{
+ const {client,pool,req,payload}=await setup(t);await updateWelcomeConfig(client,guildId,{welcomeMessage:'Halo {user}'});
+ const stored=(await pool.query('SELECT config FROM welcome_configs WHERE guild_id=$1',[guildId])).rows[0].config;assert.equal(stored.leaveEmbed.color,'#ED4245','what the bot command stored');
+ const get=await req('/goodbye');assert.equal(get.status,200,JSON.stringify(await get.clone().json()));const before=await get.json();assert.equal(before.goodbye.color,0xed4245);assert.equal(before.goodbye.title,'👋 Goodbye');
+ const saved=await req('/goodbye','PATCH',{...payload(before.revision),color:0x123456});assert.equal(saved.status,200);
+ const row=(await pool.query('SELECT config FROM welcome_configs WHERE guild_id=$1',[guildId])).rows[0].config;assert.equal(row.leaveEmbed.color,0x123456);assert.equal(row.welcomeMessage,'Halo {user}');
+ // Other colour texts the bot accepts are shown as numbers; anything else still needs review.
+ await pool.query(`UPDATE welcome_configs SET config=jsonb_set(config,'{leaveEmbed,color}','"#00ff7F"') WHERE guild_id=$1`,[guildId]);assert.equal((await (await req('/goodbye')).json()).goodbye.color,0x00ff7f);
+ for(const bad of ['"red"','"#12345"','"#1234567"','16777216','-1','1.5','true'])
+ {await pool.query(`UPDATE welcome_configs SET config=jsonb_set(config,'{leaveEmbed,color}',$2::jsonb) WHERE guild_id=$1`,[guildId,bad]);assert.equal((await req('/goodbye')).status,409,bad);}
+});

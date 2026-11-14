@@ -35,7 +35,7 @@ import { shutdownMusic } from './services/music/playerHandler.js';
 import pkg from '../package.json' with { type: 'json' };
 import { createReadinessHandler } from './services/storage/databaseReadiness.js';
 
-const DATABASE_NAMES = { postgresql: 'PostgreSQL' };
+const DATABASE_NAMES = { postgresql: 'PostgreSQL', sqlite: 'SQLite' };
 
 class ZentixBot extends Client {
   constructor() {
@@ -94,9 +94,11 @@ class ZentixBot extends Client {
 
       const dbStatus = this.db.getStatus();
       if (!dbStatus.isAvailable || dbStatus.isDegraded) {
-        throw Object.assign(new Error('Persistent database is unavailable; startup aborted.'), {code:'POSTGRES_UNAVAILABLE'});
+        throw Object.assign(new Error('Persistent database is unavailable; startup aborted.'), {code: dbStatus.connectionType === 'sqlite' ? 'SQLITE_UNAVAILABLE' : 'POSTGRES_UNAVAILABLE'});
       }
-      startupLog(`Database: ${DATABASE_NAMES[dbStatus.connectionType] ?? dbStatus.connectionType} connected, data is persistent`);
+      startupLog(dbStatus.connectionType === 'sqlite'
+        ? `Database: SQLite, data is kept in the file ${dbStatus.path} (back this file up; set POSTGRES_URL to use PostgreSQL instead)`
+        : `Database: ${DATABASE_NAMES[dbStatus.connectionType] ?? dbStatus.connectionType} connected, data is persistent`);
 
       for (const line of describeExtraProviders(process.env)) {
         if (line.level === 'warn') logger.warn(line.text);

@@ -20,7 +20,11 @@ test('SQLite bot key-value CRUD, TTL and AI namespace isolation persist after re
 test('legacy aliases read, list and delete consistently; canonical values take priority',async t=>{
  const s=await openSQLiteStore({path:file(t)}),db=createSQLiteBotDatabase(s),canonical=`guild:${g}:reaction_roles:${u}`,legacy=`reaction_roles:${g}:${u}`;
  s.transaction(tx=>tx.botSet(legacy,[{id:1}]));assert.deepEqual(await db.get(canonical),[{id:1}]);assert.deepEqual(await db.list(`guild:${g}:reaction_roles:`),[canonical]);assert.deepEqual(await db.list(`reaction_roles:${g}:`),[canonical]);
- await db.set(canonical,[{id:2}]);assert.deepEqual(await db.get(legacy),[{id:2}]);await db.delete(canonical);assert.equal(await db.get(legacy),null);assert.deepEqual(await db.list(`guild:${g}:`),[]);s.close();
+ // Reaction roles are written by their own store: the generic API reads them and refuses to write.
+ await assert.rejects(db.set(canonical,[{id:2}]),{code:'CONFIG_WRITE_DISABLED'});await assert.rejects(db.delete(canonical),{code:'CONFIG_WRITE_DISABLED'});assert.deepEqual(await db.get(legacy),[{id:1}]);
+ // A key the generic API still writes: the write and the delete reach the old alias too.
+ const notes=`guild:${g}:usernotes:${u}`,oldNotes=`moderation_user_notes_${g}_${u}`;s.transaction(tx=>tx.botSet(oldNotes,[{id:1}]));assert.deepEqual(await db.get(notes),[{id:1}]);
+ await db.set(notes,[{id:2}]);assert.deepEqual(await db.get(oldNotes),[{id:2}]);await db.delete(notes);assert.equal(await db.get(oldNotes),null);assert.equal(await db.get(notes),null);assert.deepEqual(await db.list(`guild:${g}:`),[canonical]);s.close();
 });
 test('economy keys resolve to transaction accounts and block stale and legacy writes',async t=>{
  const s=await openSQLiteStore({path:file(t)}),db=createSQLiteBotDatabase(s),c=client(db),canonical=`guild:${g}:economy:${u}`,legacy=`economy:${g}:${u}`;

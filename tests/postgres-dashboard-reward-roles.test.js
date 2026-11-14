@@ -1,8 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-    createLevelingFixture, pgEnabled, guildId, adminId, channelId, member, role,
-} from './helpers/leveling-postgres-fixture.js';
+    createLevelingFixture, pgEnabled, guildId, adminId, channelId, member, role, onSQLite } from './helpers/leveling-postgres-fixture.js';
 import { createModulesApi } from '../src/dashboard/modulesApi.js';
 import { createOperationsApi } from '../src/dashboard/operationsApi.js';
 import { addXp } from '../src/services/leveling/xpSystem.js';
@@ -128,7 +127,8 @@ test('web level change gives the reward roles and reports them; lowering removes
     assert.equal((await fx.readLevel(user.id)).level, 0);
 });
 
-test('web level change waits for an XP award in progress instead of being overwritten', { skip }, async (t) => {
+// PostgreSQL only: on SQLite an award is one synchronous transaction and cannot be "in progress".
+test('web level change waits for an XP award in progress instead of being overwritten', { skip: skip || onSQLite }, async (t) => {
     const fx = await createLevelingFixture(t);
     const user = fx.addMember(member(1));
     await fx.setLevel(user.id, 0);

@@ -1,20 +1,64 @@
-# Migrasi SQLite — fondasi eksperimental, belum untuk deployment
+# SQLite: database bawaan bot
 
-**Status:** SQLite belum tersedia sebagai pilihan database saat startup. PostgreSQL tetap backend yang dipakai, dan kegagalan koneksi PostgreSQL sekarang menghentikan startup tanpa fallback RAM. Jika ada permintaan SQLite eksplisit (`DATABASE_ENGINE`, `DATABASE_DRIVER`, atau `DB_TYPE` bernilai `sqlite`, `DATABASE_URL` berawalan `sqlite:`/`file:`, atau `DATABASE_PATH` terisi), startup berhenti dengan `SQLITE_INCOMPLETE` sebelum mencoba PostgreSQL. Ini adalah pengaman, bukan cara mengaktifkan SQLite. Jangan mengonfigurasi Wispbyte untuk SQLite berdasarkan kode ini atau menganggap tahap 8 selesai. Jangan gunakan backend SQLite eksperimental untuk data produksi.
+**Status:** SQLite dapat dipakai dan menjadi pilihan bawaan. Bila tidak ada koneksi PostgreSQL yang diatur, bot membuat berkas `data/zentix.db` di folder tempat ia dijalankan dan menyimpan semua datanya di sana. PostgreSQL tetap didukung dan dipakai begitu salah satu nilai koneksinya terisi. Yang sudah diuji hanyalah pengujian lokal dengan Discord tiruan; SQLite belum pernah dijalankan di hosting sungguhan atau dengan server Discord sungguhan.
 
-Fondasi awal `src/services/storage/sqlite.js` menggunakan `node:sqlite`, file SQLite, WAL, foreign keys, busy timeout dan transaksi `BEGIN IMMEDIATE` sinkron dengan rollback. Callback transaksi harus sinkron dan tidak boleh melakukan panggilan jaringan, Discord, provider, atau I/O eksternal. `DatabaseSync` memblokir event loop selama query atau busy timeout: batasi ukuran dan durasi transaksi; ini bukan bukti aman untuk beban produksi Wispbyte.
+Data PostgreSQL **tidak dipindahkan** ke SQLite, dan sebaliknya. Fungsi `importPostgres…Snapshot` yang dijelaskan di bawah tetap eksperimen internal dan tidak tersambung ke perintah atau skrip mana pun.
 
-Adaptasi **belum tersambung ke startup**: uji lokal memakai adapter eksplisit; API penyimpanan AI foundation/welcome/chat/knowledge/Activities dan transaksi ekonomi mengenali adapter tersebut. Poin Activities masih terpisah dan belum terhubung ke wallet.
+## Bagaimana database dipilih
 
-Perkembangan eksperimental: adapter API key-value bot mencakup CRUD, TTL untuk key temp/cache, alias key lama, daftar key dan increment/decrement atomik; data bot dipisahkan dari namespace AI. Skema SQLite internal versi 1–3 dapat naik ke versi 4 secara transaksional, dan tabel yang hilang/versi tidak dikenal ditolak. Dashboard welcome, pengaturan modul, kasus, tiket, leaderboard dan edit anggota memiliki jalur SQLite yang diuji lokal. Pada SQLite, pembelian role premium, wipe data pengguna, dan penghapusan sistem tiket **ditolak sebelum tindakan** sampai dapat dipindahkan dengan aman. Giveaway SQLite eksperimental memakai transaksi untuk join, membatasi full-write dengan snapshot, dan menyimpan hasil undian sebelum mengubah Discord; tes lokal mencakup beberapa proses dan dua scheduler bersamaan. Jika pengiriman Discord gagal atau hasilnya tidak pasti, `deliveryStatus` tetap `pending` dan perlu pemeriksaan/manual repair; tidak ada jaminan exactly-once antara database dan Discord. Jangan menganggap giveaway siap produksi sebelum pemulihan, seluruh command dan pengujian langsung diaudit. Counter tiket menggunakan increment atomik. Pembersihan TTL tersedia secara bounded dan transaksional di adapter, tetapi belum terhubung ke scheduler dan belum mengatasi pertumbuhan WAL atau kebutuhan vacuum. Audit verifikasi pada adapter SQLite disimpan di tabel terpisah, tanpa fallback diam-diam ke PostgreSQL. SQLite menolak penulisan saldo gaya lama; edit dashboard saldo memakai transaksi yang sama dengan akun ekonomi.
+Keputusannya dibuat sekali saat startup oleh `src/config/database/engine.js`:
 
-Ini belum berarti kompatibilitas bot selesai. Semantik key terstruktur PostgreSQL yang mentransformasi data belum semua disamakan dan diuji; legacy data PostgreSQL belum diimpor. `list()` adapter kini membatasi pencarian ke prefix guild yang dikenali dan alias lamanya; panggilan tanpa prefix tetap dapat memindai seluruh database. Lebih dari 10.000 key/akun yang cocok akan gagal tertutup. Query prefix dan beban besar masih memerlukan pengukuran serta optimasi sebelum produksi. Alias daftar catatan moderasi kini dipetakan dengan benar; data yang terlanjur dimigrasi oleh kode pemetaan lama perlu diaudit secara terpisah. Pada adapter SQLite, konfigurasi guild dibaca dengan snapshot: full-write harus cocok dengan snapshot dan pembaruan parsial digabungkan secara atomik; penulisan langsung melalui API key-value ditolak. Penggunaan snapshot dan semua call site, termasuk efek Discord sebelum penyimpanan, masih harus diaudit dan diuji. Penulis konfigurasi PostgreSQL yang lama masih punya risiko stale-write. Pemulihan giveaway yang pending, seluruh operasi dashboard/bot, scheduler, izin, kegagalan, penghapusan, backup dan restore masih perlu audit dan uji terintegrasi. Implementasi PostgreSQL untuk pembelian role dan wipe juga masih mempunyai risiko writer lama. Contoh pilihan path tidak disediakan sebagai konfigurasi deployment karena belum lengkap.
+| Keadaan `.env` | Hasil |
+| --- | --- |
+| `DATABASE_ENGINE` (atau `DATABASE_DRIVER`, `DB_TYPE`) berisi `sqlite`/`sqlite3` atau `postgresql`/`postgres`/`pg` | Pilihan itu dipakai. Nilai lain: startup berhenti dengan `DATABASE_ENGINE_INVALID`; tiga kunci itu saling berbeda: `DATABASE_ENGINE_AMBIGUOUS` |
+| Salah satu dari `POSTGRES_URL`, `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` terisi, atau `DATABASE_URL` bukan `sqlite:`/`file:` | PostgreSQL |
+| `DATABASE_PATH` terisi, atau `DATABASE_URL` berawalan `sqlite:`/`file:` | SQLite di lokasi itu |
+| Dua baris di atas sama-sama berlaku tanpa `DATABASE_ENGINE` | Startup berhenti dengan `DATABASE_ENGINE_AMBIGUOUS` |
+| Tidak ada satu pun | SQLite di `data/zentix.db` |
 
-Tes fondasi menggunakan file sementara dan proses terpisah, bukan mock SQLite: jalankan `node --test tests/sqlite-*.test.js` dengan Node 22.16+ (diverifikasi dengan 22.23.5; `sqlite.backup` memerlukan 22.16+). `node:sqlite` masih dapat memberi peringatan eksperimental. Suite lama `node --test tests/tahap{5,6,7,8}*.test.js` juga harus lulus.
+Nilai kosong dihitung sebagai tidak diisi. `:memory:` ditolak (`DATABASE_PATH_INVALID`): database yang hilang saat restart bukan pilihan.
 
-Sebelum beralih: audit seluruh jalur baca/tulis dan transaksi termasuk role premium dan penghapusan; lengkapi migrasi versi skema, driver/API serta pengecekan versi dan kegagalan startup tanpa fallback RAM; tes kompetisi lintas proses, restart, rollback, data lama dan seluruh fitur; pastikan satu lokasi file persisten dengan izin terbatas; file SQLite baru dibuat dengan mode 0600 dan jalur file symlink ditolak, tetapi izin file yang sudah ada tidak diubah dan direktori induk tetap harus tepercaya; fondasi `backupTo` eksperimental memakai SQLite Online Backup API, membuat file baru tanpa overwrite dengan mode 0600, dan memeriksa `quick_check`; tes lokal memulihkan snapshot saat ada writer. Ini belum terhubung ke skrip operasional: direktori harus tepercaya, akses backup dibatasi, dan prosedur backup/restore serta retensi tetap harus diuji pada lingkungan deployment. Gunakan API backup atau snapshot yang aman dengan database berhenti, termasuk WAL. Mengopi file `.db` saja saat WAL aktif bisa menghasilkan backup tidak konsisten. Verifikasi kapasitas, latensi, filesystem dan persistensi Wispbyte saat tahap 9.
+Tidak ada perpindahan diam-diam ke database lain. PostgreSQL yang diatur tetapi tidak dapat dihubungi menghentikan startup (`POSTGRES_UNAVAILABLE`); berkas SQLite yang tidak dapat dibuka menghentikan startup dengan kode `SQLITE_…`. Tidak ada fallback ke memori pada keduanya. Node.js yang lebih lama dari 22.13 menghentikan startup dengan `SQLITE_RUNTIME`.
 
-PostgreSQL ke SQLite **tidak otomatis dimigrasikan**. Bila ada data PostgreSQL, hentikan semua writer, buat dan verifikasi backup, gunakan prosedur ekspor/impor teruji yang mencakup seluruh tabel, key legacy, TTL dan relasi, bandingkan data dan uji restore sebelum cutover. Belum ada skrip migrasi yang aman untuk digunakan. Jangan menjalankan bot dengan dua backend aktif pada data sama; jangan menyatukan reward sampai semua writer ekonomi memakai transaksi yang sama.
+Pemeriksaan konfigurasi di `src/config/bot.js` hanya menuntut nilai PostgreSQL bila PostgreSQL yang akan dipakai, sehingga `NODE_ENV=production` tanpa pengaturan database berjalan dengan SQLite.
+
+## Susunan data di SQLite
+
+Satu berkas dengan mode WAL, dibuka oleh `src/services/storage/sqlite.js` memakai `node:sqlite` bawaan Node.js (tanpa paket tambahan). Tiga tabel: `zentix_bot_kv` (data bot, satu baris per kunci, nilai berupa JSON), `zentix_economy` (akun ekonomi) dan `zentix_kv` (data AI). Setiap perubahan fitur berjalan dalam satu transaksi `BEGIN IMMEDIATE` yang sinkron; hanya ada satu penulis pada satu waktu.
+
+Berkas baru dibuat dengan izin 0600. Cadangan: `npm run backup:db` saat bot menyala (satu berkas di `backups/`, Node 22.16 ke atas), atau salin seluruh folder `data/` saat bot berhenti. Langkah pemulihan ada di `docs/hosting.md`.
+
+## Perbedaan perilaku dengan PostgreSQL
+
+Bot, perintah dan dashboard memakai jalur yang sama pada kedua database; suite tes fitur yang sama dijalankan pada keduanya. Perbedaan yang ada, semuanya disengaja dan dipasang di tes:
+
+| Hal | PostgreSQL | SQLite |
+| --- | --- | --- |
+| `COMMIT` yang gagal | Jawaban "database tidak mengonfirmasi perubahan; mungkin tersimpan, mungkin tidak" (kode `…_UNCERTAIN`) | Perubahan dibatalkan dan jawabannya kegagalan biasa ("tidak ada yang diubah"). Jawaban `COMMIT` tidak dapat hilang karena tidak lewat jaringan |
+| Dua penulis bersamaan | Kunci baris dan `pg_advisory_xact_lock` | Satu penulis; yang kedua menunggu transaksi pertama selesai |
+| Menulis baris milik sebuah fitur lewat `client.db.set`/`delete` umum (welcome, Join to Create, counter, reaction role, counting, to-do) | Mengembalikan `false` | Melempar `CONFIG_WRITE_DISABLED` (lamaran: `APPLICATION_WRITE_DISABLED`). Membaca tetap bisa pada keduanya. Fitur-fitur itu menulis lewat penyimpanannya sendiri |
+| Giveaway | Satu baris per giveaway di tabel `giveaways` | Satu baris per server berisi semua giveaway |
+| Akun ekonomi | Kolom `balance`, `bank`, `data`; ada tabel `users` | Satu catatan JSON per akun di `zentix_economy`; tidak ada tabel `users` |
+| Batas ukuran data Join to Create | Dihitung dari `jsonb` | Dihitung dari teks JSON yang disimpan |
+| Database tidak dapat dipakai | Galat; tidak pernah dianggap "belum diatur" | Sama: `getEconomyData` melempar `ECONOMY_UNAVAILABLE`, penyimpanan fitur melempar kode `…_UNAVAILABLE` |
+| AFK | Tabel `afk_status` | Ditolak oleh adapter. Tidak ada perintah bot yang memakainya saat ini |
+
+Batas yang perlu diketahui: `DatabaseSync` memblokir event loop selama sebuah query, jadi SQLite cocok untuk satu proses bot pada satu server. Beban tinggi, beberapa proses bot pada satu berkas, dan berkas di penyimpanan jaringan belum diuji.
+
+## Pengujian
+
+- `tests/sqlite-startup-guard.test.js`: pemilihan database, startup, kegagalan, `/ready`.
+- `tests/sqlite-everyday-use.test.js`: bot dimulai lewat kode startup yang sebenarnya tanpa pengaturan database; warning, ulang tahun, ekonomi, level, pengaturan server, akses perintah dan welcome disimpan dan ditemukan lagi setelah restart; `src/app.js` dijalankan utuh dalam mode produksi sampai tahap login Discord.
+- `tests/sqlite-feature-suites.test.js`: suite fitur yang ditulis untuk PostgreSQL (to-do, counting, reaction role, server stats, lamaran, laporan, halaman dashboard, level dan reward role, ekonomi, Join to Create, giveaway, tiket) dijalankan ulang pada berkas SQLite. Tes yang hanya bermakna di PostgreSQL (jawaban `COMMIT` yang hilang di jaringan; penulisan yang ditahan di tengah oleh koneksi lain) dilewati dan jumlahnya dipasang di berkas itu.
+- `tests/postgres-dashboard-live-walk.test.js`: seluruh formulir dashboard dijalankan pada kedua database dan status jawabannya harus sama.
+- `tests/sqlite-backup-restore.test.js`: `npm run backup:db` saat bot memegang berkasnya, pemulihan dari berkas cadangan ke keadaan saat cadangan dibuat, dan salin-folder saat bot berhenti.
+- `tests/sqlite-*.test.js` lainnya: fondasi, adapter, transaksi lintas proses.
+
+Tes memakai berkas SQLite sungguhan di folder sementara, bukan tiruan. Jalankan dengan Node 22.16 atau lebih baru (fungsi backup `node:sqlite` baru ada sejak versi itu).
+
+## Catatan teknis lama
+
+Bagian-bagian di bawah ditulis saat SQLite masih eksperimen. Rincian tentang importer snapshot, inventaris dan audit PostgreSQL masih berlaku sebagai catatan teknis; kalimat yang menyebut SQLite "belum tersambung ke startup" sudah tidak berlaku.
 
 ## Inventaris PostgreSQL read-only (eksperimental)
 

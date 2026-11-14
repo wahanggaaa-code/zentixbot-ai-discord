@@ -8,6 +8,7 @@ import { logger } from '../../utils/logger.js';
 import { getLevelingConfig, getUserLevelData } from './leveling.js';
 import { getUserLevelPrefix } from '../../utils/database/keys.js';
 import { pgConfig } from '../../config/database/postgres.js';
+import { sqliteFor } from '../storage/sqliteRows.js';
 import { checkRewardRole, resolveRewardRole, syncMemberRewardRoles } from './rewardRoles.js';
 
 const USER_ID = /^\d{17,20}$/;
@@ -29,6 +30,15 @@ async function listLevelUserIds(client, guildId, minLevel) {
             [guildId, minLevel],
         );
         return result.rows.map(row => row.user_id).filter(id => USER_ID.test(id));
+    }
+
+    // SQLite: the same answer from the stored level records; a failed read fails the sync.
+    const sqlite = sqliteFor(client, () => new Error('Level database unavailable'));
+    if (sqlite) {
+        return sqlite.botLevels(guildId)
+            .filter(({ userId, data }) => USER_ID.test(userId) && Number.isSafeInteger(data?.level) && data.level >= minLevel)
+            .map(({ userId }) => userId)
+            .sort();
     }
 
     if (!client.db?.list) throw new Error('Level database listing unavailable');

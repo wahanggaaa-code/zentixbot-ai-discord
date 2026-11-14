@@ -15,7 +15,7 @@ import {
     removeJoinToCreateTrigger,
 } from '../src/services/storage/postgresJoinToCreateTransactions.js';
 import { initializeJoinToCreate, updateChannelConfig, removeTriggerChannel, getConfiguration, getChannelConfiguration } from '../src/services/joinToCreateService.js';
-import { pgEnabled as enabled, GUILD_ID, TRIGGER_ID, snowflake, hasCode, createJtcDatabase, loseCommitResponse } from './helpers/jtc-postgres-fixture.js';
+import { pgEnabled as enabled, onSQLite, isRefused, GUILD_ID, TRIGGER_ID, snowflake, hasCode, createJtcDatabase, loseCommitResponse } from './helpers/jtc-postgres-fixture.js';
 import { createFakeGuild, discordError } from './helpers/fake-discord-guild.js';
 
 const EVERYONE = GUILD_ID;
@@ -301,7 +301,8 @@ test('a late answer that arrives while the reservation is still open is register
     assert.deepEqual(await w.pending(), []);
 });
 
-test('registration: a lost COMMIT is read back instead of repeated; a permanent failure removes the new channel', { skip: !enabled }, async (t) => {
+// PostgreSQL only: a SQLite commit happens in this process and its answer cannot get lost.
+test('registration: a lost COMMIT is read back instead of repeated; a permanent failure removes the new channel', { skip: !enabled || onSQLite }, async (t) => {
     const w = await world(t);
     const alice = w.discord.addMember(user(1));
     const bob = w.discord.addMember(user(2));
@@ -507,8 +508,8 @@ test('the generic key/value writer refuses Join to Create keys', { skip: !enable
     const w = await world(t);
     const before = await w.data();
     for (const key of [w.key, `${w.key}:channels`]) {
-        assert.equal(await w.backend.set(key, { enabled: false, triggerChannels: [] }), false);
-        assert.equal(await w.backend.delete(key), false);
+        assert.equal(await isRefused(w.backend.set(key, { enabled: false, triggerChannels: [] })), true);
+        assert.equal(await isRefused(w.backend.delete(key)), true);
         await assert.rejects(w.backend.increment(key), hasCode('CONFIG_WRITE_DISABLED'));
         await assert.rejects(w.backend.decrement(key), hasCode('CONFIG_WRITE_DISABLED'));
     }

@@ -26,7 +26,7 @@
    +`<p>Bot langsung mengirim pesan publik ke channel yang dipilih.</p></div><span>✳</span></div>`
    +`<div id="giveawayCreate" aria-live="polite">Memuat pilihan…</div></section>`
    +`<section class="f-panel" style="margin-top:18px"><div class="f-panel-head"><div><h2>Yang perlu diperhatikan</h2>`
-   +`<p>Data berasal dari PostgreSQL, bukan hasil pemeriksaan pesan Discord.</p></div><span>✳</span></div>`
+   +`<p>Data berasal dari database bot, bukan hasil pemeriksaan pesan Discord.</p></div><span>✳</span></div>`
    +`<p class="f-muted">Status tersimpan bukan jaminan pesan Discord sudah sesuai. Status pengiriman yang tidak tercatat bukan bukti gagal atau berhasil. Periksa pesan sebelum bertindak.</p>`
    +`<p class="f-muted">Mengakhiri atau mengundi ulang akan mengedit pesan dan mengirim atau memperbarui pengumuman. Menghapus akan menghapus pesan Giveaway dan seluruh entrinya; pengumuman pemenang yang sudah ada dibiarkan.</p>`
    +`<p class="f-muted">Jika pengiriman tertunda, periksa channel dulu: tandai terkirim bila pengumumannya sudah ada, atau kirim ulang bila belum. Bot tidak pernah mengulang sendiri.</p>`

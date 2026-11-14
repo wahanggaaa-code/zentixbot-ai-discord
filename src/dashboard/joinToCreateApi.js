@@ -3,11 +3,12 @@ import {ChannelType} from 'discord.js';
 import {pgConfig} from '../config/database/postgres.js';
 import {getJoinToCreateConfigKey,getJoinToCreateChannelsKey} from '../utils/database/keys.js';
 import {parseJoinToCreatePending} from '../utils/joinToCreatePending.js';
+import {sqliteFor} from '../services/storage/sqliteRows.js';
 
 const id=x=>typeof x==='string'&&/^\d{17,20}$/.test(x);
 const obj=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const fail=(status,message)=>Object.assign(new Error(message),{status});
-function pool(client){const db=client?.db,s=db?.getStatus?.();if(s?.connectionType!=='postgresql'||s.isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool?.connect)throw fail(503,'Database PostgreSQL tidak tersedia.');return db.db.pool;}
+function pool(client){const db=client?.db,s=db?.getStatus?.();if(s?.connectionType!=='postgresql'||s.isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool?.connect)throw fail(503,'Database tidak tersedia.');return db.db.pool;}
 const defaults={enabled:false,triggerChannels:[],categoryId:null,channelNameTemplate:"{username}'s Room",userLimit:0,bitrate:64000,temporaryChannels:{},channelOptions:{}};
 function validate(raw){
  if(!obj(raw)||(raw.ok!==undefined&&raw.value!==undefined))throw fail(409,'Data Join to Create perlu diperiksa.');
@@ -26,6 +27,14 @@ function validate(raw){
 // One SQL statement gives a consistent view of known keys at each read.
 async function readSnapshot(client,guildId){
  const key=getJoinToCreateConfigKey(guildId),channelsKey=getJoinToCreateChannelsKey(guildId);
+ const sqlite=sqliteFor(client,()=>fail(503,'Database tidak tersedia.'));
+ if(sqlite){
+  // One SQLite transaction is one consistent view as well.
+  const {stored,otherData}=sqlite.transaction(tx=>({stored:tx.botGetRaw(key),otherData:tx.hasRawAIKey(key)||tx.hasRawKey(channelsKey)}));
+  if(!stored)return {row:undefined,otherData};
+  const serialized=JSON.stringify(stored.value),fits=Buffer.byteLength(serialized,'utf8')<=524288;
+  return {row:{has_expiry:stored.expiresAt!==null,expired:stored.expiresAt!==null&&stored.expiresAt<=Date.now(),value:fits?stored.value:null,serialized:fits?serialized:null},otherData};
+ }
  const result=await pool(client).query(`SELECT 'temp' AS source,key,expires_at IS NOT NULL AS has_expiry,(expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP) AS expired,CASE WHEN key=$1 AND octet_length(value::text)<=524288 THEN value ELSE NULL END AS value,CASE WHEN key=$1 AND octet_length(value::text)<=524288 THEN value::text ELSE NULL END AS serialized FROM ${pgConfig.tables.temp_data} WHERE key=ANY($2::text[]) UNION ALL SELECT 'cache' AS source,key,expires_at IS NOT NULL AS has_expiry,(expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP) AS expired,NULL::jsonb AS value,NULL::text AS serialized FROM ${pgConfig.tables.cache_data} WHERE key=ANY($2::text[])`,[key,[key,channelsKey]]);
  return {row:result.rows.find(r=>r.source==='temp'&&r.key===key),otherData:result.rows.some(r=>r.source==='cache'||r.key===channelsKey)};
 }

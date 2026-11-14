@@ -69,8 +69,9 @@ export async function saveGiveaway(client, guildId, giveawayData) {
             );
         }
 
-        if(isSQLiteGiveawayBackend(client)){saveSQLiteGiveaway(client,guildId,giveawayData);return true;}
+        // The claim/acknowledge protocol first: it runs on PostgreSQL and on SQLite opened at startup.
         if(isPostgresGiveawayBackend(client))return await createPostgresGiveaway(client,guildId,giveawayData);
+        if(isSQLiteGiveawayBackend(client)){saveSQLiteGiveaway(client,guildId,giveawayData);return true;}
         const key = giveawayKey(guildId);
         const giveaways = await getGuildGiveaways(client, guildId);
 
@@ -107,8 +108,8 @@ export async function deleteGiveaway(client, guildId, messageId) {
             );
         }
 
+        if(isPostgresGiveawayBackend(client))throw new ZentixBotError('Giveaway deletion must use the deletion protocol',ErrorTypes.DATABASE,'Giveaway deletion is temporarily unavailable; no message or data was deleted.');
         if(isSQLiteGiveawayBackend(client))return deleteSQLiteGiveaway(client,guildId,messageId);
-        if(isPostgresGiveawayBackend(client))throw new ZentixBotError('PostgreSQL giveaway deletion unavailable',ErrorTypes.DATABASE,'Giveaway deletion is temporarily unavailable; no message or data was deleted.');
         const key = giveawayKey(guildId);
         const giveaways = await getGuildGiveaways(client, guildId);
 

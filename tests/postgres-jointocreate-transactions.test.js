@@ -15,7 +15,7 @@ import {
     completeJoinToCreate as complete,
     cancelJoinToCreatePending as cancel,
 } from '../src/services/storage/postgresJoinToCreateTransactions.js';
-import { pgEnabled as enabled, GUILD_ID as guild, TRIGGER_ID as trigger, snowflake as mid, hasCode as code, createJtcDatabase as fixture, loseCommitResponse } from './helpers/jtc-postgres-fixture.js';
+import { pgEnabled as enabled, GUILD_ID as guild, TRIGGER_ID as trigger, snowflake as mid, hasCode as code, createJtcDatabase as fixture, loseCommitResponse, onSQLite } from './helpers/jtc-postgres-fixture.js';
 
 const owner = mid(2);
 const channel = mid(1);
@@ -245,7 +245,8 @@ test('a reservation is refused when there is no room left to register its channe
     assert.equal((await inspect(client, guild)).pendingCreateCount, 0, 'the record itself is still within the limit');
 });
 
-test('a lost COMMIT response leaves a state the caller can read back', { skip: !enabled }, async (t) => {
+// PostgreSQL only: a SQLite commit happens in this process and its answer cannot get lost.
+test('a lost COMMIT response leaves a state the caller can read back', { skip: !enabled || onSQLite }, async (t) => {
     const { client, pool, data } = await fixture(t);
     await setupTrigger(client, guild, trigger, { userLimit: 1 });
 

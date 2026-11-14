@@ -11,6 +11,7 @@
 
 import { createHash } from 'node:crypto';
 import { pgConfig } from '../../config/database/postgres.js';
+import { sqliteFor, readRows, readPrefixes, changeRows } from '../storage/sqliteRows.js';
 
 const table = pgConfig.tables.temp_data;
 const SNOWFLAKE = /^\d{17,20}$/;
@@ -116,8 +117,49 @@ function decodeRows(rows, guildId) {
 const SELECT = `SELECT key, value FROM ${table} WHERE (key LIKE $1 OR key LIKE $2) AND (expires_at IS NULL OR expires_at > NOW())`;
 
 /** Every stored panel of the guild. `rejected` counts rows this code cannot read. Throws on a database error. */
+const unavailable = () => fail('Database unavailable for reaction role panels', 'REACTROLES_UNAVAILABLE');
+
+/**
+ * What a mutation asked for, checked against the panels that exist. Returns the keys to
+ * delete and the panels to store, or null when nothing is to be written.
+ */
+function planChange(panels, out, guildId) {
+    if (!out || typeof out !== 'object' || typeof out.then === 'function') throw fail('Invalid panel mutation result', 'REACTROLES_INVALID');
+    if (out.write === false) return null;
+    const remove = [...new Set(out.remove ?? [])];
+    const put = out.put ?? [];
+    if (remove.some((id) => !isSnowflake(id))) throw fail('Invalid message id', 'REACTROLES_INVALID');
+    const after = new Map(panels.map((panel) => [panel.messageId, panel]));
+    for (const id of remove) after.delete(id);
+    for (const entry of put) {
+        const panel = decodePanel(entry, guildId, entry?.messageId);
+        if (!panel || panel.roles.length === 0) throw fail('Refusing to store an invalid panel', 'REACTROLES_INVALID');
+        after.set(panel.messageId, panel);
+    }
+    if (after.size > MAX_PANELS && after.size > panels.length) throw fail('Panel limit reached', 'REACTROLES_LIMIT', { limit: MAX_PANELS });
+    return { remove, store: put.map((entry) => after.get(entry.messageId)) };
+}
+
+function mutateOnSQLite(sqlite, guildId, mutate) {
+    return changeRows(sqlite, (rows) => {
+        const { panels } = decodeRows(rows.rows(canonicalPrefix(guildId), legacyPrefix(guildId)), guildId);
+        const out = mutate(panels.map((panel) => ({ ...panel, roles: [...panel.roles] })));
+        const plan = planChange(panels, out, guildId);
+        if (plan) {
+            for (const id of plan.remove) rows.del(panelKey(guildId, id), legacyKey(guildId, id));
+            for (const panel of plan.store) {
+                rows.put(panelKey(guildId, panel.messageId), panel);
+                rows.del(legacyKey(guildId, panel.messageId));
+            }
+        }
+        return out.result;
+    });
+}
+
 export async function readPanels(client, guildId) {
     assertGuild(guildId);
+    const sqlite = sqliteFor(client, unavailable);
+    if (sqlite) return decodeRows(readPrefixes(sqlite, canonicalPrefix(guildId), legacyPrefix(guildId)), guildId);
     const pool = panelPool(client);
     const result = await pool.query(SELECT, [like(canonicalPrefix(guildId)), like(legacyPrefix(guildId))]);
     return decodeRows(result.rows, guildId);
@@ -127,6 +169,11 @@ export async function readPanels(client, guildId) {
 export async function readPanel(client, guildId, messageId) {
     assertGuild(guildId);
     if (!isSnowflake(messageId)) return null;
+    const sqlite = sqliteFor(client, unavailable);
+    if (sqlite) {
+        const rows = [...readRows(sqlite, [panelKey(guildId, messageId), legacyKey(guildId, messageId)])].map(([key, value]) => ({ key, value }));
+        return decodeRows(rows, guildId).panels[0] ?? null;
+    }
     const pool = panelPool(client);
     const result = await pool.query(
         `SELECT key, value FROM ${table} WHERE key = ANY($1::text[]) AND (expires_at IS NULL OR expires_at > NOW())`,
@@ -148,6 +195,8 @@ export async function mutatePanels(client, guildId, mutate) {
     if (typeof mutate !== 'function' || mutate.constructor?.name === 'AsyncFunction') {
         throw fail('Panel mutation must be synchronous', 'REACTROLES_INVALID');
     }
+    const sqlite = sqliteFor(client, unavailable);
+    if (sqlite) return mutateOnSQLite(sqlite, guildId, mutate);
     const pool = panelPool(client);
     const conn = await pool.connect();
     try {
@@ -158,31 +207,16 @@ export async function mutatePanels(client, guildId, mutate) {
         const { panels } = decodeRows(rows.rows, guildId);
 
         const out = mutate(panels.map((panel) => ({ ...panel, roles: [...panel.roles] })));
-        if (!out || typeof out !== 'object' || typeof out.then === 'function') throw fail('Invalid panel mutation result', 'REACTROLES_INVALID');
-        if (out.write === false) {
+        const plan = planChange(panels, out, guildId);
+        if (!plan) {
             await conn.query('ROLLBACK');
             return out.result;
         }
 
-        const remove = [...new Set(out.remove ?? [])];
-        const put = out.put ?? [];
-        if (remove.some((id) => !isSnowflake(id))) throw fail('Invalid message id', 'REACTROLES_INVALID');
-
-        const after = new Map(panels.map((panel) => [panel.messageId, panel]));
-        for (const id of remove) after.delete(id);
-        for (const entry of put) {
-            const panel = decodePanel(entry, guildId, entry?.messageId);
-            if (!panel || panel.roles.length === 0) throw fail('Refusing to store an invalid panel', 'REACTROLES_INVALID');
-            after.set(panel.messageId, panel);
-        }
-        // Older data may already hold more than the limit; only growing past it is refused.
-        if (after.size > MAX_PANELS && after.size > panels.length) throw fail('Panel limit reached', 'REACTROLES_LIMIT', { limit: MAX_PANELS });
-
-        for (const id of remove) {
+        for (const id of plan.remove) {
             await conn.query(`DELETE FROM ${table} WHERE key = ANY($1::text[])`, [[panelKey(guildId, id), legacyKey(guildId, id)]]);
         }
-        for (const entry of put) {
-            const panel = after.get(entry.messageId);
+        for (const panel of plan.store) {
             await conn.query(
                 `INSERT INTO ${table} (key, value, expires_at) VALUES ($1, $2::jsonb, NULL)
                  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, expires_at = NULL`,

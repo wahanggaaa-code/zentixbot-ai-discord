@@ -10,7 +10,14 @@ export function createDatabaseReadinessProbe({timeoutMs=2000}={}) {
   try{return Boolean(wrapper&&!wrapper.useFallback&&wrapper.getStatus?.().connectionType==='postgresql'&&wrapper.isAvailable?.()&&wrapper.db?.isAvailable?.()&&wrapper.db.pool===pool&&typeof pool?.query==='function')}
   catch{return false}
  }
+ // SQLite is a local file: one small read tells whether it can still be used. It is synchronous, so nothing can queue up.
+ function sqliteReady(wrapper){
+  try{const sqlite=wrapper.db?.sqlite;if(wrapper.useFallback||!wrapper.isAvailable?.()||sqlite?.dialect!=='sqlite'||!sqlite.isOpen())return false;sqlite.botGet('zentix:readiness');return true}
+  catch{return false}
+ }
  return async function check(wrapper){
+  let type;try{type=wrapper?.getStatus?.().connectionType}catch{return false}
+  if(type==='sqlite')return sqliteReady(wrapper);
   const pool=wrapper?.db?.pool;
   if(!eligible(wrapper,pool))return false;
   // Do not queue unlimited probes if a previous request never resolves, even
