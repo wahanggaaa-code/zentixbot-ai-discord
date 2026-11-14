@@ -34,13 +34,28 @@ export const consoleColorEnabled = (env = process.env) => !env.NO_COLOR;
 export function formatConsoleLine({ timestamp, level, displayLevel, message, stack, extras }, { color = false } = {}) {
     const tag = TAGS[displayLevel] ?? TAGS[level] ?? String(level).toUpperCase();
     const shown = (extras ?? []).filter((extra) => extra === null || !['object', 'function', 'symbol'].includes(typeof extra));
-    const lines = [String(message ?? ''), ...shown.map(String)].join(' ').split('\n');
+    let text = [String(message ?? ''), ...shown.map(String)].join(' ');
+    let kind = null;
+    const frames = [];
     if (stack) {
-        // Winston already appended the error's message to ours; the stack adds its kind and the frames.
-        const kind = /^([^\s:]+): /.exec(stack)?.[1];
-        if (kind && kind !== 'Error' && !lines[0].includes(kind)) lines[0] += ` (${kind})`;
-        lines.push(...String(stack).split('\n').filter((line) => /^\s+at /.test(line)));
+        // The stack starts with "Kind: message" (or "Kind [CODE]: message"), followed by the frames.
+        const all = String(stack).split('\n');
+        const first = all.findIndex((line) => /^\s+at /.test(line));
+        const head = (first === -1 ? all : all.slice(0, first)).join('\n').trim();
+        const named = /^([^\s:]+(?: \[[^\]\n]+\])?):(?: |$)/.exec(head);
+        const reason = (named ? head.slice(named[0].length) : head).trim();
+        // An error passed to the logger has its message appended to ours by Winston. One passed as a detail
+        // ({ error, stack }) does not, and without this the console would show frames and no reason.
+        if (reason && !text.includes(reason)) text += (text ? ': ' : '') + reason;
+        // The kind is worth showing unless it is the plain "Error"; a kind with a code is the whole reason
+        // when the message is empty (Node's AggregateError [ECONNREFUSED]).
+        const name = named?.[1].split(' ')[0];
+        if (name && name !== 'Error' && !text.split('\n')[0].includes(name)) kind = named[1];
+        if (first !== -1) frames.push(...all.slice(first).filter((line) => /^\s+at /.test(line)));
     }
+    const lines = text.split('\n');
+    if (kind) lines[0] += ` (${kind})`;
+    lines.push(...frames);
     const indent = ' '.repeat(timestamp.length + 2 + TAG_WIDTH + 1);
     const head = `${paint(timestamp, DIM, color)}  ${paint(tag.padEnd(TAG_WIDTH), COLORS[tag] ?? DIM, color)} ${lines[0]}`;
     return [head, ...lines.slice(1).map((line) => indent + line)].join('\n');

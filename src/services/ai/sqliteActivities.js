@@ -7,6 +7,7 @@ export function createSqliteActivityStore(sqlite,{defaults,validateActivity,vali
   async read(id){const v=sqlite.get(key(id));return v?validateActivity({...defaults,...v}):{...defaults}},
   async save(id,cfg){const v=validateActivity(cfg);sqlite.set(key(id),v);return v},
   async claimSchedule(id,day){return sqlite.transaction(tx=>{const k=`ai:activity:schedule:${id}`;if(tx.get(k)?.day===day)return false;tx.set(k,{day});return true})},
+  async releaseSchedule(id,day){return sqlite.transaction(tx=>{const k=`ai:activity:schedule:${id}`;if(tx.get(k)?.day!==day)return false;tx.set(k,{});return true})},
   async status(id,now=Date.now()){const v=sqlite.get(roundKey(id));if(!v||!['pending','open','expired','solved','closed'].includes(v.state))return {state:'none'};const state=v.state==='open'&&v.expiresAt<=now?'expired':v.state,quiz=validateQuiz(v.question);return {state,expiresAt:Number.isFinite(v.expiresAt)?v.expiresAt:null,...(quiz?{question:quiz.question,options:quiz.options,...(state!=='open'&&state!=='pending'?{answer:quiz.answer}:{})}:{})}},
   async points(id,userId){if(!/^\d{17,20}$/.test(userId||''))throw error('Anggota tidak valid.');const n=sqlite.get(pointsKey(id,userId))?.points??0;if(!Number.isSafeInteger(n)||n<0)throw error('Saldo poin tidak valid.',503);return n},
   async reserve(id,roundId,now){return locked(id,v=>{if(['pending','open'].includes(v.state)&&v.expiresAt>now)throw error('Masih ada ronde yang berjalan.',409);return {write:{state:'pending',id:roundId,expiresAt:now+150000},result:true}})},

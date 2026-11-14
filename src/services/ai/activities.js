@@ -23,6 +23,8 @@ export function createActivityStore(client){
   async read(id){const r=await dbPool(client).query(`SELECT value FROM ${table} WHERE key=$1`,[key(id)]);return r.rows[0]?.value?validateActivity({...DEFAULT_ACTIVITY,...r.rows[0].value}):{...DEFAULT_ACTIVITY};},
   async save(id,cfg){const v=validateActivity(cfg);await dbPool(client).query(`INSERT INTO ${table} (key,value) VALUES ($1,$2::jsonb) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,[key(id),JSON.stringify(v)]);return v;},
   async claimSchedule(id,day){const conn=await dbPool(client).connect();const k=`ai:activity:schedule:${id}`;try{await conn.query('BEGIN');await conn.query(`INSERT INTO ${table} (key,value) VALUES ($1,'{}'::jsonb) ON CONFLICT (key) DO NOTHING`,[k]);const r=await conn.query(`SELECT value FROM ${table} WHERE key=$1 FOR UPDATE`,[k]);if(r.rows[0].value.day===day){await conn.query('COMMIT');return false;}await conn.query(`UPDATE ${table} SET value=$2::jsonb WHERE key=$1`,[k,JSON.stringify({day})]);await conn.query('COMMIT');return true;}catch(e){await conn.query('ROLLBACK').catch(()=>{});throw e}finally{conn.release()}},
+  // Gives the day's claim back, for a round that failed before anything was sent. True if that day was the claim.
+  async releaseSchedule(id,day){const r=await dbPool(client).query(`UPDATE ${table} SET value='{}'::jsonb WHERE key=$1 AND value->>'day'=$2`,[`ai:activity:schedule:${id}`,day]);return r.rowCount===1;},
   async status(id,now=Date.now()){const r=await dbPool(client).query(`SELECT value FROM ${table} WHERE key=$1`,[roundKey(id)]);const v=r.rows[0]?.value;if(!v||!['pending','open','expired','solved','closed'].includes(v.state))return {state:'none'};const state=v.state==='open'&&v.expiresAt<=now?'expired':v.state;const quiz=validateQuiz(v.question);return {state,expiresAt:Number.isFinite(v.expiresAt)?v.expiresAt:null,...(quiz?{question:quiz.question,options:quiz.options,...(state!=='open'&&state!=='pending'?{answer:quiz.answer}:{})}:{})};},
   async points(id,userId){if(!/^\d{17,20}$/.test(userId||''))throw error('Anggota tidak valid.');const r=await dbPool(client).query(`SELECT value FROM ${table} WHERE key=$1`,[`ai:activity:points:${id}:${userId}`]);const n=r.rows[0]?.value?.points??0;if(!Number.isSafeInteger(n)||n<0)throw error('Saldo poin tidak valid.',503);return n;},
   reserve(id,roundId,now){return locked(id,v=>{if(['pending','open'].includes(v.state)&&v.expiresAt>now)throw error('Masih ada ronde yang berjalan.',409);return {write:{state:'pending',id:roundId,expiresAt:now+150000},result:true};});},
@@ -70,14 +72,41 @@ export async function startActivity({client,guild,actorId,store=createActivitySt
 }
 
 const ZONES={WIB:'Asia/Jakarta',WITA:'Asia/Makassar',WIT:'Asia/Jayapura'};
+// The check runs once a minute. A round is due from its minute until this many minutes later, so that a check
+// that failed (database not answering) or did not run (bot restarting) at that minute does not cost the day's round.
+// The period ends at midnight of the chosen zone.
+export const SCHEDULE_LATE_MINUTES=10;
+/** The local day (YYYY-MM-DD) whose scheduled round is due at `now`, or null. */
 export function scheduleMatches(cfg,now=new Date()){
  if(!cfg.enabled||!cfg.scheduleEnabled)return null;
  const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:ZONES[cfg.timeZone],year:'numeric',month:'2-digit',day:'2-digit',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(now).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));
- const weekend=['Sat','Sun'].includes(parts.weekday);if(cfg.scheduleDays==='weekdays'&&weekend||cfg.scheduleDays==='weekend'&&!weekend||`${parts.hour}:${parts.minute}`!==cfg.scheduleTime)return null;
+ const weekend=['Sat','Sun'].includes(parts.weekday);if(cfg.scheduleDays==='weekdays'&&weekend||cfg.scheduleDays==='weekend'&&!weekend)return null;
+ const [hour,minute]=cfg.scheduleTime.split(':').map(Number),late=Number(parts.hour)*60+Number(parts.minute)-(hour*60+minute);if(late<0||late>=SCHEDULE_LATE_MINUTES)return null;
  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 export async function runScheduledActivity(client,{store=createActivityStore(client),now=new Date(),start=startActivity}={}){
  const guild=client.guilds?.cache.get(client.homeGuildId);if(!guild)return false;const cfg=await store.read(guild.id);const day=scheduleMatches(cfg,now);if(!day)return false;
+ // The day is claimed first, so that two checks can never start two rounds.
  if(!await store.claimSchedule(guild.id,day))return false;
- await start({client,guild,actorId:client.user.id,store,foundation:client.aiFoundation});return true;
+ try{await start({client,guild,actorId:client.user.id,store,foundation:client.aiFoundation});}
+ catch(e){
+  // startActivity refuses with a status (a round is running, the outcome of sending is unknown, ...): the day stays
+  // claimed, as before. Anything else failed before the round was sent, so the next minute may try again.
+  if(!e?.status)await store.releaseSchedule?.(guild.id,day).catch(()=>{});
+  throw e;
+ }
+ return true;
+}
+const SCHEDULE_FIELDS=['enabled','scheduleEnabled','scheduleTime','scheduleDays','timeZone'];
+/**
+ * Saves the settings of the dashboard form. A schedule that is changed when its time has already passed today
+ * starts on its next day: without this the grace period would start a round a minute after saving.
+ */
+export async function saveActivitySettings({store,guildId,settings,now=new Date()}){
+ const next=validateActivity(settings),before=await store.read(guildId),day=scheduleMatches(next,now);
+ // Today is claimed before the settings are stored: were it the other way round, a claim that failed would leave
+ // the new schedule in force and due, and the round would start within a minute after all.
+ const claimed=Boolean(day)&&SCHEDULE_FIELDS.some(name=>before[name]!==next[name])&&await store.claimSchedule(guildId,day);
+ try{return (await store.save(guildId,next))??next;}
+ catch(e){if(claimed)await store.releaseSchedule?.(guildId,day).catch(()=>{});throw e;}
 }

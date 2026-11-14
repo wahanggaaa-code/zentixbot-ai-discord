@@ -2,7 +2,7 @@ import express from 'express';
 import { createAIFoundation, validateSettings } from '../services/ai/foundation.js';
 import { ChannelType } from 'discord.js';
 import { createAIWelcomeStore, validateAIWelcome, generateWelcomeTemplate } from '../services/ai/welcome.js';
-import { createActivityStore, validateActivity, startActivity } from '../services/ai/activities.js';
+import { createActivityStore, validateActivity, startActivity, saveActivitySettings } from '../services/ai/activities.js';
 import { sendDMPublicPanel } from '../services/ai/dmPanel.js';
 import { createChatStore, validateChatSettings } from '../services/ai/chat.js';
 import { createInteractive, validateInteractive } from '../services/ai/interactive.js';
@@ -39,7 +39,7 @@ export function createAIApi(client,{auth,csrf,env=process.env,foundation=client.
  router.patch('/goodbye',auth,owner,csrf,async(req,res)=>{try{const settings=validateAIWelcome(req.body,req.guild);if(settings.toDm)throw Object.assign(Error('AI Goodbye tidak mendukung DM.'),{status:400});await goodbyeStore.save(req.guild.id,settings);res.json({ok:true,settings})}catch(e){fail(res,e)}});
  router.post('/goodbye/preview',auth,owner,csrf,async(req,res)=>{if(!req.body||Object.keys(req.body).length!==1||req.body.confirmed!==true)return res.status(400).json({error:'Konfirmasi pengujian diperlukan.'});try{const cfg=await goodbyeStore.read(req.guild.id);const result=await generateWelcomeTemplate({foundation,guildId:req.guild.id,actorId:req.session.user.id,cfg,kind:'goodbye'});res.json({ok:true,source:result.source,preview:result.template.replaceAll('{user}','@anggota').replaceAll('{server}','Server Contoh')});}catch(e){fail(res,e)}});
  router.get('/activities',auth,owner,async(req,res)=>{try{const settings=await activityStore.read(req.guild.id);const channels=[...req.guild.channels.cache.values()].filter(c=>c.type===ChannelType.GuildText).map(({id,name})=>({id,name}));res.json({settings,channels})}catch(e){fail(res,e)}});
- router.patch('/activities',auth,owner,csrf,async(req,res)=>{try{const settings=validateActivity(req.body,req.guild);await activityStore.save(req.guild.id,settings);res.json({ok:true,settings})}catch(e){fail(res,e)}});
+ router.patch('/activities',auth,owner,csrf,async(req,res)=>{try{const settings=validateActivity(req.body,req.guild);await saveActivitySettings({store:activityStore,guildId:req.guild.id,settings});res.json({ok:true,settings})}catch(e){fail(res,e)}});
  router.get('/activities/status',auth,owner,async(req,res)=>{try{res.json({round:await activityStore.status(req.guild.id)})}catch(e){fail(res,e)}});
  router.post('/activities/start',auth,owner,csrf,async(req,res)=>{
   if(!req.body||Object.keys(req.body).length!==1||req.body.confirmed!==true)return res.status(400).json({error:'Konfirmasi memulai ronde diperlukan.'});

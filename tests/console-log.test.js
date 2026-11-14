@@ -61,7 +61,7 @@ test('an error shows its message once, its kind when it has one, and its frames 
     assert.match(formatConsoleLine({ timestamp: '20:28:42', level: 'error', message: 'Could not add role: Missing Permissions', stack: discord }), /Missing Permissions \(DiscordAPIError\[50013\]\)\n/);
     assert.equal(
         formatConsoleLine({ timestamp: '20:28:42', level: 'error', message: 'TypeError already named', stack }).split('\n')[0],
-        '20:28:42  ERROR  TypeError already named',
+        '20:28:42  ERROR  TypeError already named: x is not a function',
     );
     const twoLines = 'RangeError: first\nsecond line of the message\n    at f (a.js:1:1)';
     assert.equal(
@@ -473,4 +473,25 @@ test('the bot starts with a short, aligned report and stops at the Discord login
     assert.ok(detailed.filter((line) => /  DEBUG  Command \S+ \[/.test(line)).length >= 90);
     assert.ok(detailed.some((line) => line.endsWith('  DEBUG  Database tables created/verified')));
     assert.ok(detailed.length > lines.length + 150);
+});
+
+test('an error logged with its stack as a detail still shows what went wrong', () => {
+    // The task runner logs `Task Error [name] [TYPE]` and hands the error over as details; its message used to
+    // reach only the log files, which left the console with frames and no reason.
+    const line = (message, stack) => formatConsoleLine({ timestamp: '14:05:00', level: 'error', message, stack });
+    const frames = '\n    at /home/container/node_modules/pg-pool/index.js:45:11\n    at async Object.read (file:///home/container/src/services/ai/activities.js:23:26)';
+    assert.equal(
+        line('Task Error [ai_activity] [DATABASE]', 'Error: Connection terminated unexpectedly' + frames),
+        '14:05:00  ERROR  Task Error [ai_activity] [DATABASE]: Connection terminated unexpectedly\n                     at /home/container/node_modules/pg-pool/index.js:45:11\n                     at async Object.read (file:///home/container/src/services/ai/activities.js:23:26)',
+    );
+    // An answer from PostgreSQL itself keeps its kind.
+    assert.equal(line('Task Error [ai_activity] [DATABASE]', 'error: relation "cache_data" does not exist' + frames).split('\n')[0], '14:05:00  ERROR  Task Error [ai_activity] [DATABASE]: relation "cache_data" does not exist (error)');
+    // Node reports a refused connection to several addresses without a message; its kind and code are the reason.
+    assert.equal(line('Task Error [ai_activity] [DATABASE]', 'AggregateError [ECONNREFUSED]: ' + frames).split('\n')[0], '14:05:00  ERROR  Task Error [ai_activity] [DATABASE] (AggregateError [ECONNREFUSED])');
+    assert.equal(line('Task Error [x] [UNKNOWN]', 'Error [ERR_SOMETHING]: the reason' + frames).split('\n')[0], '14:05:00  ERROR  Task Error [x] [UNKNOWN]: the reason');
+    // A message of several lines stays together, above the frames.
+    assert.equal(line('Task Error [x] [UNKNOWN]', 'Error: first\nsecond' + frames).split('\n').slice(0, 3).join('|'), '14:05:00  ERROR  Task Error [x] [UNKNOWN]: first|                 second|                     at /home/container/node_modules/pg-pool/index.js:45:11');
+    // Nothing is repeated when the message is already there.
+    assert.equal(line('Could not save: Connection terminated unexpectedly', 'Error: Connection terminated unexpectedly' + frames).split('\n')[0], '14:05:00  ERROR  Could not save: Connection terminated unexpectedly');
+    assert.equal(line('', 'Error: only the error' + frames).split('\n')[0], '14:05:00  ERROR  only the error');
 });
