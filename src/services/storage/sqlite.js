@@ -160,7 +160,12 @@ export async function openSQLiteStore({path=':memory:',busyTimeout=1000}={}){
    const target=resolve(destination);if(target===file)throw error('Backup tidak boleh menimpa database sumber.');
    // Exclusive creation prevents accidental overwrite. Backup directory must be trusted.
    const fd=openSync(target,'wx',0o600);closeSync(fd);backupInProgress=true;
-   try{const pages=await backupSQLite(database,target);const copy=new DatabaseSync(target,{readOnly:true});try{const result=copy.prepare('PRAGMA quick_check').get();if(Object.values(result)[0]!=='ok')throw error('Verifikasi backup gagal.','SQLITE_BACKUP');}finally{copy.close()}return {path:target,pages};}
+   try{const pages=await backupSQLite(database,target);const copy=new DatabaseSync(target,{readOnly:true});try{const result=copy.prepare('PRAGMA quick_check').get();if(Object.values(result)[0]!=='ok')throw error('Verifikasi backup gagal.','SQLITE_BACKUP');}finally{copy.close()}
+    // Opening the copy for the check leaves an empty -wal and a -shm beside it. The copy is complete
+    // without them; they are removed so that a backup is one file. A -wal with content is kept.
+    const missing=e=>{if(e.code!=='ENOENT')throw e;return null};let walSize=null;try{walSize=lstatSync(target+'-wal').size}catch(e){missing(e)}
+    if(walSize===0){unlinkSync(target+'-wal');try{unlinkSync(target+'-shm')}catch(e){missing(e)}}
+    return {path:target,pages};}
    catch(e){try{unlinkSync(target)}catch{}throw e}finally{backupInProgress=false}
   },
   close(){open();if(inTransaction||backupInProgress)throw error('Transaksi atau backup masih berjalan.','SQLITE_BUSY');database.close();closed=true},

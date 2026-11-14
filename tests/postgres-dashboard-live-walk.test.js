@@ -196,8 +196,10 @@ async function listTabs(page) {
 
 // The same walk runs on both databases the bot supports. The PostgreSQL half needs the local test server.
 const walkStatuses = {};
+// node:sqlite exists from Node 22.5 on (22.13 without a flag); on an older Node only PostgreSQL is walked.
+const hasSQLite = await import('node:sqlite').then(() => true, () => false);
 for (const backend of ['postgresql', 'sqlite']) {
-const skip = backend === 'postgresql' && !pgEnabled;
+const skip = (backend === 'postgresql' && !pgEnabled) || (backend === 'sqlite' && !hasSQLite && 'node:sqlite needs Node 22.13 or newer');
 test(`live dashboard on ${backend}: every tab loads from the bot, without mock forms or script errors`, { skip }, async (t) => {
     const page = await openDashboard(t, backend);
     const tabs = await listTabs(page);

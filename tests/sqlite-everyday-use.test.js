@@ -193,6 +193,16 @@ test('the dashboard pages Goodbye and Birthday save on SQLite and refuse a stale
     assert.equal(again.body.goodbye.channelId, channelId);
     assert.equal(again.body.revision, saved.body.revision);
 
+    // Settings written by a bot command alone carry the bot's default colour as "#ED4245" text;
+    // the page shows it as a number instead of asking for a review.
+    db.db.sqlite.transaction((tx) => tx.botDelete(`guild:${guildId}:welcome`));
+    await updateWelcomeConfig(client, guildId, { welcomeMessage: 'Halo {user}' });
+    assert.equal(db.db.sqlite.botGet(`guild:${guildId}:welcome`).leaveEmbed.color, '#ED4245');
+    const fromCommand = await call('/goodbye');
+    assert.equal(fromCommand.status, 200);
+    assert.equal(fromCommand.body.goodbye.color, 0xed4245);
+    assert.equal((await call('/goodbye', 'PATCH', form(fromCommand.body.revision))).status, 200);
+
     // Birthday: the channel, then one member's date.
     assert.deepEqual((await call('/birthday/settings')).body.channelId, null);
     assert.equal((await call('/birthday/settings', 'PATCH', { channelId, expectedChannelId: null })).status, 200);

@@ -55,7 +55,7 @@ Baris pertama log startup menyebut database yang dipakai, misalnya `Database: SQ
 
 Yang perlu diketahui:
 
-- **Seluruh data bot ada di folder `data/`.** Cadangkan folder itu (hentikan bot dulu, lalu salin seluruh isinya, termasuk berkas `-wal` dan `-shm` bila ada). Bila folder itu hilang atau hosting tidak menyimpannya saat restart, data ikut hilang.
+- **Seluruh data bot ada di folder `data/`.** Cadangkan dengan `npm run backup:db` (boleh saat bot menyala, hasilnya di folder `backups/`), atau hentikan bot lalu salin folder `data/`. Bila folder itu hilang atau hosting tidak menyimpannya saat restart, data ikut hilang. Cara memulihkan ada di [`docs/hosting.md`](docs/hosting.md).
 - Bot tidak pernah berpindah database sendiri. Bila PostgreSQL sudah diatur tetapi tidak dapat dihubungi, bot berhenti dengan pesan galat; ia tidak diam-diam memakai SQLite atau memori.
 - Data tidak disalin antara SQLite dan PostgreSQL. Pindah database berarti mulai dari data kosong.
 - Bila pengaturan menunjuk ke dua database sekaligus (misalnya `DATABASE_PATH` dan `POSTGRES_URL`), bot berhenti dan meminta `DATABASE_ENGINE=sqlite` atau `DATABASE_ENGINE=postgresql`.

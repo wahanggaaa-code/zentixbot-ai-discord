@@ -4,9 +4,12 @@ import { PostgreSQLDatabase } from '../../src/utils/postgresDatabase.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { openSQLiteStore } from '../../src/services/storage/sqlite.js';
 import { createSQLiteBotDatabase } from '../../src/services/storage/sqliteBotDatabase.js';
+
+// node:sqlite exists from Node 22.5 on. On an older Node the PostgreSQL side of this fixture
+// still has to load, so the module is looked up here instead of being imported at the top.
+const { DatabaseSync } = await import('node:sqlite').catch(() => ({}));
 
 /** Shared fixture for Join to Create tests against the disposable local PostgreSQL. */
 // `ZENTIX_TEST_BACKEND=sqlite` runs the same suites on a SQLite file (see tests/sqlite-feature-suites.test.js).

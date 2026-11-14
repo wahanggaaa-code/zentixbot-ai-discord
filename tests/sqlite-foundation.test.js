@@ -66,7 +66,9 @@ test('economy commits from independent processes are serialized',async t=>{
 test('corrupt AI quota fails closed without resetting the counter',async t=>{
  const db=await openSQLiteStore({path:path(t)});db.set(`ai:foundation:usage:g:${guild}`,false);await assert.rejects(createAIStore(client(db)).reserve(guild,a,{perUserDaily:2,guildDaily:3}),{code:'STORAGE_UNAVAILABLE'});assert.equal(db.get(`ai:foundation:usage:g:${guild}`),false);db.close();
 });
-test('online SQLite backup includes WAL data, restores consistently, and refuses overwrite',async t=>{
+// node:sqlite gained its backup function in Node 22.16; SQLite itself runs from 22.13.
+const [nodeMajor,nodeMinor]=process.versions.node.split('.').map(Number),canBackup=nodeMajor>22||(nodeMajor===22&&nodeMinor>=16);
+test('online SQLite backup includes WAL data, restores consistently, and refuses overwrite',{skip:!canBackup&&'the SQLite backup function needs Node 22.16 or newer'},async t=>{
  const source=path(t),backup=join(source,'..','snapshot.db'),db=await openSQLiteStore({path:source});db.set('committed',{value:'wal-data'});db.transaction(tx=>{tx.set('backup:left',0);tx.set('backup:right',0)});
  const child=spawn(process.execPath,['tests/fixtures/sqlite-backup-writer.js',source],{stdio:['ignore','ignore','pipe','ipc']});t.after(()=>{if(child.exitCode===null)child.kill()});let err='';child.stderr.on('data',x=>err+=x);const worker=new Promise((resolve,reject)=>{child.on('error',reject);child.on('exit',code=>code===0?resolve():reject(Error(`worker ${code}: ${err}`)))});
  await new Promise((resolve,reject)=>{child.on('error',reject);child.on('message',message=>{if(message==='ready')child.send('start');if(message==='writing')resolve()})});

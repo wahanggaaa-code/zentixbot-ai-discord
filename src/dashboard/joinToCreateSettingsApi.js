@@ -46,7 +46,7 @@ const PROTOCOL_ERRORS = {
     JTC_LEGACY: [409, 'Ada data Join to Create berformat lama. Periksa data sebelum mengubah pengaturan.'],
     JTC_EXPIRY: [409, 'Record Join to Create memiliki masa berlaku. Periksa data sebelum mengubah pengaturan.'],
     JTC_SCOPE: [403, 'Server ini bukan server yang dikonfigurasi untuk bot.'],
-    JTC_UNAVAILABLE: [503, 'Database PostgreSQL tidak tersedia.'],
+    JTC_UNAVAILABLE: [503, 'Database tidak tersedia.'],
 };
 
 function respond(res, error, fallback) {

@@ -12,7 +12,7 @@ const tables=pgConfig.tables;
 const object=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const id=x=>typeof x==='string'&&/^\d{17,20}$/.test(x);
 const err=(status,message)=>Object.assign(new Error(message),{status});
-function pool(client){const db=client?.db,s=db?.getStatus?.();if(s?.connectionType!=='postgresql'||s.isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool?.connect)throw err(503,'Database PostgreSQL tidak tersedia.');return db.db.pool;}
+function pool(client){const db=client?.db,s=db?.getStatus?.();if(s?.connectionType!=='postgresql'||s.isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool?.connect)throw err(503,'Database tidak tersedia.');return db.db.pool;}
 // SQLite: the guild config and the welcome config are one row each.
 const unavailable=()=>err(503,'Database tidak tersedia.');
 const sqliteOf=client=>sqliteFor(client,unavailable);

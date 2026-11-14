@@ -8,11 +8,14 @@ import { db } from '../../src/utils/database/wrapper.js';
 import { tableStatements } from '../../src/utils/database/schema.js';
 import { discordError } from './fake-discord-guild.js';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openSQLiteStore } from '../../src/services/storage/sqlite.js';
 import { createSQLiteBotDatabase } from '../../src/services/storage/sqliteBotDatabase.js';
+
+// node:sqlite exists from Node 22.5 on. On an older Node the PostgreSQL side of this fixture
+// still has to load, so the module is looked up here instead of being imported at the top.
+const { DatabaseSync } = await import('node:sqlite').catch(() => ({}));
 
 // `ZENTIX_TEST_BACKEND=sqlite` runs a whole PostgreSQL feature suite on SQLite instead
 // (see tests/sqlite-feature-suites.test.js); no PostgreSQL server is needed then.

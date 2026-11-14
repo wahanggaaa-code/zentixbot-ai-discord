@@ -69,7 +69,7 @@ export const PANEL_ERRORS = {
         id: 'Pesan panel tidak dapat diperiksa di Discord saat ini. Tidak ada yang diubah. Coba lagi nanti.',
     },
     REACTROLES_INVALID: { en: 'The stored panel data needs to be checked before it can be changed.', id: 'Data panel tersimpan perlu diperiksa sebelum dapat diubah.' },
-    REACTROLES_UNAVAILABLE: { en: 'The database is not available right now. Nothing was changed.', id: 'Database PostgreSQL tidak tersedia. Tidak ada yang diubah.' },
+    REACTROLES_UNAVAILABLE: { en: 'The database is not available right now. Nothing was changed.', id: 'Database tidak tersedia. Tidak ada yang diubah.' },
     REACTROLES_DISCORD: { en: 'Discord refused the request. Nothing was changed.', id: 'Discord menolak permintaan. Tidak ada yang diubah.' },
     REACTROLES_MESSAGE_LEFT: {
         en: 'The panel could not be saved and its new message could not be removed again. Please delete that message by hand; its menu does not work.',

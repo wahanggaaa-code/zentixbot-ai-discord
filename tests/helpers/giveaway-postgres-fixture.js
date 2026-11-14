@@ -9,9 +9,12 @@ import { discordError, unknownChannel } from './fake-discord-guild.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { openSQLiteStore } from '../../src/services/storage/sqlite.js';
 import { createSQLiteBotDatabase } from '../../src/services/storage/sqliteBotDatabase.js';
+
+// node:sqlite exists from Node 22.5 on. On an older Node the PostgreSQL side of this fixture
+// still has to load, so the module is looked up here instead of being imported at the top.
+const { DatabaseSync } = await import('node:sqlite').catch(() => ({}));
 
 // `ZENTIX_TEST_BACKEND=sqlite` runs the same suite on a SQLite file (see tests/sqlite-feature-suites.test.js).
 export const onSQLite = process.env.ZENTIX_TEST_BACKEND === 'sqlite';

@@ -12,7 +12,7 @@ const object=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const failure=(status,message)=>Object.assign(new Error(message),{status});
 function pool(client){
  const db=client?.db,status=db?.getStatus?.();
- if(status?.connectionType!=='postgresql'||status.isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool?.connect)throw failure(503,'Database PostgreSQL tidak tersedia.');
+ if(status?.connectionType!=='postgresql'||status.isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool?.connect)throw failure(503,'Database tidak tersedia.');
  return db.db.pool;
 }
 function timestamp(value){

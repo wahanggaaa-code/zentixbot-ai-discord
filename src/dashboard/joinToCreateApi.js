@@ -8,7 +8,7 @@ import {sqliteFor} from '../services/storage/sqliteRows.js';
 const id=x=>typeof x==='string'&&/^\d{17,20}$/.test(x);
 const obj=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const fail=(status,message)=>Object.assign(new Error(message),{status});
-function pool(client){const db=client?.db,s=db?.getStatus?.();if(s?.connectionType!=='postgresql'||s.isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool?.connect)throw fail(503,'Database PostgreSQL tidak tersedia.');return db.db.pool;}
+function pool(client){const db=client?.db,s=db?.getStatus?.();if(s?.connectionType!=='postgresql'||s.isDegraded||!db.isAvailable?.()||!db.db?.isAvailable?.()||!db.db.pool?.connect)throw fail(503,'Database tidak tersedia.');return db.db.pool;}
 const defaults={enabled:false,triggerChannels:[],categoryId:null,channelNameTemplate:"{username}'s Room",userLimit:0,bitrate:64000,temporaryChannels:{},channelOptions:{}};
 function validate(raw){
  if(!obj(raw)||(raw.ok!==undefined&&raw.value!==undefined))throw fail(409,'Data Join to Create perlu diperiksa.');

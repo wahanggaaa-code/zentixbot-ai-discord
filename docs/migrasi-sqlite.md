@@ -26,7 +26,7 @@ Pemeriksaan konfigurasi di `src/config/bot.js` hanya menuntut nilai PostgreSQL b
 
 Satu berkas dengan mode WAL, dibuka oleh `src/services/storage/sqlite.js` memakai `node:sqlite` bawaan Node.js (tanpa paket tambahan). Tiga tabel: `zentix_bot_kv` (data bot, satu baris per kunci, nilai berupa JSON), `zentix_economy` (akun ekonomi) dan `zentix_kv` (data AI). Setiap perubahan fitur berjalan dalam satu transaksi `BEGIN IMMEDIATE` yang sinkron; hanya ada satu penulis pada satu waktu.
 
-Berkas baru dibuat dengan izin 0600. Cadangan: hentikan bot, salin seluruh folder `data/` termasuk berkas `-wal` dan `-shm`.
+Berkas baru dibuat dengan izin 0600. Cadangan: `npm run backup:db` saat bot menyala (satu berkas di `backups/`, Node 22.16 ke atas), atau salin seluruh folder `data/` saat bot berhenti. Langkah pemulihan ada di `docs/hosting.md`.
 
 ## Perbedaan perilaku dengan PostgreSQL
 
@@ -51,9 +51,10 @@ Batas yang perlu diketahui: `DatabaseSync` memblokir event loop selama sebuah qu
 - `tests/sqlite-everyday-use.test.js`: bot dimulai lewat kode startup yang sebenarnya tanpa pengaturan database; warning, ulang tahun, ekonomi, level, pengaturan server, akses perintah dan welcome disimpan dan ditemukan lagi setelah restart; `src/app.js` dijalankan utuh dalam mode produksi sampai tahap login Discord.
 - `tests/sqlite-feature-suites.test.js`: suite fitur yang ditulis untuk PostgreSQL (to-do, counting, reaction role, server stats, lamaran, laporan, halaman dashboard, level dan reward role, ekonomi, Join to Create, giveaway, tiket) dijalankan ulang pada berkas SQLite. Tes yang hanya bermakna di PostgreSQL (jawaban `COMMIT` yang hilang di jaringan; penulisan yang ditahan di tengah oleh koneksi lain) dilewati dan jumlahnya dipasang di berkas itu.
 - `tests/postgres-dashboard-live-walk.test.js`: seluruh formulir dashboard dijalankan pada kedua database dan status jawabannya harus sama.
+- `tests/sqlite-backup-restore.test.js`: `npm run backup:db` saat bot memegang berkasnya, pemulihan dari berkas cadangan ke keadaan saat cadangan dibuat, dan salin-folder saat bot berhenti.
 - `tests/sqlite-*.test.js` lainnya: fondasi, adapter, transaksi lintas proses.
 
-Tes memakai berkas SQLite sungguhan di folder sementara, bukan tiruan. Jalankan dengan Node 22.16 atau lebih baru.
+Tes memakai berkas SQLite sungguhan di folder sementara, bukan tiruan. Jalankan dengan Node 22.16 atau lebih baru (fungsi backup `node:sqlite` baru ada sejak versi itu).
 
 ## Catatan teknis lama
 
