@@ -29,6 +29,16 @@ export function resolveDashboardOrigin(env) {
     return { origin: url.origin, insecure: true, reason: null };
 }
 
+/**
+ * The dashboard address together with whether a Discord login can work: that needs a usable
+ * address, the application's id and secret, and the home server.
+ */
+export function dashboardLoginStatus(env, homeGuildId) {
+    const address = resolveDashboardOrigin(env);
+    const credentials = /^\d{17,20}$/.test(env?.CLIENT_ID || '') && Boolean(env?.DISCORD_CLIENT_SECRET) && Boolean(homeGuildId);
+    return { ...address, configured: Boolean(address.origin && credentials) };
+}
+
 /** What to tell someone who opens a dashboard whose login cannot work yet. */
 export function notConfiguredMessage(reason) {
     if (reason === 'http_not_allowed') {

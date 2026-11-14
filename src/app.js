@@ -15,10 +15,13 @@ import cron from 'node-cron';
 
 import config from './config/application.js';
 import { resolveWebPort, WEB_PORT_VARIABLES } from './utils/webPort.js';
+import { createWebRateLimit } from './utils/webRateLimit.js';
 import { initializeDatabase } from './utils/database.js';
 import { getGuildConfig } from './services/config/guildConfig.js';
 import { maintainCounters } from './services/serverStats/manage.js';
 import { logger, startupLog, shutdownLog } from './utils/logger.js';
+import { describeDashboard, onlineSummary } from './utils/startupReport.js';
+import { dashboardLoginStatus } from './dashboard/origin.js';
 import { checkBirthdays } from './services/birthdayService.js';
 import { checkGiveaways } from './services/giveawayService.js';
 import { loadCommands, registerCommands as registerSlashCommands } from './handlers/loaders/commandLoader.js';
@@ -27,6 +30,8 @@ import { initializeMusic } from './services/music/riffySetup.js';
 import { shutdownMusic } from './services/music/playerHandler.js';
 import pkg from '../package.json' with { type: 'json' };
 import { createReadinessHandler } from './services/storage/databaseReadiness.js';
+
+const DATABASE_NAMES = { postgresql: 'PostgreSQL' };
 
 class ZentixBot extends Client {
   constructor() {
@@ -65,10 +70,9 @@ class ZentixBot extends Client {
 
   async start() {
     try {
-      startupLog('Starting ZentixBot...');
+      startupLog(`ZentixBot ${pkg.version} starting (Node ${process.version}, ${process.env.NODE_ENV || 'development'} mode, log level ${logger.level})`);
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      startupLog('Initializing database...');
       const dbInstance = await initializeDatabase();
       this.db = dbInstance.db;
 
@@ -76,39 +80,38 @@ class ZentixBot extends Client {
       if (!dbStatus.isAvailable || dbStatus.isDegraded) {
         throw Object.assign(new Error('Persistent database is unavailable; startup aborted.'), {code:'POSTGRES_UNAVAILABLE'});
       }
-      startupLog(`Database Status: ${dbStatus.connectionType} (persistent)`);
+      startupLog(`Database: ${DATABASE_NAMES[dbStatus.connectionType] ?? dbStatus.connectionType} connected, data is persistent`);
 
       for (const line of describeExtraProviders(process.env)) {
         if (line.level === 'warn') logger.warn(line.text);
         else startupLog(line.text);
       }
 
-      startupLog('Starting web server...');
       this.startWebServer();
       
-      startupLog('Loading commands...');
       await loadCommands(this);
-      startupLog(`Commands loaded: ${this.commands.size}`);
-      
-      startupLog('Loading handlers...');
       await this.loadHandlers();
-      startupLog('Handlers loaded');
 
       initializeMusic(this);
       
-      startupLog('Logging into Discord...');
+      startupLog('Discord: logging in...');
       await this.login(this.config.bot.token);
-      startupLog('Discord login successful');
       
-      startupLog('Registering slash commands for the configured server...');
-      await this.registerCommands();
-      startupLog('Slash commands registration complete');
+      const registered = await this.registerCommands();
       
-      const databaseMode = 'Connected (persistent data enabled)';
-      const handlerSummary = `${this.buttons.size} buttons, ${this.selectMenus.size} menus, ${this.modals.size} modals`;
-      startupLog(
-        `ONLINE ✅ | ${this.commands.size} commands loaded | ${handlerSummary} | Database: ${databaseMode}`
-      );
+      for (const line of onlineSummary({
+        version: pkg.version,
+        seconds: process.uptime(),
+        botTag: this.user?.tag ?? null,
+        guildId: this.homeGuildId,
+        guildName: this.guilds.cache.get(this.homeGuildId)?.name ?? null,
+        loaded: { commands: this.commands.size, buttons: this.buttons.size, selectMenus: this.selectMenus.size, modals: this.modals.size },
+        registered,
+        database: `${DATABASE_NAMES[dbStatus.connectionType] ?? dbStatus.connectionType}, persistent`,
+        port: this.webServer?.address()?.port ?? null,
+        dashboard: describeDashboard(dashboardLoginStatus(process.env, this.homeGuildId)),
+        memoryBytes: process.memoryUsage().rss,
+      })) startupLog(line);
       
       this.setupCronJobs();
     } catch (error) {
@@ -143,29 +146,8 @@ class ZentixBot extends Client {
       next();
     });
 
-    const requestCounts = new Map();
-    const windowMs = this.config.api?.rateLimit?.windowMs || 60000;
-    const maxRequests = this.config.api?.rateLimit?.max || 100;
-    
-    app.use((req, res, next) => {
-      const ip = req.ip;
-      const now = Date.now();
-      const windowStart = now - windowMs;
-      
-      if (!requestCounts.has(ip)) {
-        requestCounts.set(ip, []);
-      }
-      
-      const times = requestCounts.get(ip).filter(t => t > windowStart);
-      
-      if (times.length >= maxRequests) {
-        return res.status(429).json({ error: 'Too many requests' });
-      }
-      
-      times.push(now);
-      requestCounts.set(ip, times);
-      next();
-    });
+    // Dashboard pages and login have their own budgets; the configured numbers apply to the rest.
+    app.use(createWebRateLimit({ general: this.config.api?.rateLimit }));
 
     app.get('/dashboard', (req, res) => res.redirect('/dashboard/'));
     app.use('/dashboard', createDashboardRouter(this));
@@ -201,9 +183,7 @@ class ZentixBot extends Client {
       const server = app.listen(port, host, () => {
         hasStartedListening = true;
         this.webServer = server;
-        startupLog(`✅ Web Server running on ${host}:${port}`);
-        startupLog(`Health endpoint: http://${host}:${port}/health`);
-        startupLog(`Ready endpoint: http://${host}:${port}/ready`);
+        startupLog(`Web server: listening on ${host}:${port} (/health, /ready, /dashboard/)`);
       });
 
       server.on('error', (error) => {
@@ -222,7 +202,7 @@ class ZentixBot extends Client {
           return;
         }
 
-        logger.error(`❌ Web server error on port ${port} (${errorCode}): ${errorMessage}`);
+        logger.error(`Web server error on port ${port} (${errorCode}): ${errorMessage}`);
 
         if (!hasStartedListening) {
           process.exit(1);
@@ -264,7 +244,6 @@ class ZentixBot extends Client {
   }
 
   async loadHandlers() {
-    startupLog('Loading handlers...');
     const handlers = [
       { path: 'events', type: 'default', required: true },
       { path: 'interactions', type: 'default', required: true }
@@ -272,7 +251,6 @@ class ZentixBot extends Client {
 
     for (const handler of handlers) {
       try {
-        startupLog(`Loading handler: ${handler.path}`);
         const module = await import(`./handlers/loaders/${handler.path}.js`);
         const loaderFn = handler.type.startsWith('named:')
           ? module[handler.type.split(':')[1]]
@@ -280,81 +258,70 @@ class ZentixBot extends Client {
 
         if (typeof loaderFn === 'function') {
           await loaderFn(this);
-          startupLog(`✅ Loaded ${handler.path}`);
         } else {
           throw new Error(`Invalid loader export from ${handler.path}`);
         }
       } catch (error) {
         if (handler.required) {
-          logger.error(`❌ Failed to load required handler ${handler.path}:`, error.message);
+          logger.error(`Failed to load required handler ${handler.path}:`, error.message);
           throw error;
         } else if (error.code !== 'MODULE_NOT_FOUND') {
-          logger.warn(`⚠️  Failed to load optional handler ${handler.path}:`, error.message);
+          logger.warn(`Failed to load optional handler ${handler.path}:`, error.message);
         }
       }
     }
   }
 
+  /** Registers the slash commands; a failure is logged by the loader and does not stop the bot. */
   async registerCommands() {
     try {
       await registerSlashCommands(this, { clientId: this.config.bot.clientId, guildId: this.homeGuildId });
-    } catch (error) {
-      logger.error('Error registering commands:', error);
+      return true;
+    } catch {
+      return false;
     }
   }
 
   async shutdown(reason = 'UNKNOWN') {
-    shutdownLog(`Bot is shutting down (${reason})...`);
-    logger.info(`\n${'='.repeat(60)}`);
-    logger.info(`🛑 Graceful Shutdown Initiated (${reason})`);
-    logger.info(`${'='.repeat(60)}`);
+    shutdownLog(`Shutting down (${reason})...`);
+    const stopped = [];
 
     try {
-      
-      logger.info('Stopping cron jobs...');
       cron.getTasks().forEach(task => task.stop());
-      logger.info('✅ Cron jobs stopped');
+      stopped.push('scheduled jobs');
 
-      logger.info('Stopping music players...');
       await shutdownMusic(this);
-      logger.info('✅ Music players stopped');
+      stopped.push('music players');
 
       if (this.webServer) {
-        logger.info('Closing web server...');
         await new Promise((resolve) => this.webServer.close(resolve));
-        logger.info('✅ Web server closed');
+        stopped.push('web server');
       }
 
-      // Close database connection
-      // Close database connection
       if (this.db && this.db.db) {
-        logger.info('Closing database connection...');
         try {
           if (this.db.db.pool) {
             await this.db.db.pool.end();
-            logger.info('✅ Database connection closed');
+            stopped.push('database connection');
           } else if (this.db.db.sqlite?.isOpen?.()) {
             this.db.db.sqlite.close();
-            logger.info('✅ Database connection closed');
+            stopped.push('database connection');
           }
         } catch (error) {
           logger.warn('Error closing database pool:', error.message);
         }
       }
 
-      logger.info('Destroying Discord client...');
       if (this.isReady()) {
         try {
           this.destroy();
-          logger.info('✅ Discord client destroyed');
+          stopped.push('Discord connection');
         } catch (error) {
-
           logger.warn('Discord client destroy warning (non-critical):', error.message);
         }
       }
 
-      logger.info('✅ Graceful shutdown complete');
-  shutdownLog('Bot stopped successfully.');
+      shutdownLog(`Stopped cleanly: ${stopped.join(', ')}.`);
       process.exit(0);
     } catch (error) {
       logger.error('Error during graceful shutdown:', error);

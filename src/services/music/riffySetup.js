@@ -1,6 +1,6 @@
 import { createRequire } from 'module';
 import { GatewayDispatchEvents } from 'discord.js';
-import { logger } from '../../utils/logger.js';
+import { logger, startupLog } from '../../utils/logger.js';
 import { isHomeGuild } from '../../utils/singleGuild.js';
 import lavalinkConfig from '../../config/music/lavalink.js';
 import { setupPlayerHandler } from './playerHandler.js';
@@ -57,12 +57,12 @@ export function initializeMusic(client) {
         logger.error(`Music player error in guild ${player.guildId}:`, error);
     });
 
-    logger.info(`Music initialized with ${lavalinkConfig.nodes.length} Lavalink node(s).`);
+    startupLog(`Music: ${lavalinkConfig.nodes.length} Lavalink ${lavalinkConfig.nodes.length === 1 ? 'node' : 'nodes'} configured (${lavalinkConfig.nodes.map((node) => node.name).join(', ')})`);
 }
 
 export function initRiffyAfterReady(client) {
     if (client.riffy && client.user?.id) {
         client.riffy.init(client.user.id);
-        logger.info('Riffy voice connection manager initialized.');
+        logger.debug('Riffy voice connection manager initialized.');
     }
 }

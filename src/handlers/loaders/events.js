@@ -2,17 +2,19 @@ import { readdir } from 'fs/promises';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { logger } from '../../utils/logger.js';
+import { logger, startupLog } from '../../utils/logger.js';
+import { describeEvents } from '../../utils/startupReport.js';
 import { mayDispatchEvent } from '../../utils/singleGuild.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export default async function loadEvents(client) {
-    const eventsPath = join(__dirname, '../../events');
+/** @param {string} [eventsPath] directory of the event files; the bot's own by default */
+export default async function loadEvents(client, eventsPath = join(__dirname, '../../events')) {
     const eventFiles = await readdir(eventsPath).then(files => files.filter(file => file.endsWith('.js')));
 
-    logger.info(`Found ${eventFiles.length} event files to load`);
+    logger.debug(`Found ${eventFiles.length} event files to load`);
+    let registered = 0, failed = 0;
 
     for (const file of eventFiles) {
         const filePath = join(eventsPath, file);
@@ -21,6 +23,7 @@ export default async function loadEvents(client) {
 
             if (!event?.name || typeof event.execute !== 'function') {
                 logger.warn(`Event ${file} is missing required "name" or "execute" properties.`);
+                failed += 1;
                 continue;
             }
 
@@ -40,15 +43,15 @@ export default async function loadEvents(client) {
                 }
             };
 
-            if (event.once) {
-                client.once(event.name, safeExecute);
-                logger.info(`✅ Registered once event: ${event.name}`);
-            } else {
-                client.on(event.name, safeExecute);
-                logger.info(`✅ Registered event: ${event.name}`);
-            }
+            if (event.once) client.once(event.name, safeExecute);
+            else client.on(event.name, safeExecute);
+            registered += 1;
+            logger.debug(`Event ${event.name}${event.once ? ' (once)' : ''}`);
         } catch (error) {
+            failed += 1;
             logger.error(`Error loading event ${file}:`, error);
         }
     }
+
+    startupLog(describeEvents(registered, { failed }));
 }

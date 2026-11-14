@@ -99,7 +99,7 @@ export function setupPlayerHandler(client) {
             return;
         }
         markNodeConnected(node.name);
-        logger.info(`Lavalink node "${node.name}" connected.`);
+        logger.info(`Music: Lavalink node "${node.name}" connected`);
     });
 
     client.riffy.on('nodeReconnect', () => {
@@ -110,14 +110,14 @@ export function setupPlayerHandler(client) {
         if (!shouldLogNodeEvent(node.name)) {
             return;
         }
-        logger.warn(`Lavalink node "${node.name}" error: ${error?.message || error}`);
+        logger.warn(`Music: Lavalink node "${node.name}" error: ${error?.message || error}`);
     });
 
     client.riffy.on('nodeDisconnect', (node) => {
         if (!shouldLogNodeEvent(node.name)) {
             return;
         }
-        logger.warn(`Lavalink node "${node.name}" disconnected.`);
+        logger.warn(`Music: Lavalink node "${node.name}" disconnected`);
     });
 
     client.riffy.on('trackStart', async (player, track) => {

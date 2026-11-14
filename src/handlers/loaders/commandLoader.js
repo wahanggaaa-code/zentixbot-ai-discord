@@ -2,7 +2,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { Collection } from 'discord.js';
-import { logger } from '../../utils/logger.js';
+import { logger, startupLog } from '../../utils/logger.js';
+import { describeCommands, summarizeCommands } from '../../utils/startupReport.js';
 import botConfig from '../../config/bot.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -51,14 +52,15 @@ async function getAllFiles(directory, fileList = []) {
     return fileList;
 }
 
-export async function loadCommands(client) {
+/** @param {string} [commandsPath] directory holding one folder per category; the bot's own by default */
+export async function loadCommands(client, commandsPath = path.join(__dirname, '../../commands')) {
     client.commands = new Collection();
-    const commandsPath = path.join(__dirname, '../../commands');
     const commandFiles = await getAllFiles(commandsPath);
     
-    logger.info(`Found ${commandFiles.length} command files to load`);
+    logger.debug(`Found ${commandFiles.length} command files to load`);
     
     const uniqueCommandNames = new Set();
+    let failed = 0;
     
     for (const filePath of commandFiles) {
         try {
@@ -73,6 +75,7 @@ export async function loadCommands(client) {
             
             if (!command.data || !command.execute) {
                 logger.warn(`Command at ${filePath} is missing required "data" or "execute" property.`);
+                failed += 1;
                 continue;
             }
             
@@ -89,34 +92,20 @@ export async function loadCommands(client) {
             
             const subcommands = getSubcommandInfo(command.data.toJSON());
             
-            logger.info(`Loaded command: ${primaryCommandName} from ${normalizedPath} (category: ${category})`);
-            
-            if (subcommands.length > 0) {
-                logger.info(`  - Subcommands: ${subcommands.join(', ')}`);
-            }
+            // One line per file is for LOG_LEVEL=debug; the summary below is always shown.
+            logger.debug(`Command ${primaryCommandName} [${category}]${subcommands.length > 0 ? `, subcommands: ${subcommands.join(', ')}` : ''}`);
             
         } catch (error) {
+            failed += 1;
             logger.error(`Error loading command from ${filePath}:`, error);
         }
     }
     
-    const commandsWithSubcommands = Array.from(client.commands.values()).filter(cmd => {
-        const subcommands = getSubcommandInfo(cmd.data.toJSON());
-        return subcommands.length > 0;
-    });
-    
-    const totalSubcommands = commandsWithSubcommands.reduce((total, cmd) => {
-        return total + getSubcommandInfo(cmd.data.toJSON()).length;
-    }, 0);
-    
-    const uniqueCommands = new Set();
-    for (const [name, command] of client.commands.entries()) {
-        if (command.data && command.data.name) {
-            uniqueCommands.add(command.data.name);
-        }
-    }
-    
-    logger.info(`Loaded ${uniqueCommands.size} commands`);
+    const summary = summarizeCommands(Array.from(client.commands.values(), (command) => ({
+        category: command.category,
+        subcommands: getSubcommandInfo(command.data.toJSON()).length,
+    })));
+    for (const line of describeCommands(summary, { failed })) startupLog(line);
     return client.commands;
 }
 
@@ -223,7 +212,9 @@ function validateCommands(commands) {
 
 function prepareCommandsForRegistration(commands) {
     if (commands.length >= COMMAND_COUNT_WARN_THRESHOLD) {
-        logger.warn(`Command count (${commands.length}) is near Discord's ${MAX_COMMANDS} global command limit`);
+        logger.warn(commands.length >= MAX_COMMANDS
+            ? `Slash commands: ${commands.length} loaded, and Discord registers at most ${MAX_COMMANDS} per server. A further command would be left out.`
+            : `Slash commands: ${commands.length} loaded; Discord registers at most ${MAX_COMMANDS} per server.`);
     }
 
     if (commands.length <= MAX_COMMANDS) {
@@ -247,10 +238,8 @@ async function registerGuildCommands(client, clientId, guildId, commands, totalS
         throw new Error('Discord REST client is not available for slash command registration');
     }
 
-    logger.info(`Preparing to register ${totalSubcommands + commands.length} commands for the configured guild`);
-    logger.info('Validating commands before registration...');
+    logger.debug(`Validating ${commands.length} commands (${totalSubcommands} subcommands) before registration...`);
     validateCommands(commands);
-    logger.info('Command validation passed');
 
     const commandsToRegister = prepareCommandsForRegistration(commands);
 
@@ -259,10 +248,10 @@ async function registerGuildCommands(client, clientId, guildId, commands, totalS
         await client.rest.put(`/applications/${clientId}/guilds/${guildId}/commands`, { body: [] });
     }
 
-    logger.info(`Registering ${commandsToRegister.length} guild commands...`);
+    logger.debug(`Registering ${commandsToRegister.length} commands for server ${guildId}...`);
     await client.rest.put(`/applications/${clientId}/guilds/${guildId}/commands`, { body: commandsToRegister });
-    logger.info(`Successfully registered ${commandsToRegister.length} guild commands`);
-    logger.info('Previously registered global commands are not deleted automatically.');
+    startupLog(`Slash commands: ${commandsToRegister.length} registered for server ${guildId}`);
+    logger.debug('Previously registered global commands are not deleted automatically.');
 }
 
 export async function registerCommands(client, options = {}) {
