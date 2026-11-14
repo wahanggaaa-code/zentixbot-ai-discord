@@ -8,7 +8,20 @@ export const PROVIDERS = Object.freeze({
   openrouter: { url:'https://openrouter.ai/api/v1/chat/completions', key:'AI_OPENROUTER_API_KEY' },
   nvidia: { url:'https://integrate.api.nvidia.com/v1/chat/completions', key:'AI_NVIDIA_API_KEY' },
 });
-export const DEFAULT_AI = Object.freeze({ enabled:false, providerDataConsent:false, primary:'groq', primaryModel:'', backup:'none', backupModel:'', perUserDaily:20, guildDaily:200, timeoutSeconds:20, maxOutputTokens:256 });
+export const DEFAULT_AI = Object.freeze({ enabled:false, providerDataConsent:false, primary:'groq', primaryModel:'', backup:'none', backupModel:'', backup2:'none', backup2Model:'', backup3:'none', backup3Model:'', perUserDaily:20, guildDaily:200, timeoutSeconds:20, maxOutputTokens:256 });
+// Backups are tried in this order after the primary. A slot set to 'none' is skipped, so gaps are allowed.
+export const BACKUP_SLOTS = Object.freeze([['backup','backupModel'],['backup2','backup2Model'],['backup3','backup3Model']]);
+const ADDED_SLOT_KEYS = BACKUP_SLOTS.slice(1).flat();
+/**
+ * Settings saved before the second and third backup existed lack those four keys. They are read as
+ * "no second or third backup"; anything else about the record is left for validateSettings to judge.
+ */
+export function upgradeSettings(v){
+ if(!v||typeof v!=='object'||Array.isArray(v)||ADDED_SLOT_KEYS.some(k=>Object.hasOwn(v,k)))return v;
+ return {...v,...Object.fromEntries(ADDED_SLOT_KEYS.map(k=>[k,DEFAULT_AI[k]]))};
+}
+/** The providers one request may go through, in order: [providerId, model]. */
+export function providerChain(cfg){return [[cfg.primary,cfg.primaryModel],...BACKUP_SLOTS.filter(([p])=>cfg[p]!=='none').map(([p,m])=>[cfg[p],cfg[m]])];}
 const snowflake=/^\d{17,20}$/;
 const error=(code,message,status=400)=>Object.assign(new Error(message),{code,status});
 const exact=(obj,keys)=>obj && typeof obj==='object' && !Array.isArray(obj) && Object.keys(obj).length===keys.length && keys.every(k=>Object.hasOwn(obj,k));
@@ -16,10 +29,11 @@ export function validateSettings(v){
  const keys=Object.keys(DEFAULT_AI);
  if(!exact(v,keys))throw error('INVALID_SETTINGS','Pengaturan AI tidak valid.');
  if(typeof v.enabled!=='boolean'||typeof v.providerDataConsent!=='boolean')throw error('INVALID_SETTINGS','Persetujuan dan status harus boolean.');
- if(!Object.hasOwn(PROVIDERS,v.primary)||!(v.backup==='none'||Object.hasOwn(PROVIDERS,v.backup)))throw error('INVALID_SETTINGS','Provider tidak didukung.');
- if(v.backup!=='none'&&v.backup===v.primary)throw error('INVALID_SETTINGS','Provider cadangan harus berbeda.');
+ if(!Object.hasOwn(PROVIDERS,v.primary)||BACKUP_SLOTS.some(([p])=>!(v[p]==='none'||Object.hasOwn(PROVIDERS,v[p]))))throw error('INVALID_SETTINGS','Provider tidak didukung.');
+ const used=[v.primary,...BACKUP_SLOTS.map(([p])=>v[p]).filter(p=>p!=='none')];
+ if(new Set(used).size!==used.length)throw error('INVALID_SETTINGS','Provider cadangan harus berbeda dari provider utama dan dari cadangan lain.');
  const model=x=>typeof x==='string'&&x.length<=150&&(!x || /^[a-zA-Z0-9._:/-]+$/.test(x));
- if(!model(v.primaryModel)||!model(v.backupModel)||(v.enabled&&(!v.primaryModel||!v.providerDataConsent))||(v.backup!=='none'&&!v.backupModel)||(v.backup==='none'&&v.backupModel))throw error('INVALID_SETTINGS','Model atau persetujuan pemrosesan data tidak valid.');
+ if(!model(v.primaryModel)||(v.enabled&&(!v.primaryModel||!v.providerDataConsent))||BACKUP_SLOTS.some(([p,m])=>!model(v[m])||(v[p]!=='none'&&!v[m])||(v[p]==='none'&&v[m])))throw error('INVALID_SETTINGS','Model atau persetujuan pemrosesan data tidak valid.');
  for(const [key,min,max] of [['perUserDaily',1,10000],['guildDaily',1,100000],['timeoutSeconds',3,60],['maxOutputTokens',16,2048]])if(!Number.isInteger(v[key])||v[key]<min||v[key]>max)throw error('INVALID_SETTINGS',`Nilai ${key} di luar batas.`);
  if(v.perUserDaily>v.guildDaily)throw error('INVALID_SETTINGS','Batas per anggota tidak boleh melebihi batas server.');
  return {...v};
@@ -29,7 +43,7 @@ const cfgKey=id=>`ai:foundation:config:${id}`;
 export function createAIStore(client){
  const table=pgConfig.tables.cache_data;
  return {
-  async read(id){const sqlite=sqliteBackend(client);if(sqlite){const v=sqlite.get(cfgKey(id));return v?validateSettings(v):{...DEFAULT_AI};}const pool=persistentPool(client);const r=await pool.query(`SELECT value FROM ${table} WHERE key=$1`,[cfgKey(id)]);const v=r.rows[0]?.value;return v?validateSettings(v):{...DEFAULT_AI};},
+  async read(id){const sqlite=sqliteBackend(client);if(sqlite){const v=sqlite.get(cfgKey(id));return v?validateSettings(upgradeSettings(v)):{...DEFAULT_AI};}const pool=persistentPool(client);const r=await pool.query(`SELECT value FROM ${table} WHERE key=$1`,[cfgKey(id)]);const v=r.rows[0]?.value;return v?validateSettings(upgradeSettings(v)):{...DEFAULT_AI};},
   async save(id,settings){const v=validateSettings(settings),sqlite=sqliteBackend(client);if(sqlite){sqlite.set(cfgKey(id),v);return v;}await persistentPool(client).query(`INSERT INTO ${table} (key,value,expires_at) VALUES ($1,$2::jsonb,NULL) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, expires_at=NULL`,[cfgKey(id),JSON.stringify(v)]);return v;},
   // Lock both counters in a fixed order; reservation happens before the first external request.
   async reserve(guildId,userId,limits){
@@ -70,7 +84,7 @@ export function createAIFoundation({client,store=createAIStore(client),env=proce
    active++;
    try{
     const cfg=validateSettings(await store.read(guildId));if(!cfg.enabled||!cfg.providerDataConsent)throw error('DISABLED','AI belum diaktifkan atau belum disetujui.',403);
-    const chain=[[cfg.primary,cfg.primaryModel],...(cfg.backup==='none'?[]:[[cfg.backup,cfg.backupModel]])];
+    const chain=providerChain(cfg);
     if(!chain.some(([id])=>env[PROVIDERS[id].key]?.trim()))throw error('NO_CREDENTIALS','Kredensial provider belum dikonfigurasi.',503);
     const usage=await store.reserve(guildId,userId,cfg);let attempted=0;
     for(const [id,model] of chain){const provider=PROVIDERS[id],key=env[provider.key]?.trim();if(!key)continue;attempted++;

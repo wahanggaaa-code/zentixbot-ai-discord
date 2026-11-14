@@ -38,7 +38,7 @@ Disarankan:
 | `OWNER_IDS` | ID Discord pemilik bot. Halaman AI dan statistik hosting di dashboard hanya untuk ID ini; login dashboard dengan token bertindak atas nama ID pertama |
 | `DASHBOARD_TOKEN` | Rahasia minimal 12 karakter untuk login dashboard. Lihat "Login dashboard dengan token" |
 | `NODE_OPTIONS` | `--max-old-space-size=384` pada container 512 MB. Saran panduan referensi; diisi di panel, bukan di berkas `.env`. Pemakaian memori bot ini belum pernah diukur |
-| `AI_GROQ_API_KEY`, `AI_GEMINI_API_KEY`, `AI_OPENROUTER_API_KEY`, `AI_NVIDIA_API_KEY` | Minimal satu bila fitur AI dipakai |
+| `AI_GROQ_API_KEY`, `AI_GEMINI_API_KEY`, `AI_OPENROUTER_API_KEY`, `AI_NVIDIA_API_KEY` | Minimal satu bila fitur AI dipakai. Tiap provider cadangan memerlukan kuncinya sendiri; lihat "Provider chat AI" |
 
 Untuk dashboard:
 
@@ -51,6 +51,41 @@ Untuk dashboard:
 Musik tidak memerlukan variabel: bot memakai enam node Lavalink publik yang tercantum di `lavalink/nodes.json` (vinster, trinium, nazha, serenetia, jirayu, millohost), diambil dari daftar di `lavalink.darrennathanael.com`. Node itu milik pihak ketiga dan belum diuji dari bot ini; untuk menggantinya, ubah berkas itu atau isi `LAVALINK_NODES`. Nama `LAVALINK_URI` dan `LAVALINK_NODE_NAME` tidak dibaca bot.
 
 Opsional: transkrip suara, pencarian web dan gambar (lihat bagian berikut), `HOSTING_PANEL_URL` + `HOSTING_SERVER_ID` + `HOSTING_API_KEY`, `TMDB_API_KEY`, `LOG_LEVEL`, `SENTRY_DSN`. Daftar lengkap ada di `.env.example`.
+
+## Provider chat AI: satu utama dan sampai tiga cadangan
+
+Diatur di dashboard, **AI Studio → Provider & fallback**, bukan di `.env`. Di `.env` hanya kuncinya.
+
+| Di dashboard | Isi |
+| --- | --- |
+| Provider utama + Model utama | Dicoba lebih dulu |
+| Provider cadangan 1, 2, 3 + modelnya | Dicoba berurutan bila yang sebelumnya gagal. "Tidak ada" = slot dilewati |
+
+Provider yang tersedia ada empat: Groq, Gemini, OpenRouter dan NVIDIA NIM. Satu provider hanya boleh dipakai sekali, jadi utama ditambah tiga cadangan berarti keempatnya terpakai.
+
+- **Provider tanpa kunci di `.env` dilewati**, tanpa pesan. Baris "Kunci server" di halaman itu menunjukkan kunci mana yang terbaca. Cadangan Gemini, misalnya, hanya bekerja bila `AI_GEMINI_API_KEY` terisi.
+- **Kapan bot pindah ke cadangan:** provider tidak menjawab dalam batas waktu, jaringan gagal, atau jawabannya 401, 403, 404, 408, 429 atau 5xx. Itu mencakup kuota habis, kunci salah dan ID model yang tidak dikenal.
+- **Kapan bot tidak pindah:** provider menolak isi permintaan (jawaban 4xx lain) atau memblokir jawabannya. Permintaan itu gagal tanpa mencoba cadangan.
+- **Waktu tunggu** berlaku per provider. Dengan batas 20 detik dan empat provider yang semuanya macet, satu permintaan dapat menunggu sampai 80 detik.
+- **Kuota harian** dihitung satu kali per permintaan, berapa pun provider yang dicoba.
+- Tombol **Tes koneksi** memakai rantai yang sama dan menyebut provider mana yang menjawab. Ia tidak menguji tiap cadangan satu per satu: bila provider utama menjawab, cadangan tidak disentuh.
+
+Pengaturan yang disimpan sebelum 14 November 2026 (satu cadangan) tetap terbaca; cadangan 2 dan 3 dianggap kosong sampai diisi dan disimpan.
+
+## Perintah `/…` yang menjawab "that command does not exist"
+
+Bot ini mendaftarkan perintahnya hanya untuk server di `GUILD_ID`. Bila aplikasi Discord yang sama pernah dipakai program bot lain, perintah **global** program itu tetap tersimpan di Discord dan tetap ditawarkan saat mengetik `/`, tetapi bot ini tidak mengenalnya. Contoh nyata (14 November 2026): `/ai chat`, `/ai config` dan `/ai status` muncul di samping `/aichat` milik bot ini.
+
+Sejak 14 November 2026 bot menghapus perintah global seperti itu setiap kali start, setelah perintah server terdaftar, dan melaporkannya sekali:
+
+```text
+04:48:22  START  Slash commands: 1 global command left by another program removed (/ai)
+```
+
+- Perintah titik masuk Activity (jenis 4) tidak dihapus.
+- Bila penghapusan gagal, bot tetap menyala dan menulis satu baris `WARN`.
+- `KEEP_GLOBAL_COMMANDS=true` mematikan penghapusan ini. Pakai hanya bila program lain yang masih berjalan dengan aplikasi yang sama memang memerlukan perintah globalnya.
+- Aplikasi Discord dapat menyimpan daftar lama sebentar. Tutup dan buka lagi bila perintah yang sudah dihapus masih ditawarkan.
 
 ## Suara, pencarian web dan gambar: pilihan penyedia
 
@@ -301,9 +336,12 @@ Contoh saat menyala (dari menjalankan bot di lingkungan uji dengan Discord tirua
 
 ## Yang belum diuji
 
+- Rantai tiga cadangan terhadap provider sungguhan. Tesnya memakai provider tiruan: yang terbukti adalah urutan percobaan, provider mana yang dilewati, dan kapan rantai berhenti. Bahwa Gemini, OpenRouter atau NVIDIA menerima permintaan bot ini belum pernah dicoba.
+- Penghapusan perintah global terhadap Discord sungguhan. Tesnya memakai klien REST tiruan. Bahwa `/ai` di aplikasi pemilik bot memang perintah global adalah kesimpulan dari kode (bot ini menimpa daftar perintah server setiap start dan tidak punya `/ai`), belum dilihat langsung.
 - Tidak ada yang dijalankan di sini pada panel sungguhan. Yang diketahui tentang panel hanyalah kiriman pemilik bot di awal dokumen ini; batas RAM, perilaku saat restart dan pemakaian memori belum diperiksa.
 - Login Discord sungguhan sampai masuk ke dashboard pada alamat `http://ip:port`, termasuk setelah perbaikan batas permintaan dan pesan login.
 - Sebab login pemilik bot gagal pada 13 November 2026: satu sebab ditemukan pada 14 November (halaman `/dashboard/` berputar tanpa henti, lihat di atas). Apakah ada sebab lain, misalnya client secret, tidak diketahui.
+- Kiriman pemilik bot pada 14 November 2026 (tangkapan layar, bukan pengujian di sini): dashboard terbuka di Brave pada panel setelah login, dan `/aichat` dijawab oleh provider sungguhan. Cara login yang dipakai (token, tautan atau Discord) tidak diketahui.
 - Login dengan token dan tautan login di panel sungguhan dan di peramban sungguhan, termasuk apa yang tersimpan di riwayat peramban setelah tautan dibuka. Di sini diuji dengan permintaan HTTP langsung ke bot yang berjalan dengan klien Discord tiruan.
 - Tampilan log di konsol panel: apakah warnanya tampil, dan baris-baris setelah login Discord sungguhan (pendaftaran slash command, rangkuman ONLINE, pemeriksaan saat menyala, node Lavalink). Di sini baris-baris itu hanya dihasilkan dengan Discord tiruan.
 - Dashboard di peramban sungguhan; tesnya memakai jsdom dan permintaan HTTP langsung. Jumlah panggilan data per halaman tidak diukur; angka 31 hanya menghitung berkas yang disebut `index.html`.
