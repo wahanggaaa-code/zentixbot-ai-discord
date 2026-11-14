@@ -6,7 +6,7 @@ Inventaris kode per perubahan dashboard ini, bukan sertifikasi produksi. **Live*
 
 | Area | Yang sudah punya jalur live | Batas utama / sisa pekerjaan |
 |---|---|---|
-| Overview | Status bot dan sumber hosting jika dikonfigurasi | Resource tidak tersedia bukan berarti host mati; koneksi hosting sebenarnya belum diuji. |
+| Overview | Status bot; pemakaian sistem (CPU, RAM, jaringan, disk) setiap 3 detik untuk owner bot; akses cepat | Angka diukur bot di dalam kontainernya sendiri dan belum dibandingkan dengan panel hosting sungguhan. Lihat "Overview — pemakaian sistem dan akses cepat". |
 | Welcome & verification | Welcome, **Goodbye non-AI**, verification dan pengiriman panel verification | Goodbye hanya PostgreSQL; tampilan preview lokal tanpa mengirim. Perubahan pengaturan tidak membuktikan pesan berhasil dikirim saat anggota keluar. |
 | Moderation | Daftar kasus dan tindakan melalui operasi dashboard | Efek Discord dan penyimpanan bukan transaksi bersama; pemeriksaan izin/hierarki dan hasil nyata perlu diuji. |
 | Ticket | Konfigurasi, panel, daftar/detail, aksi dan transcript terbatas. Aksi yang ditolak service (tiket sudah diklaim, sudah tertutup, atau baru saja diubah) dijawab 409 dengan alasannya | Transcript bergantung channel yang tersedia; tindakan Discord dan database dapat berbeda hasilnya. Lihat [`docs/audit/tiket.md`](audit/tiket.md). |
@@ -168,6 +168,24 @@ Rincian audit: [`docs/audit/ekonomi.md`](audit/ekonomi.md).
 - **Menyimpan** role yang tidak dapat dijual ditolak server (400) dengan alasannya, juga bila permintaan tidak datang dari halaman ini. Mengosongkan pilihan diperbolehkan.
 - **Ubah wallet dan bank anggota** (pencarian anggota) tidak berubah dalam audit ini.
 - Simbol dan nama mata uang tidak ada di web; keduanya disetel lewat `/economy dashboard` di Discord dan hanya berlaku di panel itu.
+
+## Overview — pemakaian sistem dan akses cepat
+
+Susunan halaman ringkasan sejak 14 November 2026: "01 / KONDISI SERVER", "02 / PEMAKAIAN SISTEM", lalu "03 / AKSES CEPAT" di paling bawah. Bagian "03 / HOSTING" dan "Dibuat untuk lebih dekat." dihapus; tautan ke Fitur bot, AI studio dan Pengaturan sekarang hanya ada di AKSES CEPAT.
+
+| Yang ditampilkan | Asal | Catatan |
+|---|---|---|
+| CPU, RAM, jaringan, disk | `GET /dashboard/api/bot/system-usage`, setiap 3 detik | Hanya owner bot. Admin lain melihat "KHUSUS OWNER BOT" dan halaman berhenti bertanya. |
+| "● LIVE · RUNNING" | Status server dari panel hosting | Hanya bila `HOSTING_*` diisi; tanpa itu "● LIVE". |
+| "—" | Nilai yang tidak diketahui | Bacaan pertama (belum ada selisih), berkas yang tidak terbaca, folder yang masih dihitung. Tidak pernah ditulis 0. |
+| Label "· TINGGI" dan batang lime | Pemakaian 90% atau lebih dari batasnya | Tanpa batas (kuota disk kosong) batang tetap kosong. |
+
+- Preview statis (`/preview/`) menampilkan angka contoh berlabel "CONTOH" dan tidak memanggil apa pun.
+- Halaman berhenti bertanya saat tab tersembunyi atau halaman lain dibuka, dan mulai lagi saat kembali. Setelah galat ia mencoba lagi tiap 15 detik.
+- Semua nilai dari server ditulis sebagai teks.
+- Cara menghitung tiap angka dan batasannya: [`docs/hosting.md`](hosting.md), bagian "Pemakaian sistem di halaman ringkasan".
+- Endpoint lama `GET /dashboard/api/bot/hosting` tetap ada; hanya tombol "Periksa koneksi" di Pengaturan yang memakainya.
+- Tes: `tests/system-usage.test.js` (17) dan `tests/system-usage-dashboard.test.js` (15).
 
 ## Pengaturan utama — pusat kendali baca-saja
 

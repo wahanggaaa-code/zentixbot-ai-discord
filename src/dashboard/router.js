@@ -19,6 +19,7 @@ import { createJoinToCreateSettingsApi } from './joinToCreateSettingsApi.js';
 import { createModulesApi } from './modulesApi.js';
 import { createOperationsApi } from './operationsApi.js';
 import { createHostingApi } from './hostingApi.js';
+import { createSystemUsageApi } from './systemUsageApi.js';
 import { createAIApi } from './aiApi.js';
 import { createSettingsApi } from './settingsApi.js';
 import { createServerStatsApi } from './serverStatsApi.js';
@@ -47,7 +48,7 @@ export function mountDashboard(app, client, options) {
 }
 
 // Sessions are process-local: deployment with multiple workers needs a shared session store.
-export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, env = process.env } = {}) {
+export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, env = process.env, systemUsage } = {}) {
   const router = express.Router();
   const states = new Map(), sessions = new Map();
   // Login stays disabled until DASHBOARD_URL is usable; see origin.js for what counts as usable.
@@ -194,8 +195,19 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
     purge(); const session = sessions.get(cookie(req,'zx_session'));
     if (!session) return res.status(401).json({error:'Silakan login.'});
     const access = await authorize(session.user.id, session.operator === true);
-    if (access.error) return res.status(access.status).json({error:access.error});
+    if (access.error) { delete session.verifiedAt; return res.status(access.status).json({error:access.error}); }
+    session.verifiedAt = Date.now();
     req.session = session; req.guild = access.guild; req.member = access.member; next();
+  }
+  // For a route the page asks every few seconds. `auth` asks Discord about the member on every request;
+  // doing that twenty times a minute per open tab would spend the bot's request budget on nothing.
+  // Here the answer of the last check is trusted for a minute. Only for routes that read and change nothing.
+  const POLL_TRUST_MS = 60 * 1000;
+  async function authPolled(req,res,next) {
+    purge(); const session = sessions.get(cookie(req,'zx_session'));
+    if (!session) return res.status(401).json({error:'Silakan login.'});
+    if (!(Date.now() - session.verifiedAt < POLL_TRUST_MS)) return auth(req,res,next);
+    req.session = session; next();
   }
   const csrf = (req,res,next) => {
     if (!fromOwnPage(req) || req.get('x-csrf-token') !== req.session.csrf) return res.status(403).json({error:'Permintaan tidak valid.'});
@@ -215,6 +227,7 @@ export function createDashboardRouter(client, { fetchImpl = globalThis.fetch, en
   router.use('/api/bot', createModulesApi(client, {auth, csrf}));
   router.use('/api/bot', createOperationsApi(client, {auth, csrf}));
   router.use('/api/bot', createHostingApi({auth, env}));
+  router.use('/api/bot', createSystemUsageApi({auth: authPolled, env, ...(systemUsage ? {usage: systemUsage} : {})}));
   router.use('/api/bot', createSettingsApi(client, {auth, env}));
   router.use('/api/ai', createAIApi(client, {auth, csrf, env}));
   // botOwner lets AI Studio say up front that its routes will refuse this account (see `owner` in aiApi.js).

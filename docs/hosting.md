@@ -35,7 +35,7 @@ Disarankan:
 
 | Variabel | Isi |
 | --- | --- |
-| `OWNER_IDS` | ID Discord pemilik bot. Halaman AI dan statistik hosting di dashboard hanya untuk ID ini; login dashboard dengan token bertindak atas nama ID pertama |
+| `OWNER_IDS` | ID Discord pemilik bot. Halaman AI, pemakaian sistem di halaman ringkasan dan statistik hosting di dashboard hanya untuk ID ini; login dashboard dengan token bertindak atas nama ID pertama |
 | `DASHBOARD_TOKEN` | Rahasia minimal 12 karakter untuk login dashboard. Lihat "Login dashboard dengan token" |
 | `NODE_OPTIONS` | `--max-old-space-size=384` pada container 512 MB. Saran panduan referensi; diisi di panel, bukan di berkas `.env`. Pemakaian memori bot ini belum pernah diukur |
 | `AI_GROQ_API_KEY`, `AI_GEMINI_API_KEY`, `AI_OPENROUTER_API_KEY`, `AI_NVIDIA_API_KEY` | Minimal satu bila fitur AI dipakai. Tiap provider cadangan memerlukan kuncinya sendiri; lihat "Provider chat AI" |
@@ -50,7 +50,7 @@ Untuk dashboard:
 
 Musik tidak memerlukan variabel: bot memakai enam node Lavalink publik yang tercantum di `lavalink/nodes.json` (vinster, trinium, nazha, serenetia, jirayu, millohost), diambil dari daftar di `lavalink.darrennathanael.com`. Node itu milik pihak ketiga dan belum diuji dari bot ini; untuk menggantinya, ubah berkas itu atau isi `LAVALINK_NODES`. Nama `LAVALINK_URI` dan `LAVALINK_NODE_NAME` tidak dibaca bot.
 
-Opsional: transkrip suara, pencarian web dan gambar (lihat bagian berikut), `HOSTING_PANEL_URL` + `HOSTING_SERVER_ID` + `HOSTING_API_KEY`, `TMDB_API_KEY`, `LOG_LEVEL`, `SENTRY_DSN`. Daftar lengkap ada di `.env.example`.
+Opsional: transkrip suara, pencarian web dan gambar (lihat bagian berikut), `HOSTING_PANEL_URL` + `HOSTING_SERVER_ID` + `HOSTING_API_KEY`, `DISK_LIMIT_MB` (kuota disk untuk halaman ringkasan), `TMDB_API_KEY`, `LOG_LEVEL`, `SENTRY_DSN`. Daftar lengkap ada di `.env.example`.
 
 ## Provider chat AI: satu utama dan sampai tiga cadangan
 
@@ -295,6 +295,30 @@ Permintaan yang ditolak mendapat status 429 dan header `Retry-After`. Di bawah `
 
 Hitungan memakai alamat IP yang tersambung langsung ke bot. Di belakang reverse proxy, semua pengunjung terhitung sebagai satu alamat.
 
+## Pemakaian sistem di halaman ringkasan
+
+Blok "02 / PEMAKAIAN SISTEM" pada halaman ringkasan dashboard menampilkan CPU, RAM, jaringan dan disk, dan memperbaruinya setiap 3 detik selama halaman itu terlihat. Hanya untuk owner bot (`OWNER_IDS`); login dengan token selalu bertindak sebagai owner.
+
+**Tidak perlu pengaturan apa pun.** Bot membaca angka kontainernya sendiri dari berkas yang disediakan kernel Linux (`/sys/fs/cgroup`, `/proc`), yaitu sumber yang sama yang dibaca panel hosting. Kunci API panel tidak diperlukan.
+
+| Angka | Asalnya | Cara menghitung |
+|---|---|---|
+| CPU | `cpu.stat` kontainer (`usage_usec`), selisih dua bacaan | **100% = satu inti penuh**, seperti di panel Pterodactyl. "DARI 100%" adalah jatah CPU kontainer (`cpu.max`); tanpa jatah tertulis jumlah inti mesin |
+| RAM | `memory.current` dikurangi `inactive_file` | Cache berkas yang bisa dilepas tidak dihitung, seperti di panel. Batasnya `SERVER_MEMORY` (diisi panel) bila ada dan tidak melebihi batas kontainer, kalau tidak batas kontainer (`memory.max`) |
+| Jaringan | `/proc/self/net/dev`, semua antarmuka kecuali `lo` | Kecepatan masuk / keluar = selisih dua bacaan; di bawahnya total sejak kontainer menyala |
+| Disk | Ukuran folder server (`/home/container` bila bot ada di dalamnya, kalau tidak folder bot) | Dihitung di latar belakang, paling sering **sekali per 5 menit**; berhenti pada 60.000 berkas dan menulis "LEBIH DARI INI" |
+
+Yang perlu diketahui:
+
+- **Kuota disk tidak bisa dibaca dari dalam kontainer.** Isi `DISK_LIMIT_MB` di `.env` (misalnya `5120` untuk 5 GB) agar tertulis "DARI 5 GB" dan batang terisi. Tanpa itu tertulis "KUOTA BELUM DIISI".
+- Bila ketiga nilai `HOSTING_PANEL_URL`, `HOSTING_SERVER_ID` dan `HOSTING_API_KEY` diisi, bot juga bertanya ke panel paling sering sekali per 15 detik, hanya untuk dua hal: status server (tertulis di samping "LIVE") dan angka disk (pengganti hitungan folder). CPU, RAM dan jaringan tetap bacaan bot sendiri, karena itulah yang bisa diperbarui tiap 3 detik tanpa membebani panel.
+- Angka pertama setelah halaman dibuka belum punya CPU dan kecepatan jaringan (perlu dua bacaan); keduanya terisi sekitar satu detik kemudian. Yang tidak diketahui ditulis "—", bukan 0.
+- Di luar kontainer (VPS tanpa Docker, komputer sendiri) CPU dan RAM adalah milik **proses bot**, dibanding seluruh mesin; catatan kaki blok itu menyebutkannya. Di Windows dan macOS jaringan tertulis "TIDAK TERBACA".
+- Angka bisa berbeda sedikit dari panel: panel dan bot membaca pada saat yang berbeda, dan angka disk bot bisa berumur sampai 5 menit.
+- Beban: satu permintaan kecil tiap 3 detik per tab yang terbuka dan terlihat; tab tersembunyi atau halaman lain tidak bertanya. Pemeriksaan keanggotaan Discord untuk permintaan ini dipakai ulang selama 1 menit (rute lain tetap memeriksa setiap kali), jadi membiarkan halaman terbuka tidak menghabiskan jatah permintaan bot ke Discord.
+
+Sumber: `src/services/systemUsage.js` (pembacaan), `src/dashboard/systemUsageApi.js` (`GET /dashboard/api/bot/system-usage`), `dashboard-preview/live.js` (tampilan).
+
 ## Bila login gagal
 
 Halaman callback kini menyebut sebabnya dan memberi tautan "Mulai login lagi".
@@ -387,6 +411,7 @@ Contoh saat menyala (dari menjalankan bot di lingkungan uji dengan Discord tirua
 
 ## Yang belum diuji
 
+- Pemakaian sistem pada panel sungguhan. Pembacaan diuji dengan berkas kernel tiruan (cgroup v2, cgroup v1, tanpa cgroup) dan dijalankan di kontainer pengembangan (cgroup v2, batas RAM, tanpa jatah CPU). Bahwa angkanya sama dengan yang ditampilkan panel pemilik bot, dan bahwa `SERVER_MEMORY` terisi di panel itu, belum diperiksa. Sambungan ke API panel diuji dengan panel tiruan saja.
 - AI interaktif terhadap Discord dan provider sungguhan. Tesnya memakai pesan Discord tiruan dan provider tiruan: yang terbukti adalah kapan bot memutuskan menjawab, apa yang dikirim ke provider, dan apa yang ditulis ke channel. Belum pernah dicoba: seperti apa jawaban model sungguhan dengan prompt ini (gaya, panjang, apakah benar terasa seperti anggota), apakah model yang dipakai pemilik bot membaca gambar, apakah proxy media Discord menerima permintaan JPEG yang diperkecil seperti yang disusun bot, dan berapa kuota yang terpakai di channel yang ramai. Tampilan tab "AI interaktif" hanya diperiksa di jsdom, bukan di peramban.
 - Rantai tiga cadangan terhadap provider sungguhan. Tesnya memakai provider tiruan: yang terbukti adalah urutan percobaan, provider mana yang dilewati, dan kapan rantai berhenti. Bahwa Gemini, OpenRouter atau NVIDIA menerima permintaan bot ini belum pernah dicoba.
 - Penghapusan perintah global terhadap Discord sungguhan. Tesnya memakai klien REST tiruan. Bahwa `/ai` di aplikasi pemilik bot memang perintah global adalah kesimpulan dari kode (bot ini menimpa daftar perintah server setiap start dan tidak punya `/ai`), belum dilihat langsung.

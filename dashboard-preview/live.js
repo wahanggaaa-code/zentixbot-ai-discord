@@ -7,7 +7,62 @@
   async function request(path,opts={}) {
     const session=await window.ZentixSession;
     const res=await fetch('/dashboard/api/bot/'+path,{cache:'no-store',...opts,headers:{...(opts.body?{'Content-Type':'application/json','x-csrf-token':session.csrf}:{}),...opts.headers}});
-    const data=await res.json(); if(!res.ok)throw Error(data.error || 'Permintaan gagal.'); return data;
+    const data=await res.json(); if(!res.ok)throw Object.assign(Error(data.error || 'Permintaan gagal.'),{status:res.status}); return data;
+  }
+
+  // ---- Overview, "02 / PEMAKAIAN SISTEM": CPU, memory, network and disk of the bot's host, asked every 3 seconds.
+  const USAGE_EVERY=3000, USAGE_FIRST=1000, USAGE_AFTER_ERROR=15000;
+  const amount=(value,unit)=>[value>=100?String(Math.round(value)):value.toFixed(1).replace(/\.0$/,''),unit];
+  const bytes=value=>value>=1073741824?amount(value/1073741824,' GB'):value>=1048576?amount(value/1048576,' MB'):value>=1024?amount(value/1024,' KB'):amount(value,' B');
+  const plain=value=>value===null||value===undefined?'—':bytes(value).join('');
+  const share=(part,whole)=>part===null||part===undefined||!(whole>0)?0:Math.max(0,Math.min(100,part/whole*100));
+  function usage(root) {
+    const box=root.querySelector('#systemUsage'); if(!box)return;
+    clearTimeout(window.ZentixUsageTimer);document.removeEventListener('visibilitychange',window.ZentixUsageWake);
+    const state=box.querySelector('.usage-state'), foot=box.querySelectorAll('.usage-foot span');
+    const card=name=>box.querySelector(`[data-usage="${name}"]`);
+    // Every value goes in as text: nothing from the server is read as HTML.
+    const big=(name,pair)=>{const el=card(name)?.querySelector('.usage-value');if(!el)return;el.textContent=pair?pair[0]:'—';if(pair){const unit=document.createElement('span');unit.textContent=pair[1];el.append(unit)}};
+    const sub=(name,text)=>{const el=card(name)?.querySelector('.usage-sub');if(el)el.textContent=text};
+    const bar=(name,percent)=>{const el=card(name)?.querySelector('.progress i');if(el)el.style.width=`${percent}%`;card(name)?.classList.toggle('usage-high',percent>=90)};
+    const flow=(index,value)=>{const row=card('network')?.querySelectorAll('.usage-net div')[index];if(!row)return;const pair=value===null?null:bytes(value);row.querySelector('b').textContent=pair?pair[0]:'—';row.querySelector('span').textContent=pair?`${pair[1]}/s`:''};
+    const blank=(text,left,right)=>{for(const name of ['cpu','memory','disk']){big(name,null);sub(name,text);bar(name,0)}flow(0,null);flow(1,null);sub('network',text);foot[0].textContent=left;foot[1].textContent=right};
+    const paint=d=>{
+      const container=d.scope==='container';
+      big('cpu',d.cpu.percent===null?null:amount(d.cpu.percent,'%'));
+      sub('cpu',d.cpu.limitPercent===null?`${d.cpu.cores} INTI · TANPA BATAS`:`DARI ${d.cpu.limitPercent}%`);
+      bar('cpu',share(d.cpu.percent,d.cpu.limitPercent??d.cpu.cores*100));
+      big('memory',bytes(d.memory.usedBytes));
+      sub('memory',`${d.memory.limited?'DARI':'RAM MESIN'} ${plain(d.memory.totalBytes)}`);
+      bar('memory',share(d.memory.usedBytes,d.memory.totalBytes));
+      flow(0,d.network.inBytesPerSecond);flow(1,d.network.outBytesPerSecond);
+      sub('network',d.network.inBytes===null?'TIDAK TERBACA':`TOTAL ↓ ${plain(d.network.inBytes)} · ↑ ${plain(d.network.outBytes)}`);
+      big('disk',d.disk.usedBytes===null?null:bytes(d.disk.usedBytes));
+      sub('disk',d.disk.usedBytes===null?'MENGHITUNG…':`${d.disk.complete===false?'LEBIH DARI INI · ':''}${d.disk.limitBytes===null?'KUOTA BELUM DIISI':`DARI ${plain(d.disk.limitBytes)}`}`);
+      bar('disk',share(d.disk.usedBytes,d.disk.limitBytes));
+      state.textContent=d.panel?.state?`● LIVE · ${String(d.panel.state).toUpperCase()}`:'● LIVE';
+      foot[0].textContent=container?'DIUKUR DI DALAM KONTAINER BOT':'DI LUAR KONTAINER: CPU & RAM MILIK PROSES BOT';
+      foot[1].textContent=`REFRESH / ${USAGE_EVERY/1000} DETIK · DISK / ${d.disk.source==='panel'?'PANEL':'5 MENIT'}`;
+    };
+    const later=ms=>{window.ZentixUsageTimer=setTimeout(tick,ms)};
+    async function tick() {
+      if(!box.isConnected)return;   // another page is shown: stop asking
+      if(document.hidden)return;    // nobody is looking: wait for the tab to come back (see `wake`)
+      try {
+        const d=await request('system-usage'); if(!box.isConnected)return;
+        paint(d); later(d.cpu.percent===null?USAGE_FIRST:USAGE_EVERY);   // the first answer has no rates yet
+      } catch(e) {
+        if(!box.isConnected)return;
+        const denied=e.status===403, gone=e.status===401;
+        state.textContent=denied?'✳ KHUSUS OWNER BOT':'○ TIDAK TERSEDIA';
+        blank(denied?'KHUSUS OWNER':'TIDAK TERSEDIA',e.message||'Pemakaian sistem tidak dapat dibaca.',denied||gone?'':'MENCOBA LAGI / 15 DETIK');
+        if(!denied&&!gone)later(USAGE_AFTER_ERROR);
+      }
+    }
+    const wake=window.ZentixUsageWake=()=>{if(!box.isConnected)return document.removeEventListener('visibilitychange',wake);if(!document.hidden){clearTimeout(window.ZentixUsageTimer);tick()}};
+    document.addEventListener('visibilitychange',wake);
+    state.textContent='✳ MEMUAT';blank('MEMUAT…','MENGAMBIL DATA DARI BOT…','');
+    tick();
   }
   function welcome() {return `<div class="f-layout"><div><section class="f-panel"><div class="f-panel-head"><div><h2>Welcome terhubung</h2><p>Memuat pengaturan yang tersimpan di bot…</p></div><span>✳</span></div><div id="liveWelcome">Memuat…</div></section><div class="f-callout">ⓘ &nbsp; Autorole tidak dapat diaktifkan bersamaan dengan verification atau auto-verify.</div></div><aside><section class="f-panel"><div class="f-panel-head"><div><h2>Preview Discord</h2><p>Perkiraan tampilan dari pengaturan di formulir.</p></div><span>✳</span></div><div class="discord-demo"><div class="discord-avatar">✳</div><div class="discord-copy"><div><strong>ZentixBot</strong> <span class="discord-bot">BOT</span></div><div class="discord-embed"><b id="livePreviewTitle">🎉 Welcome!</b><p id="livePreviewMessage"></p><small id="livePreviewFooter"></small><img id="livePreviewImage" alt="Preview gambar welcome" style="display:block;max-width:100%;max-height:180px;margin-top:12px" hidden></div></div></div><div class="f-preview-action"><button type="button" id="liveTest" class="f-outline" disabled>KIRIM TES ↗</button></div><p class="f-muted">Tes menggunakan pengaturan yang sudah disimpan dan tidak melakukan ping.</p></section></aside></div>`;}
   const field=(label,help,control)=>`<label class="f-field"><span><b>${label}</b><small>${help}</small></span>${control}</label>`;
@@ -28,20 +83,7 @@
   }
   function afterRender(root,page) {
     if(!enabled || page!=='overview')return;
-    const resource=root.querySelector('.resource-section'); if(resource) resource.innerHTML=`<div class="resource-top"><div><div class="resource-kicker">03 / HOSTING</div><h2>Di balik layar<span>.</span></h2><p>Statistik hosting belum terhubung.</p></div></div><div class="resource-empty"><div class="empty-symbol">↗</div><div><strong>Data hosting belum tersedia.</strong><p>Tidak ada angka yang ditampilkan sebelum koneksi Wispbyte dan pembatasan akses owner diimplementasikan.</p></div><span>STATUS / OFFLINE</span></div>`;
-    async function updateHosting() {
-      if (!resource?.isConnected) return;
-      try {
-        const d=await request('hosting'); if(!resource.isConnected)return;
-        const fmt=(v,unit)=>v===null?'—':`${Number(v).toFixed(v<10?1:0)}${unit}`;
-        const bytes=v=>v===null?'—':v>=1073741824?fmt(v/1073741824,' GB'):fmt(v/1048576,' MB');
-        resource.innerHTML=`<div class="resource-top"><div><div class="resource-kicker">03 / HOSTING · OWNER BOT</div><h2>Di balik layar<span>.</span></h2><p>Statistik sumber hosting terhubung.</p></div></div><div class="resource-bar"><span>HOSTING / STATUS</span><span id="hostState"></span></div><div class="resource-grid">${[['CPU',fmt(d.cpuPercent,'%')],['RAM',bytes(d.memoryBytes)],['DISK',bytes(d.diskBytes)],['JARINGAN',`${bytes(d.networkInBytesPerSecond)}/s ↓ · ${bytes(d.networkOutBytesPerSecond)}/s ↑`]].map(([name,value])=>`<article class="resource-card"><div class="res-label">${name}</div><div class="res-value">${value}</div></article>`).join('')}</div><div class="resource-foot"><span>JARINGAN BERDASARKAN SELISIH SAMPEL</span><span>REFRESH / 30 DETIK</span></div>`;
-        resource.querySelector('#hostState').textContent=d.status;
-      } catch(e) { if(resource.isConnected){resource.innerHTML='<div class="resource-top"><div><div class="resource-kicker">03 / HOSTING</div><h2>Di balik layar<span>.</span></h2></div></div><div class="resource-empty"><div class="empty-symbol">↗</div><div><strong>Data hosting belum tersedia.</strong><p></p></div><span>STATUS / OFFLINE</span></div>';resource.querySelector('.resource-empty p').textContent=e.message;} }
-    }
-    updateHosting();
-    if(window.ZentixHostingTimer)clearInterval(window.ZentixHostingTimer);
-    window.ZentixHostingTimer=setInterval(()=>{if(resource?.isConnected)updateHosting();else clearInterval(window.ZentixHostingTimer)},30000);
+    usage(root);
     const label=root.querySelector('.small-badge');if(label)label.textContent='✳ MEMUAT STATUS';
     const lamp=root.querySelector('.lamp');if(lamp)lamp.textContent='● MEMUAT';
     const status=root.querySelector('.card-bottomline strong');if(status)status.textContent=' / MEMUAT';
